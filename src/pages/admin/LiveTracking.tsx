@@ -218,33 +218,33 @@ const AdminLiveTracking: React.FC = () => {
       ) : (
         <>
           {/* KPI Cards */}
-          <div className="summary-cards-scroll">
-            <div className="summary-card-small">
+          <div className="tracking-kpi-grid">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Currently Working</div>
               <div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.working}</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Employees Working</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">In Office</div>
               <div className="sc-val">{kpis.inOffice}</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Inside Office</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">WFH</div>
               <div className="sc-val" style={{ color: 'var(--primary-600)' }}>{kpis.wfh}</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Working Remotely</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Outside Geofence</div>
               <div className="sc-val" style={{ color: 'var(--danger-600)' }}>{kpis.outside}</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Attention Required</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">On Break</div>
               <div className="sc-val" style={{ color: 'var(--warning-600)' }}>{kpis.onBreak}</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Currently On Break</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Location Unavailable</div>
               <div className="sc-val" style={{ color: 'var(--text-secondary)' }}>{kpis.unavailable}</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>No Recent Location</div>
@@ -564,9 +564,9 @@ const AdminLiveTracking: React.FC = () => {
         .spin-slow { animation: spin 2s linear infinite; }
         @keyframes spin { 100% { transform: rotate(360deg); } }
         
-        .summary-cards-scroll { display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: thin; }
         
-        .summary-card-small::after { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, transparent 100%); pointer-events: none; }
+        
+        
         
         
         

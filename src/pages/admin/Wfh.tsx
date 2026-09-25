@@ -127,7 +127,7 @@ const AdminWfh: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val">{mockKPIs.totalRequests}</div>
             <div className="sc-title">Total Requests</div>
           </div>
@@ -135,15 +135,15 @@ const AdminWfh: React.FC = () => {
             <div className="sc-val" style={{ color: 'var(--warning)' }}>{mockKPIs.pending}</div>
             <div className="sc-title">Pending Requests</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val" style={{ color: 'var(--success)' }}>{mockKPIs.approvedToday}</div>
             <div className="sc-title">Approved Today</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{mockKPIs.activeWfhToday}</div>
             <div className="sc-title">Active WFH Today</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val" style={{ color: 'var(--danger)' }}>{mockKPIs.alerts}</div>
             <div className="sc-title">Policy Alerts</div>
           </div>

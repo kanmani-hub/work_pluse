@@ -137,20 +137,20 @@ const EmployeeLeave: React.FC = () => {
         </div>
       ) : (
         <>
-          <div className="summary-cards-scroll">
-            <div className="summary-card-small">
+          <div className="tracking-kpi-grid">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Casual Leave</div>
               <div className="sc-val" style={{ color: 'var(--primary-700)' }}>8 Days <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)' }}>Available</span></div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Sick Leave</div>
               <div className="sc-val" style={{ color: 'var(--warning)' }}>6 Days <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)' }}>Available</span></div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Earned Leave</div>
               <div className="sc-val" style={{ color: 'var(--success)' }}>10 Days <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)' }}>Available</span></div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Unpaid Leave</div>
               <div className="sc-val" style={{ color: 'var(--gray-700)' }}>Policy based</div>
             </div>
@@ -439,7 +439,7 @@ const EmployeeLeave: React.FC = () => {
       <style>{`
         
         
-        .summary-cards-scroll { display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: thin; }
+        
         
         
         

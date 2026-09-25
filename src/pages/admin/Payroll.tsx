@@ -169,8 +169,8 @@ const AdminPayroll: React.FC = () => {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', minWidth: 0 }}>
           <div className="kpi-grid">
-            <div className="summary-card-small"><div className="sc-val">{mockKPIs.total}</div><div className="sc-title">Total Employees</div></div>
-            <div className="summary-card-small"><div className="sc-val">{mockKPIs.generated}</div><div className="sc-title">Payroll Generated</div></div>
+            <div className="tracking-kpi-card"><div className="sc-val">{mockKPIs.total}</div><div className="sc-title">Total Employees</div></div>
+            <div className="tracking-kpi-card"><div className="sc-val">{mockKPIs.generated}</div><div className="sc-title">Payroll Generated</div></div>
             <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('UNDER REVIEW')}><div className="sc-val" style={{ color: 'var(--warning)' }}>{mockKPIs.underReview}</div><div className="sc-title">Under Review</div></div>
             <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('APPROVED')}><div className="sc-val" style={{ color: 'var(--purple-700)' }}>{mockKPIs.approved}</div><div className="sc-title">Approved</div></div>
             <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('PAYMENT PENDING')}><div className="sc-val" style={{ color: 'var(--primary-700)' }}>{mockKPIs.paymentPending}</div><div className="sc-title">Payment Pending</div></div>
@@ -178,15 +178,15 @@ const AdminPayroll: React.FC = () => {
           </div>
           
           <div className="payroll-financial-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', width: '100%', minWidth: 0 }}>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Gross Payroll</div>
               <div className="financial-value" style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--text-primary)' }}>{mockKPIs.gross}</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Total Deductions</div>
               <div className="financial-value" style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--danger)' }}>{mockKPIs.deductions}</div>
             </div>
-            <div className="summary-card-small" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--success)' }}>
+            <div className="tracking-kpi-card" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--success)' }}>
               <div className="sc-title" style={{ color: 'var(--success)' }}>Net Payroll</div>
               <div className="financial-value" style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 800, color: 'var(--success)' }}>{mockKPIs.net}</div>
             </div>

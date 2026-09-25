@@ -124,22 +124,22 @@ const AdminDepartments: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon"><Building2 size={18} /></div></div>
             <div className="sc-val">8</div>
             <div className="sc-title">Total Departments</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-100)', color: 'var(--success)' }}><CheckCircle2 size={18} /></div></div>
             <div className="sc-val" style={{ color: 'var(--success)' }}>7</div>
             <div className="sc-title">Active Departments</div>
           </div>
-          <div className="summary-card-small" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
+          <div className="tracking-kpi-card" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}><Users size={18} /></div></div>
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>128</div>
             <div className="sc-title">Total Employees</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-100)', color: 'var(--warning)' }}><AlertTriangle size={18} /></div></div>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>3</div>
             <div className="sc-title">Unassigned Employees</div>

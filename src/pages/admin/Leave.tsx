@@ -136,7 +136,7 @@ const AdminLeave: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val">{mockKPIs.total}</div>
             <div className="sc-title">Total Employees</div>
           </div>
@@ -144,15 +144,15 @@ const AdminLeave: React.FC = () => {
             <div className="sc-val" style={{ color: 'var(--warning)' }}>{mockKPIs.pending}</div>
             <div className="sc-title">Pending Requests</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val" style={{ color: 'var(--success)' }}>{mockKPIs.approvedToday}</div>
             <div className="sc-title">Approved Today</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{mockKPIs.onLeaveToday}</div>
             <div className="sc-title">On Leave Today</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val">{mockKPIs.halfDay}</div>
             <div className="sc-title">Half Day</div>
           </div>

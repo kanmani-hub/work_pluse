@@ -143,20 +143,20 @@ const EmployeePermission: React.FC = () => {
         </div>
       ) : (
         <>
-          <div className="summary-cards-scroll">
-            <div className="summary-card-small">
+          <div className="tracking-kpi-grid">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Available Permission</div>
               <div className="sc-val" style={{ color: 'var(--primary-700)' }}>2h 30m</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Used This Month</div>
               <div className="sc-val">1h 30m</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Pending</div>
               <div className="sc-val" style={{ color: 'var(--warning)' }}>1</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Approved</div>
               <div className="sc-val" style={{ color: 'var(--success)' }}>3</div>
             </div>
@@ -420,7 +420,7 @@ const EmployeePermission: React.FC = () => {
       <style>{`
         
         
-        .summary-cards-scroll { display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: thin; }
+        
         
         
         

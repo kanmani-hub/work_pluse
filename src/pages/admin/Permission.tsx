@@ -164,7 +164,7 @@ const AdminPermission: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val">{mockKPIs.total}</div>
             <div className="sc-title">Total Requests</div>
           </div>
@@ -172,11 +172,11 @@ const AdminPermission: React.FC = () => {
             <div className="sc-val" style={{ color: 'var(--warning)' }}>{mockKPIs.pending}</div>
             <div className="sc-title">Pending</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val" style={{ color: 'var(--success)' }}>{mockKPIs.approvedToday}</div>
             <div className="sc-title">Approved Today</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{mockKPIs.activeToday}</div>
             <div className="sc-title">Active Today</div>
           </div>
@@ -184,7 +184,7 @@ const AdminPermission: React.FC = () => {
             <div className="sc-val" style={{ color: 'var(--text-secondary)' }}>{mockKPIs.rejected}</div>
             <div className="sc-title">Rejected</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val">{mockKPIs.totalHours}</div>
             <div className="sc-title">Total Hours</div>
           </div>

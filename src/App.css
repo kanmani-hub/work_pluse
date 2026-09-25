@@ -920,3 +920,48 @@
     flex-direction: column;
   }
 }
+
+
+/* Global Mobile Safeguards */
+main, .app-content { width: 100%; max-width: 100%; min-width: 0; }
+.tracking-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
+.tracking-kpi-card { min-width: 0; width: 100%; background: var(--bg-surface-elevated); padding: 1.25rem; border-radius: var(--radius-lg); border: 1px solid var(--border-color); box-shadow: var(--shadow-sm); position: relative; overflow: hidden; }
+.tracking-kpi-card .sc-title { font-size: 0.875rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; white-space: normal; }
+.tracking-kpi-card .sc-val { font-size: 1.75rem; font-weight: 700; color: var(--text-primary); line-height: 1.1; }
+
+@media (max-width: 640px) {
+  .tracking-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .tracking-kpi-card { padding: 1rem; }
+  .tracking-kpi-card .sc-val { font-size: 1.5rem; }
+  .tracking-kpi-card .sc-title { font-size: 0.75rem; }
+
+  .page-header { flex-direction: column; align-items: stretch !important; gap: 1rem; }
+  .page-header > div { width: 100%; display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start !important; }
+  .page-header button { width: 100%; justify-content: center; margin-top: 0.5rem; }
+  
+  .table-responsive { display: block; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { min-width: 600px; }
+  
+  .map-container, .mock-map { width: 100% !important; max-width: 100% !important; min-width: 0 !important; height: 350px !important; aspect-ratio: 1/1 !important; }
+  
+  .desktop-controls { display: none !important; }
+  .drawer { width: 100% !important; max-width: 100% !important; }
+  
+  .header-controls { flex-wrap: wrap; width: 100%; justify-content: flex-start !important; }
+  .header-controls > * { flex: 1 1 auto; }
+  
+  .dashboard-grid { display: flex; flex-direction: column; }
+  .summary-card, .detail-card, .stat-card { width: 100%; min-width: 0; }
+  
+  .form-control, .form-select, input, select { width: 100%; max-width: 100%; }
+  
+  .modal { width: calc(100vw - 24px) !important; max-width: calc(100vw - 24px) !important; margin: 12px; }
+
+}
+
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-120%); position: fixed; height: 100%; top: 0; left: 0; margin: 0; border-radius: 0; z-index: 50; width: 280px; }
+  .sidebar.open { transform: translateX(0); }
+  .sidebar-overlay { display: none; position: fixed; inset: 0; background-color: rgba(0,0,0,0.5); z-index: 45; }
+  .sidebar.open + .sidebar-overlay { display: block; }
+}

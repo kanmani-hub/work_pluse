@@ -136,24 +136,24 @@ const EmployeeWfh: React.FC = () => {
         </div>
       ) : (
         <>
-          <div className="summary-cards-scroll">
-            <div className="summary-card-small">
+          <div className="tracking-kpi-grid">
+            <div className="tracking-kpi-card">
               <div className="sc-title">WFH Used</div>
               <div className="sc-val">4 Days</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">WFH Remaining</div>
               <div className="sc-val">6 Days</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Pending Requests</div>
               <div className="sc-val" style={{ color: 'var(--warning)' }}>1</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Approved</div>
               <div className="sc-val" style={{ color: 'var(--success)' }}>3</div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Rejected</div>
               <div className="sc-val" style={{ color: 'var(--danger)' }}>0</div>
             </div>
@@ -517,9 +517,7 @@ const EmployeeWfh: React.FC = () => {
         
         
         
-        .summary-cards-scroll {
-          display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: thin;
-        }
+        
         
         
         

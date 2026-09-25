@@ -167,27 +167,27 @@ const AdminShifts: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon"><Clock size={18} /></div></div>
             <div className="sc-val">5</div>
             <div className="sc-title">Total Shifts</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-100)', color: 'var(--success)' }}><CheckCircle2 size={18} /></div></div>
             <div className="sc-val" style={{ color: 'var(--success)' }}>4</div>
             <div className="sc-title">Active Shifts</div>
           </div>
-          <div className="summary-card-small" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
+          <div className="tracking-kpi-card" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}><Users size={18} /></div></div>
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>128</div>
             <div className="sc-title">Employees Assigned</div>
           </div>
-          <div className="summary-card-small" onClick={() => setFilterOvernight('Overnight')} style={{ cursor: 'pointer' }}>
+          <div className="tracking-kpi-card" onClick={() => setFilterOvernight('Overnight')} style={{ cursor: 'pointer' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--purple-100)', color: 'var(--purple-700)' }}><Moon size={18} /></div></div>
             <div className="sc-val" style={{ color: 'var(--purple-700)' }}>1</div>
             <div className="sc-title">Overnight Shifts</div>
           </div>
-          <div className="summary-card-small" onClick={() => navigate('/admin/roster')} style={{ cursor: 'pointer' }}>
+          <div className="tracking-kpi-card" onClick={() => navigate('/admin/roster')} style={{ cursor: 'pointer' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-100)', color: 'var(--warning)' }}><Activity size={18} /></div></div>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>64</div>
             <div className="sc-title">Rotational Employees</div>

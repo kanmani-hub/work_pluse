@@ -136,27 +136,27 @@ const AuditLogs: React.FC = () => {
          <div className="skeleton" style={{ height: '100px', borderRadius: 'var(--radius-md)' }} />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileText size={14}/> Total Events</div>
             <div className="sc-val">2,846</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Clock size={14}/> Today</div>
             <div className="sc-val">126</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><ShieldCheck size={14}/> Admin Actions</div>
             <div className="sc-val">84</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users size={14}/> HR Actions</div>
             <div className="sc-val">31</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--warning)' }}><Lock size={14}/> Security Events</div>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>11</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)' }}><AlertTriangle size={14}/> Critical Events</div>
             <div className="sc-val" style={{ color: 'var(--danger)' }}>3</div>
           </div>

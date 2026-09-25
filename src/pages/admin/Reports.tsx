@@ -276,21 +276,21 @@ const AdminReports: React.FC = () => {
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users size={16}/> Total Employees</div>
               {renderTrend('+12 vs last mo', true)}
             </div>
             <div className="sc-val" style={{ marginTop: '0.5rem' }}>{mockStats.totalEmployees}</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Activity size={16}/> Attendance Rate</div>
               {renderTrend('+1.2% vs last mo', true)}
             </div>
             <div className="sc-val" style={{ marginTop: '0.5rem' }}>{mockStats.attendanceRate}</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle2 size={16}/> Present Today</div>
               {renderTrend('-2 vs yesterday', false)}
@@ -492,16 +492,16 @@ const AdminReports: React.FC = () => {
               <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Department-level drill-down analytics for the selected date range.</p>
               
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem' }}>
-                <div className="summary-card-small" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
+                <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
                   <div className="sc-val">42</div><div className="sc-title">Employees</div>
                 </div>
-                <div className="summary-card-small" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
+                <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
                   <div className="sc-val">96%</div><div className="sc-title">Attendance Rate</div>
                 </div>
-                <div className="summary-card-small" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
+                <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
                   <div className="sc-val">8h 45m</div><div className="sc-title">Avg Working Hrs</div>
                 </div>
-                <div className="summary-card-small" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
+                <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
                   <div className="sc-val">₹6.2L</div><div className="sc-title">Payroll Total</div>
                 </div>
               </div>

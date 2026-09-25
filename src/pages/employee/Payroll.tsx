@@ -59,26 +59,26 @@ const EmployeePayroll: React.FC = () => {
         </div>
       ) : (
         <>
-          <div className="summary-cards-scroll">
-            <div className="summary-card-small">
+          <div className="tracking-kpi-grid">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Gross Salary</div>
               <div className="sc-val" style={{ display: 'flex', alignItems: 'center' }}>
                 <IndianRupee size={16} />50,000
               </div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Total Deductions</div>
               <div className="sc-val" style={{ color: 'var(--danger)', display: 'flex', alignItems: 'center' }}>
                 -<IndianRupee size={16} />4,596.16
               </div>
             </div>
-            <div className="summary-card-small" style={{ backgroundColor: 'var(--success-50)', borderColor: 'var(--success-200)' }}>
+            <div className="tracking-kpi-card" style={{ backgroundColor: 'var(--success-50)', borderColor: 'var(--success-200)' }}>
               <div className="sc-title">Net Salary</div>
               <div className="sc-val" style={{ color: 'var(--success)', display: 'flex', alignItems: 'center' }}>
                 <IndianRupee size={16} />45,403.84
               </div>
             </div>
-            <div className="summary-card-small">
+            <div className="tracking-kpi-card">
               <div className="sc-title">Payment Status</div>
               <div className="sc-val" style={{ color: 'var(--success)' }}>PAID</div>
             </div>
@@ -397,7 +397,7 @@ const EmployeePayroll: React.FC = () => {
       )}
 
       <style>{`
-        .summary-cards-scroll { display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 0.5rem; scrollbar-width: thin; }
+        
         
         
         

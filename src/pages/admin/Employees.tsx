@@ -159,27 +159,27 @@ const AdminEmployees: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="summary-card-small" onClick={() => setFilterStatus('All')} style={{ cursor: 'pointer', borderColor: filterStatus==='All' ? 'var(--primary-300)' : '' }}>
+          <div className="tracking-kpi-card" onClick={() => setFilterStatus('All')} style={{ cursor: 'pointer', borderColor: filterStatus==='All' ? 'var(--primary-300)' : '' }}>
             <div className="sc-header"><div className="sc-icon"><Users size={18} /></div></div>
             <div className="sc-val">128</div>
             <div className="sc-title">Total Employees</div>
           </div>
-          <div className="summary-card-small" onClick={() => setFilterStatus('Active')} style={{ cursor: 'pointer', borderColor: filterStatus==='Active' ? 'var(--success-300)' : '' }}>
+          <div className="tracking-kpi-card" onClick={() => setFilterStatus('Active')} style={{ cursor: 'pointer', borderColor: filterStatus==='Active' ? 'var(--success-300)' : '' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-100)', color: 'var(--success)' }}><UserCheck size={18} /></div></div>
             <div className="sc-val" style={{ color: 'var(--success)' }}>118</div>
             <div className="sc-title">Active</div>
           </div>
-          <div className="summary-card-small" onClick={() => setFilterStatus('Inactive')} style={{ cursor: 'pointer', borderColor: filterStatus==='Inactive' ? 'var(--gray-300)' : '' }}>
+          <div className="tracking-kpi-card" onClick={() => setFilterStatus('Inactive')} style={{ cursor: 'pointer', borderColor: filterStatus==='Inactive' ? 'var(--gray-300)' : '' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--gray-200)', color: 'var(--gray-700)' }}><UserX size={18} /></div></div>
             <div className="sc-val" style={{ color: 'var(--gray-700)' }}>6</div>
             <div className="sc-title">Inactive</div>
           </div>
-          <div className="summary-card-small" onClick={() => setFilterStatus('On Leave')} style={{ cursor: 'pointer', borderColor: filterStatus==='On Leave' ? 'var(--warning-300)' : '' }}>
+          <div className="tracking-kpi-card" onClick={() => setFilterStatus('On Leave')} style={{ cursor: 'pointer', borderColor: filterStatus==='On Leave' ? 'var(--warning-300)' : '' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-100)', color: 'var(--warning)' }}><CalendarOff size={18} /></div></div>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>4</div>
             <div className="sc-title">On Leave</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}><Home size={18} /></div></div>
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>18</div>
             <div className="sc-title">WFH Today</div>

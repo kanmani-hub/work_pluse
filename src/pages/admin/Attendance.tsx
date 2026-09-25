@@ -191,7 +191,7 @@ const AdminAttendance: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val">{mockStats.total}</div>
             <div className="sc-title">Total Employees</div>
           </div>
@@ -215,11 +215,11 @@ const AdminAttendance: React.FC = () => {
             <div className="sc-val" style={{ color: 'var(--purple-700)' }}>{mockStats.wfh}</div>
             <div className="sc-title">WFH</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-val">{mockStats.halfDay}</div>
             <div className="sc-title">Half Day</div>
           </div>
-          <div className="summary-card-small" style={{ backgroundColor: 'var(--success-50)', borderColor: 'var(--success-200)' }}>
+          <div className="tracking-kpi-card" style={{ backgroundColor: 'var(--success-50)', borderColor: 'var(--success-200)' }}>
             <div className="sc-val" style={{ color: 'var(--success-800)' }}>{mockStats.working}</div>
             <div className="sc-title" style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}><Activity size={12}/> Currently Working</div>
           </div>

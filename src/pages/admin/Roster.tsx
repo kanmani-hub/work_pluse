@@ -182,32 +182,32 @@ const AdminRoster: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon"><Users size={16} /></div></div>
             <div className="sc-val">48</div>
             <div className="sc-title">Scheduled</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-50)', color: 'var(--warning-600)' }}><Sun size={16} /></div></div>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>18</div>
             <div className="sc-title">Morning</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-50)', color: 'var(--primary-600)' }}><Clock size={16} /></div></div>
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>12</div>
             <div className="sc-title">Evening</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--purple-50)', color: 'var(--purple-600)' }}><Moon size={16} /></div></div>
             <div className="sc-val" style={{ color: 'var(--purple-700)' }}>10</div>
             <div className="sc-title">Night</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-50)', color: 'var(--success-600)' }}><MapPin size={16} /></div></div>
             <div className="sc-val" style={{ color: 'var(--success)' }}>5</div>
             <div className="sc-title">WFH</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--gray-100)', color: 'var(--text-secondary)' }}><AlertTriangle size={16} /></div></div>
             <div className="sc-val" style={{ color: 'var(--gray-700)' }}>3</div>
             <div className="sc-title">Unassigned</div>

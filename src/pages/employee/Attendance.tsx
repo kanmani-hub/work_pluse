@@ -97,32 +97,32 @@ const EmployeeAttendance: React.FC = () => {
           {[...Array(7)].map((_, i) => <div key={i} className="skeleton" style={{ minWidth: '120px', height: '80px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
       ) : (
-        <div className="summary-cards-scroll">
-          <div className="summary-card-small">
+        <div className="tracking-kpi-grid">
+          <div className="tracking-kpi-card">
             <div className="sc-title">Working Days</div>
             <div className="sc-val">{summaryStats.workingDays}</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-title">Present</div>
             <div className="sc-val" style={{ color: 'var(--success)' }}>{summaryStats.present}</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-title">Late</div>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>{summaryStats.late}</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-title">Half Day</div>
             <div className="sc-val" style={{ color: '#ca8a04' }}>{summaryStats.halfDay}</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-title">Leave</div>
             <div className="sc-val" style={{ color: '#2563eb' }}>{summaryStats.leave}</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-title">WFH</div>
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{summaryStats.wfh}</div>
           </div>
-          <div className="summary-card-small">
+          <div className="tracking-kpi-card">
             <div className="sc-title">Total Hours</div>
             <div className="sc-val">{summaryStats.totalHours}</div>
           </div>
@@ -518,13 +518,7 @@ const EmployeeAttendance: React.FC = () => {
 
       {/* Scoped CSS for complex parts of Attendance page */}
       <style>{`
-        .summary-cards-scroll {
-          display: flex;
-          gap: 1rem;
-          overflow-x: auto;
-          padding-bottom: 0.5rem;
-          scrollbar-width: thin;
-        }
+        
         
         
         
