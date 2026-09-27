@@ -41,6 +41,15 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
           <Menu size={24} />
         </button>
         
+        <div className="mobile-logo" style={{ display: 'none', fontWeight: 700, fontSize: '1.125rem', color: 'var(--text-primary)', marginLeft: '0.5rem' }} id="mobile-header-logo">
+          WorkPulse HR
+        </div>
+        <style>{`
+          @media (max-width: 1023px) {
+            #mobile-header-logo { display: block !important; }
+          }
+        `}</style>
+        
         <div className="command-search" style={{ display: 'none' }} id="desktop-search">
           <Search size={16} style={{ color: 'var(--text-muted)' }} />
           <input type="text" placeholder="Search WorkPulse..." />

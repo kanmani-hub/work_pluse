@@ -26,6 +26,7 @@ import EmployeePermission from './pages/employee/Permission';
 import EmployeePayroll from './pages/employee/Payroll';
 import EmployeePayslip from './pages/employee/Payslip';
 import './App.css';
+import './responsive.css';
 
 function App() {
   return (

@@ -253,8 +253,7 @@ const AdminDashboard: React.FC = () => {
             )}
           </div>
 
-          {/* Quick Actions & Offices */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', flexWrap: 'wrap' }}>
+          <div className="responsive-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
             
             {/* Offices Overview */}
             <div className="card">
@@ -268,11 +267,11 @@ const AdminDashboard: React.FC = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   <div style={{ backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
                     <div style={{ fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><MapPin size={16} /> Chennai Main Office</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.875rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Employees:</span><strong>72</strong></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Present:</span><strong>56</strong></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Verified:</span><strong style={{ color: 'var(--success-600)' }}>54</strong></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Issues:</span><strong style={{ color: 'var(--danger-600)' }}>2</strong></div>
+                    <div className="office-stats" style={{ fontSize: '0.875rem' }}>
+                      <div className="office-stat" style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Employees:</span><strong>72</strong></div>
+                      <div className="office-stat" style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Present:</span><strong>56</strong></div>
+                      <div className="office-stat" style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Verified:</span><strong style={{ color: 'var(--success-600)' }}>54</strong></div>
+                      <div className="office-stat" style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Issues:</span><strong style={{ color: 'var(--danger-600)' }}>2</strong></div>
                     </div>
                   </div>
                 </div>
@@ -285,11 +284,11 @@ const AdminDashboard: React.FC = () => {
               {loading ? (
                 <div className="skeleton" style={{ height: '120px' }} />
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                  <button onClick={() => navigate('/admin/employees')} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.5rem', justifyContent: 'flex-start' }}><Users size={14}/> Add Employee</button>
-                  <button onClick={() => navigate('/admin/shifts')} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.5rem', justifyContent: 'flex-start' }}><Briefcase size={14}/> Manage Shifts</button>
-                  <button onClick={() => navigate('/admin/payroll')} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.5rem', justifyContent: 'flex-start' }}><Wallet size={14}/> Process Payroll</button>
-                  <button onClick={() => navigate('/admin/reports')} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.5rem', justifyContent: 'flex-start' }}><Activity size={14}/> View Reports</button>
+                <div className="quick-actions-grid">
+                  <button onClick={() => navigate('/admin/employees')} className="btn btn-outline quick-action" style={{ fontSize: '0.75rem', padding: '0.5rem', justifyContent: 'flex-start' }}><Users size={14}/> <span>Add Employee</span></button>
+                  <button onClick={() => navigate('/admin/shifts')} className="btn btn-outline quick-action" style={{ fontSize: '0.75rem', padding: '0.5rem', justifyContent: 'flex-start' }}><Briefcase size={14}/> <span>Manage Shifts</span></button>
+                  <button onClick={() => navigate('/admin/payroll')} className="btn btn-outline quick-action" style={{ fontSize: '0.75rem', padding: '0.5rem', justifyContent: 'flex-start' }}><Wallet size={14}/> <span>Process Payroll</span></button>
+                  <button onClick={() => navigate('/admin/reports')} className="btn btn-outline quick-action" style={{ fontSize: '0.75rem', padding: '0.5rem', justifyContent: 'flex-start' }}><Activity size={14}/> <span>View Reports</span></button>
                 </div>
               )}
             </div>
