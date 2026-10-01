@@ -1,0 +1,120 @@
+Created At: 2026-09-30T18:42:28+05:30
+Completed At: 2026-09-30T18:42:28+05:30
+File Path: `file:///d:/KANZ/Prasath/work_pluse/src/services/location/locationAutocomplete.ts`
+Total Lines: 157
+Total Bytes: 5023
+Showing lines 1 to 157
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+1: /**
+2:  * Location Autocomplete Service
+3:  * 
+4:  * Uses Google Places API (New) with AutocompleteSuggestion and fetchFields
+5:  */
+6: 
+7: declare global {
+8:   interface Window {
+9:     google: any;
+10:   }
+11: }
+12: 
+13: export interface LocationSuggestion {
+14:   placeId: string;
+15:   displayName: string;
+16:   primaryText: string;
+17:   secondaryText: string;
+18:   latitude?: number;
+19:   longitude?: number;
+20:   _placePrediction?: any;
+21: }
+22: 
+23: export interface PlaceDetails {
+24:   latitude: number;
+25:   longitude: number;
+26:   formattedAddress: string;
+27: }
+28: 
+29: export interface LocationProvider {
+30:   search(query: string, signal?: AbortSignal): Promise<LocationSuggestion[]>;
+31:   getDetails(placeId: string, suggestion?: LocationSuggestion): Promise<PlaceDetails>;
+32: }
+33: 
+34: let googleMapsPromise: Promise<void> | null = null;
+35: 
+36: function loadGoogleMapsCore(): Promise<void> {
+37:   if (window.google?.maps?.importLibrary) return Promise.resolve();
+38:   if (googleMapsPromise) return googleMapsPromise;
+39:   
+40:   googleMapsPromise = new Promise((resolve, reject) => {
+41:     const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+42:     if (!apiKey) {
+43:       reject(new Error("Location search is not configured correctly."));
+44:       return;
+45:     }
+46:     
+47:     const existing = document.getElementById('google-maps-script');
+48:     if (existing) {
+49:       resolve();
+50:       return;
+51:     }
+52:     
+53:     // Inject the modern Google Maps inline bootstrap loader
+54:     const script = document.c
+<truncated 2159 bytes>
+ons.length === 0) {
+102:         return [];
+103:       }
+104: 
+105:       return suggestions.map((s: any) => ({
+106:         placeId: s.placePrediction.placeId,
+107:         displayName: s.placePrediction.text.text,
+108:         primaryText: s.placePrediction.text.text,
+109:         secondaryText: '',
+110:         _placePrediction: s.placePrediction
+111:       }));
+112: 
+113:     } catch (error: any) {
+114:       if (error.name === 'AbortError' || searchId !== currentSearchId) {
+115:         throw new DOMException('Aborted', 'AbortError');
+116:       }
+117:       throw new Error(`Google Places API error: ${error.message}`);
+118:     }
+119:   },
+120: 
+121:   async getDetails(placeId: string, suggestion?: LocationSuggestion): Promise<PlaceDetails> {
+122:     await loadGoogleMapsCore();
+123:     
+124:     try {
+125:       const { AutocompleteSessionToken, Place } = await window.google.maps.importLibrary("places");
+126:       
+127:       let place;
+128:       if (suggestion && suggestion._placePrediction) {
+129:         place = suggestion._placePrediction.toPlace();
+130:       } else {
+131:         place = new Place({ id: placeId });
+132:       }
+133: 
+134:       await place.fetchFields({
+135:         fields: ["displayName", "formattedAddress", "location"]
+136:       });
+137: 
+138:       // Refresh token for the next session
+139:       sessionToken = new AutocompleteSessionToken();
+140: 
+141:       if (!place.location) {
+142:         throw new Error("Place has no location coordinates.");
+143:       }
+144: 
+145:       return {
+146:         latitude: place.location.lat(),
+147:         longitude: place.location.lng(),
+148:         formattedAddress: place.formattedAddress || place.displayName || ''
+149:       };
+150:     } catch (error: any) {
+151:       throw new Error(`Failed to fetch place details: ${error.message}`);
+152:     }
+153:   }
+154: };
+155: 
+156: export const locationAutocomplete: LocationProvider = googlePlacesProvider;
+157: 
+The above content shows the entire, complete file contents of the requested file.

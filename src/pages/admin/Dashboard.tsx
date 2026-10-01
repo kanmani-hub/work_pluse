@@ -6,16 +6,7 @@ import {
   ChevronRight, CalendarDays, ShieldAlert, ArrowRight, ArrowUpRight
 } from 'lucide-react';
 
-const mockLiveStatus = [
-  { id: 'EMP001', name: 'Arun Kumar', dept: 'Development', shift: 'Evening Shift', scheduled: '2:00 PM - 11:00 PM', mode: 'OFFICE', status: 'Working', in: '02:03 PM', time: '04h 32m', break: '32m', loc: 'Verified' },
-  { id: 'EMP002', name: 'Meena', dept: 'HR', shift: 'General Shift', scheduled: '9:00 AM - 6:00 PM', mode: 'WFH', status: 'Working', in: '09:02 AM', time: '06h 15m', break: '1h', loc: 'Not Required' },
-  { id: 'EMP003', name: 'Rahul', dept: 'Marketing', shift: 'Morning Shift', scheduled: '6:00 AM - 3:00 PM', mode: 'OFFICE', status: 'On Break', in: '06:15 AM', time: '06h 40m', break: '45m', loc: 'Verified' },
-  { id: 'EMP004', name: 'Priya', dept: 'Sales', shift: 'General Shift', scheduled: '9:00 AM - 6:00 PM', mode: 'OFFICE', status: 'Late', in: '10:30 AM', time: '03h 00m', break: '0m', loc: 'Verified' },
-];
-
-const mockWFH = [{ id: 1, emp: 'Arun Kumar', date: '26 Sep', type: 'Full Day', reason: 'Personal Work', requested: '24 Sep', status: 'Pending' }];
-const mockLeave = [{ id: 2, emp: 'Rahul', type: 'Sick Leave', from: '28 Sep', to: '29 Sep', days: '2', reason: 'Fever', status: 'Pending' }];
-const mockPermission = [{ id: 3, emp: 'Priya', date: '25 Sep', type: 'Late Arrival', start: '09:00 AM', end: '10:30 AM', duration: '1h 30m', status: 'Pending' }];
+import { supabase } from '../../lib/supabase';
 
 const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -28,14 +19,81 @@ const AdminDashboard: React.FC = () => {
   const [rejectModal, setRejectModal] = useState<{type: string, id: number} | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
-  // Local state for requests to mock approve/reject
-  const [wfhReqs, setWfhReqs] = useState(mockWFH);
-  const [leaveReqs, setLeaveReqs] = useState(mockLeave);
-  const [permReqs, setPermReqs] = useState(mockPermission);
+  // Real state
+  const [stats, setStats] = useState({ employees: 0, wfhPending: 0, leavePending: 0, permPending: 0, working: 0 });
+  const [wfhReqs, setWfhReqs] = useState<any[]>([]);
+  const [leaveReqs, setLeaveReqs] = useState<any[]>([]);
+  const [permReqs, setPermReqs] = useState<any[]>([]);
+  const [liveStatus, setLiveStatus] = useState<any[]>([]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 800);
-    return () => clearTimeout(timer);
+    const fetchDashboardData = async () => {
+      setLoading(true);
+      try {
+        const [
+          { count: empCount },
+          { data: wfhData },
+          { data: leaveData },
+          { data: permData },
+          { count: workingCount }
+        ] = await Promise.all([
+          supabase.from('employees').select('*', { count: 'exact', head: true }),
+          supabase.from('wfh_requests').select(`*, employees(first_name, last_name, employee_code, departments(name))`).eq('status', 'PENDING').limit(5),
+          supabase.from('leave_requests').select(`*, employees(first_name, last_name, employee_code, departments(name)), leave_types(name)`).eq('status', 'PENDING').limit(5),
+          supabase.from('permission_requests').select(`*, employees(first_name, last_name, employee_code, departments(name))`).eq('status', 'PENDING').limit(5),
+          supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('date', new Date().toISOString().split('T')[0]).not('clock_in', 'is', null).is('clock_out', null)
+        ]);
+        
+        setStats({
+          employees: empCount || 0,
+          wfhPending: wfhData?.length || 0,
+          leavePending: leaveData?.length || 0,
+          permPending: permData?.length || 0,
+          working: workingCount || 0
+        });
+
+        if (wfhData) {
+          setWfhReqs(wfhData.map((r: any) => ({
+            id: r.id,
+            emp: `${r.employees?.first_name} ${r.employees?.last_name}`,
+            type: r.is_half_day ? 'Half Day' : 'Full Day',
+            date: new Date(r.start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+            reason: r.reason,
+            requested: new Date(r.requested_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+          })));
+        }
+
+        if (leaveData) {
+          setLeaveReqs(leaveData.map((r: any) => ({
+            id: r.id,
+            emp: `${r.employees?.first_name} ${r.employees?.last_name}`,
+            type: r.leave_types?.name,
+            days: r.total_days,
+            from: new Date(r.start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
+            to: new Date(r.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
+            reason: r.reason
+          })));
+        }
+
+        if (permData) {
+          setPermReqs(permData.map((r: any) => ({
+            id: r.id,
+            emp: `${r.employees?.first_name} ${r.employees?.last_name}`,
+            type: 'Permission',
+            date: new Date(r.permission_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
+            start: r.start_time,
+            end: r.end_time,
+            duration: `${Math.floor(r.duration_minutes / 60)}h ${r.duration_minutes % 60}m`
+          })));
+        }
+
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchDashboardData();
   }, [period]);
 
   const showToast = (msg: string) => {
@@ -108,23 +166,23 @@ const AdminDashboard: React.FC = () => {
         <div className="dashboard-stats">
           <div className="stat-card" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
             <div className="stat-header">Workforce <div className="stat-icon"><Users size={16} /></div></div>
-            <div className="stat-value">248</div>
-            <div className="stat-footer"><span className="stat-trend positive">↑ 12</span> this month</div>
+            <div className="stat-value">{stats.employees}</div>
+            <div className="stat-footer"><span className="stat-trend">{stats.employees}</span> total active</div>
           </div>
           <div className="stat-card" onClick={() => navigate('/admin/attendance')} style={{ cursor: 'pointer' }}>
             <div className="stat-header">Working <div className="stat-icon success"><Briefcase size={16} /></div></div>
-            <div className="stat-value">186</div>
-            <div className="stat-footer"><span className="stat-trend positive">↑ 92%</span> active today</div>
+            <div className="stat-value">{stats.working}</div>
+            <div className="stat-footer"><span className="stat-trend">{stats.working}</span> clocked in today</div>
           </div>
           <div className="stat-card" onClick={() => navigate('/admin/wfh')} style={{ cursor: 'pointer' }}>
             <div className="stat-header">WFH <div className="stat-icon"><Home size={16} /></div></div>
-            <div className="stat-value">42</div>
-            <div className="stat-footer"><span className="stat-trend">18 pending</span> requests</div>
+            <div className="stat-value">{stats.wfhPending}</div>
+            <div className="stat-footer"><span className="stat-trend">{stats.wfhPending} pending</span> requests</div>
           </div>
           <div className="stat-card" onClick={() => navigate('/admin/attendance')} style={{ cursor: 'pointer', borderColor: 'var(--warning)', boxShadow: '0 0 15px rgba(255, 181, 71, 0.1)' }}>
             <div className="stat-header" style={{ color: 'var(--warning)' }}>Attention <div className="stat-icon warning"><AlertTriangle size={16} /></div></div>
-            <div className="stat-value">14</div>
-            <div className="stat-footer" style={{ color: 'var(--warning)' }}>8 Late, 6 Absent</div>
+            <div className="stat-value">{(stats.leavePending + stats.permPending) || 0}</div>
+            <div className="stat-footer" style={{ color: 'var(--warning)' }}>{stats.leavePending} Leave, {stats.permPending} Perm reqs</div>
           </div>
         </div>
       )}
@@ -149,9 +207,11 @@ const AdminDashboard: React.FC = () => {
             
             {loading ? (
               <div className="skeleton" style={{ height: '250px' }} />
+            ) : liveStatus.length === 0 ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No live workforce data available.</div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
-                {mockLiveStatus.map(emp => (
+                {liveStatus.map(emp => (
                   <div key={emp.id} className="stat-card" onClick={() => setSelectedEmp(emp)} style={{ padding: '1rem', cursor: 'pointer', border: emp.status === 'Working' ? '1px solid var(--border-accent)' : '1px solid var(--border-color)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
                       <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
@@ -264,17 +324,7 @@ const AdminDashboard: React.FC = () => {
               {loading ? (
                 <div className="skeleton" style={{ height: '120px' }} />
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <div style={{ backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
-                    <div style={{ fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><MapPin size={16} /> Chennai Main Office</div>
-                    <div className="office-stats" style={{ fontSize: '0.875rem' }}>
-                      <div className="office-stat" style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Employees:</span><strong>72</strong></div>
-                      <div className="office-stat" style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Present:</span><strong>56</strong></div>
-                      <div className="office-stat" style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Verified:</span><strong style={{ color: 'var(--success-600)' }}>54</strong></div>
-                      <div className="office-stat" style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Issues:</span><strong style={{ color: 'var(--danger-600)' }}>2</strong></div>
-                    </div>
-                  </div>
-                </div>
+                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No office attendance available.</div>
               )}
             </div>
 
@@ -308,23 +358,7 @@ const AdminDashboard: React.FC = () => {
             {loading ? (
               <div className="skeleton" style={{ height: '180px' }} />
             ) : (
-              <>
-                <div style={{ display: 'flex', height: '12px', borderRadius: '6px', overflow: 'hidden', marginBottom: '1rem' }}>
-                  <div style={{ width: '60%', backgroundColor: 'var(--success)' }} title="Present: 96"></div>
-                  <div style={{ width: '15%', backgroundColor: 'var(--primary-400)' }} title="WFH: 18"></div>
-                  <div style={{ width: '10%', backgroundColor: 'var(--danger-400)' }} title="Late: 12"></div>
-                  <div style={{ width: '8%', backgroundColor: 'var(--gray-300)' }} title="Absent: 10"></div>
-                  <div style={{ width: '7%', backgroundColor: 'var(--gray-500)' }} title="Leave: 8"></div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.875rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--success)' }}/> <span>Present (96)</span></div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--primary-400)' }}/> <span>WFH (18)</span></div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--danger-400)' }}/> <span>Late (12)</span></div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--gray-300)' }}/> <span>Absent (10)</span></div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--gray-500)' }}/> <span>Leave (8)</span></div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--warning)' }}/> <span>Half Day (4)</span></div>
-                </div>
-              </>
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No attendance data available for today.</div>
             )}
           </div>
 
@@ -337,13 +371,7 @@ const AdminDashboard: React.FC = () => {
             {loading ? (
               <div className="skeleton" style={{ height: '150px' }} />
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.875rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid var(--gray-100)' }}><span style={{ color: 'var(--text-secondary)' }}>Morning Shift</span><strong>32</strong></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid var(--gray-100)' }}><span style={{ color: 'var(--text-secondary)' }}>General Shift</span><strong>48</strong></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid var(--gray-100)' }}><span style={{ color: 'var(--text-secondary)' }}>Evening Shift</span><strong>28</strong></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', paddingBottom: '0.5rem', borderBottom: '1px solid var(--gray-100)' }}><span style={{ color: 'var(--text-secondary)' }}>Night Shift</span><strong>12</strong></div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>* Configured shifts and counts.</div>
-              </div>
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No shift assignments available.</div>
             )}
           </div>
 
@@ -356,25 +384,7 @@ const AdminDashboard: React.FC = () => {
             {loading ? (
               <div className="skeleton" style={{ height: '180px' }} />
             ) : (
-              <>
-                {/* Payroll Alert Mock */}
-                <div style={{ backgroundColor: 'var(--warning-50)', color: 'var(--warning-800)', padding: '0.75rem', borderRadius: 'var(--radius-md)', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                  <AlertTriangle size={16} style={{ flexShrink: 0 }} />
-                  <strong>8 payments are pending transfer.</strong>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Generated:</span><strong>128</strong></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Approved:</span><strong style={{ color: 'var(--success-600)' }}>120</strong></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--text-secondary)' }}>Paid:</span><strong>110</strong></div>
-                  
-                  <div style={{ marginTop: '0.5rem', paddingTop: '0.75rem', borderTop: '1px dashed var(--gray-300)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}><span style={{ color: 'var(--text-secondary)' }}>Gross:</span><strong>₹64.0L</strong></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}><span style={{ color: 'var(--text-secondary)' }}>Deductions:</span><strong style={{ color: 'var(--danger-600)' }}>-₹4.5L</strong></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1rem', fontWeight: 600, marginTop: '0.25rem' }}><span>Net:</span><span style={{ color: 'var(--success)' }}>₹59.5L</span></div>
-                  </div>
-                </div>
-              </>
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No payroll records found.</div>
             )}
           </div>
 
@@ -384,33 +394,7 @@ const AdminDashboard: React.FC = () => {
             {loading ? (
               <div className="skeleton" style={{ height: '200px' }} />
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', position: 'relative', paddingLeft: '1rem' }}>
-                <div style={{ position: 'absolute', left: '7px', top: '8px', bottom: '8px', width: '2px', backgroundColor: 'var(--gray-200)' }} />
-                
-                <div style={{ position: 'relative' }}>
-                  <div style={{ position: 'absolute', left: '-1rem', top: '4px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--primary-500)' }} />
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>10:24 AM</div>
-                  <div style={{ fontSize: '0.875rem' }}>HR approved WFH request for Arun Kumar</div>
-                </div>
-                
-                <div style={{ position: 'relative' }}>
-                  <div style={{ position: 'absolute', left: '-1rem', top: '4px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--success)' }} />
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>10:12 AM</div>
-                  <div style={{ fontSize: '0.875rem' }}>Employee Meena clocked in from Chennai Office</div>
-                </div>
-                
-                <div style={{ position: 'relative' }}>
-                  <div style={{ position: 'absolute', left: '-1rem', top: '4px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--gray-400)' }} />
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>09:55 AM</div>
-                  <div style={{ fontSize: '0.875rem' }}>Leave request submitted by Rahul</div>
-                </div>
-
-                <div style={{ position: 'relative' }}>
-                  <div style={{ position: 'absolute', left: '-1rem', top: '4px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--success)' }} />
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>09:40 AM</div>
-                  <div style={{ fontSize: '0.875rem' }}>Payroll approved for September 2026</div>
-                </div>
-              </div>
+              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No audit activity available.</div>
             )}
           </div>
 

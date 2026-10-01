@@ -7,38 +7,10 @@ import {
   Activity, ArrowRight, ShieldAlert, History
 } from 'lucide-react';
 
-const mockKPIs = {
-  total: 32, pending: 6, approvedToday: 8, activeToday: 4, rejected: 3, totalHours: '18h 30m', alerts: 2
-};
+import { permissionService } from '../../services/permission/permissionService';
+import { realtimeService } from '../../services/realtime/realtimeService';
 
-const mockPermissions = [
-  { 
-    id: 'p1', empId: 'EMP001', name: 'Arun Kumar', dept: 'Engineering', date: '24 Sep 2026',
-    startTime: '14:00', endTime: '15:30', duration: '1h 30m', reason: 'Personal work', 
-    status: 'PENDING', shift: '09:00 AM - 06:00 PM', conflict: 'None', appliedOn: '23 Sep 2026'
-  },
-  { 
-    id: 'p2', empId: 'EMP002', name: 'Priya Sharma', dept: 'HR', date: '24 Sep 2026',
-    startTime: '11:00', endTime: '12:00', duration: '1h 00m', reason: 'Bank work', 
-    status: 'APPROVED', shift: '09:00 AM - 06:00 PM', conflict: 'WFH', appliedOn: '23 Sep 2026'
-  },
-  { 
-    id: 'p3', empId: 'EMP003', name: 'Kumar Raj', dept: 'Support', date: '24 Sep 2026',
-    startTime: '17:30', endTime: '19:00', duration: '1h 30m', reason: 'Doctor appointment', 
-    status: 'PENDING', shift: '09:00 AM - 06:00 PM', conflict: 'Outside Scheduled Shift', appliedOn: '24 Sep 2026'
-  },
-  { 
-    id: 'p4', empId: 'EMP004', name: 'Anitha S', dept: 'Finance', date: '25 Sep 2026',
-    startTime: '10:00', endTime: '12:00', duration: '2h 00m', reason: 'Emergency', 
-    status: 'PENDING', shift: '09:00 AM - 06:00 PM', conflict: 'LEAVE CONFLICT', appliedOn: '24 Sep 2026'
-  },
-];
-
-const mockUsage = [
-  { empId: 'EMP001', name: 'Arun Kumar', allowed: '10h', used: '6h', pending: '1h 30m', remaining: '2h 30m', status: 'Normal' },
-  { empId: 'EMP002', name: 'Priya Sharma', allowed: '8h', used: '8h', pending: '1h', remaining: '0h', status: 'Limit Alert' },
-  { empId: 'EMP003', name: 'Kumar Raj', allowed: '10h', used: '2h', pending: '1h 30m', remaining: '6h 30m', status: 'Normal' },
-];
+const mockUsage: any[] = [];
 
 const AdminPermission: React.FC = () => {
   const navigate = useNavigate();
@@ -62,11 +34,56 @@ const AdminPermission: React.FC = () => {
   
   // Forms
   const [reasonForm, setReasonForm] = useState('');
-  const [requests, setRequests] = useState(mockPermissions);
+  const [requests, setRequests] = useState<any[]>([]);
+
+  const fetchRequests = async () => {
+    setLoading(true);
+    const { data } = await permissionService.getPermissionRequests();
+    if (data) {
+      setRequests(data.map((r: any) => {
+        const hDur = Math.floor(r.duration_minutes / 60);
+        const mDur = r.duration_minutes % 60;
+        
+        const formatTime = (t: string) => {
+          if(!t) return '';
+          const [hh, mm] = t.split(':');
+          let hours = parseInt(hh, 10);
+          const ampm = hours >= 12 ? 'PM' : 'AM';
+          hours = hours % 12 || 12;
+          return `${hours.toString().padStart(2, '0')}:${mm} ${ampm}`;
+        };
+
+        return {
+          id: r.id,
+          empId: r.employees?.employee_code || '-',
+          name: r.employees ? `${r.employees.first_name} ${r.employees.last_name}` : 'Unknown',
+          dept: r.employees?.departments?.name || '-',
+          date: new Date(r.permission_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+          startTime: formatTime(r.start_time),
+          endTime: formatTime(r.end_time),
+          duration: `${hDur}h ${mDur}m`,
+          reason: r.reason,
+          status: r.status,
+          shift: '-', // Mocks
+          conflict: 'None',
+          appliedOn: new Date(r.requested_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+          reviewer_remarks: r.reviewer_remarks
+        };
+      }));
+    }
+    setLoading(false);
+  };
 
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 500);
-    return () => clearTimeout(timer);
+    fetchRequests();
+
+    const channel = realtimeService.subscribeToAdminPermission((payload) => {
+      fetchRequests();
+    });
+
+    return () => {
+      realtimeService.unsubscribe(channel);
+    };
   }, []);
 
   const showToast = (msg: string) => {
@@ -107,32 +124,49 @@ const AdminPermission: React.FC = () => {
     return `${h}h ${m}m`;
   };
 
-  const handleApprove = (e: React.FormEvent) => {
+  const handleApprove = async (e: React.FormEvent) => {
     e.preventDefault();
-    setRequests(prev => prev.map(r => r.id === approveModal ? { ...r, status: 'APPROVED' } : r));
-    if (detailDrawer?.id === approveModal) setDetailDrawer({ ...detailDrawer, status: 'APPROVED' });
+    if (!approveModal) return;
+    const { error } = await permissionService.reviewPermissionRequest(approveModal, 'APPROVED', reasonForm);
+    if (error) {
+      alert(error.message);
+      return;
+    }
     setApproveModal(null);
+    setReasonForm('');
     showToast('Permission approved successfully.');
+    fetchRequests();
+    setDetailDrawer(null);
   };
 
-  const handleReject = (e: React.FormEvent) => {
+  const handleReject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reasonForm) return;
-    setRequests(prev => prev.map(r => r.id === rejectModal ? { ...r, status: 'REJECTED' } : r));
-    if (detailDrawer?.id === rejectModal) setDetailDrawer({ ...detailDrawer, status: 'REJECTED' });
+    if (!reasonForm || !rejectModal) return;
+    const { error } = await permissionService.reviewPermissionRequest(rejectModal, 'REJECTED', reasonForm);
+    if (error) {
+      alert(error.message);
+      return;
+    }
     setRejectModal(null);
     setReasonForm('');
     showToast('Permission request rejected.');
+    fetchRequests();
+    setDetailDrawer(null);
   };
 
-  const handleRevoke = (e: React.FormEvent) => {
+  const handleRevoke = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reasonForm) return;
-    setRequests(prev => prev.map(r => r.id === revokeModal ? { ...r, status: 'REVOKED' } : r));
-    if (detailDrawer?.id === revokeModal) setDetailDrawer({ ...detailDrawer, status: 'REVOKED' });
+    if (!reasonForm || !revokeModal) return;
+    const { error } = await permissionService.reviewPermissionRequest(revokeModal, 'CANCELLED', reasonForm);
+    if (error) {
+      alert(error.message);
+      return;
+    }
     setRevokeModal(null);
     setReasonForm('');
     showToast('Permission revoked successfully.');
+    fetchRequests();
+    setDetailDrawer(null);
   };
 
   return (
@@ -162,38 +196,60 @@ const AdminPermission: React.FC = () => {
         <div className="skeleton-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '1rem' }}>
           {[...Array(7)].map((_, i) => <div key={i} className="skeleton" style={{ height: '70px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
-      ) : (
+      ) : (() => {
+        let totalMinutes = 0;
+        requests.forEach(r => {
+          if (r.status === 'APPROVED') {
+             const m = r.duration.match(/(\d+)h (\d+)m/);
+             if (m) {
+               totalMinutes += parseInt(m[1]) * 60 + parseInt(m[2]);
+             }
+          }
+        });
+        const h = Math.floor(totalMinutes / 60);
+        const m = totalMinutes % 60;
+        const kpis = {
+          total: requests.length,
+          pending: pendingRequests.length,
+          approvedToday: requests.filter(r => r.status === 'APPROVED' && r.appliedOn === new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })).length,
+          activeToday: requests.filter(r => r.status === 'APPROVED' && r.date === new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })).length,
+          rejected: requests.filter(r => r.status === 'REJECTED').length,
+          totalHours: `${h}h ${m}m`,
+          alerts: 0 // usage alerts not implemented in mock
+        };
+        return (
         <div className="kpi-grid">
           <div className="tracking-kpi-card">
-            <div className="sc-val">{mockKPIs.total}</div>
+            <div className="sc-val">{kpis.total}</div>
             <div className="sc-title">Total Requests</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => { setView('Requests'); setFilterStatus('PENDING'); }}>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>{mockKPIs.pending}</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.pending}</div>
             <div className="sc-title">Pending</div>
           </div>
           <div className="tracking-kpi-card">
-            <div className="sc-val" style={{ color: 'var(--success)' }}>{mockKPIs.approvedToday}</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.approvedToday}</div>
             <div className="sc-title">Approved Today</div>
           </div>
           <div className="tracking-kpi-card">
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{mockKPIs.activeToday}</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.activeToday}</div>
             <div className="sc-title">Active Today</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => { setView('Requests'); setFilterStatus('REJECTED'); }}>
-            <div className="sc-val" style={{ color: 'var(--text-secondary)' }}>{mockKPIs.rejected}</div>
+            <div className="sc-val" style={{ color: 'var(--text-secondary)' }}>{kpis.rejected}</div>
             <div className="sc-title">Rejected</div>
           </div>
           <div className="tracking-kpi-card">
-            <div className="sc-val">{mockKPIs.totalHours}</div>
+            <div className="sc-val">{kpis.totalHours}</div>
             <div className="sc-title">Total Hours</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setView('Usage')}>
-            <div className="sc-val" style={{ color: 'var(--danger)' }}>{mockKPIs.alerts}</div>
+            <div className="sc-val" style={{ color: 'var(--danger)' }}>{kpis.alerts}</div>
             <div className="sc-title">Limit Alerts</div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Date & View Controls */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--gray-200)', flexWrap: 'wrap', gap: '1rem' }}>
@@ -342,23 +398,7 @@ const AdminPermission: React.FC = () => {
               <div style={{ position: 'absolute', top: '-12px', left: 0, fontSize: '0.75rem', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-surface-elevated)', padding: '0 4px' }}>09:00 AM</div>
               <div style={{ position: 'absolute', top: '-12px', right: 0, fontSize: '0.75rem', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-surface-elevated)', padding: '0 4px' }}>06:00 PM</div>
               
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
-                <div style={{ width: '120px', fontWeight: 600, fontSize: '0.875rem' }}>Arun Kumar</div>
-                <div style={{ flex: 1, backgroundColor: 'var(--gray-100)', height: '24px', borderRadius: '4px', position: 'relative', display: 'flex' }}>
-                  <div style={{ width: '45%', backgroundColor: 'var(--success-100)', borderRight: '1px solid white' }}></div>
-                  <div style={{ width: '15%', backgroundColor: 'var(--warning-200)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700 }}>2-3:30 (P)</div>
-                  <div style={{ flex: 1, backgroundColor: 'var(--success-100)', borderLeft: '1px solid white' }}></div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                <div style={{ width: '120px', fontWeight: 600, fontSize: '0.875rem' }}>Priya Sharma</div>
-                <div style={{ flex: 1, backgroundColor: 'var(--gray-100)', height: '24px', borderRadius: '4px', position: 'relative', display: 'flex' }}>
-                  <div style={{ width: '20%', backgroundColor: 'var(--success-100)', borderRight: '1px solid white' }}></div>
-                  <div style={{ width: '10%', backgroundColor: 'var(--primary-200)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700 }}>11-12 (P)</div>
-                  <div style={{ flex: 1, backgroundColor: 'var(--success-100)', borderLeft: '1px solid white' }}></div>
-                </div>
-              </div>
+              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No timeline data available.</div>
             </div>
           </div>
         </div>
@@ -379,18 +419,22 @@ const AdminPermission: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {mockUsage.map((u, i) => (
-                  <tr key={i}>
-                    <td style={{ fontWeight: 600 }}>{u.name} <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 400 }}>({u.empId})</span></td>
-                    <td style={{ textAlign: 'right' }}>{u.allowed}</td>
-                    <td style={{ textAlign: 'right' }}>{u.used}</td>
-                    <td style={{ textAlign: 'right' }}>{u.pending}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 600, color: u.remaining === '0h' ? 'var(--danger-600)' : 'var(--primary-700)' }}>{u.remaining}</td>
-                    <td>
-                      {u.status === 'Limit Alert' ? <span className="badge badge-danger">LIMIT ALERT</span> : <span className="badge badge-success">NORMAL</span>}
-                    </td>
-                  </tr>
-                ))}
+                {mockUsage.length === 0 ? (
+                  <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>No usage data available</td></tr>
+                ) : (
+                  mockUsage.map((u, i) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 600 }}>{u.name} <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 400 }}>({u.empId})</span></td>
+                      <td style={{ textAlign: 'right' }}>{u.allowed}</td>
+                      <td style={{ textAlign: 'right' }}>{u.used}</td>
+                      <td style={{ textAlign: 'right' }}>{u.pending}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600, color: u.remaining === '0h' ? 'var(--danger-600)' : 'var(--primary-700)' }}>{u.remaining}</td>
+                      <td>
+                        {u.status === 'Limit Alert' ? <span className="badge badge-danger">LIMIT ALERT</span> : <span className="badge badge-success">NORMAL</span>}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

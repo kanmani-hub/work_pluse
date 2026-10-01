@@ -6,75 +6,15 @@ import {
   Camera, AlertCircle, CheckCircle2, AlertTriangle, 
   X, History, Activity, ShieldCheck, Map, Edit
 } from 'lucide-react';
+import { attendanceService } from '../../services/attendance/attendanceService';
+import { realtimeService } from '../../services/realtime/realtimeService';
 
-// Mock Data
-const mockStats = {
-  total: 48, present: 36, absent: 4, late: 5, onLeave: 2, wfh: 6, halfDay: 1, working: 24
-};
 
-const mockAttendance = [
-  { 
-    id: 'a1', empId: 'EMP001', name: 'Arun Kumar', dept: 'Development', office: 'Chennai',
-    shift: 'Night', shiftTime: '10:00 PM - 07:00 AM', overnight: true, mode: 'Office',
-    clockIn: '10:07 PM', clockOut: '06:58 AM', workHours: '07h 51m', breakMins: 45,
-    late: '07 min', early: '02 min', status: 'LATE', locationVerified: true, faceVerified: true,
-    missingOut: false, autoLogout: false,
-    timeline: [
-      { time: '10:00 PM', event: 'Scheduled Start', type: 'info' },
-      { time: '10:07 PM', event: 'Clock In', type: 'success' },
-      { time: '01:15 AM', event: 'Break Start', type: 'warning' },
-      { time: '02:00 AM', event: 'Break End', type: 'warning' },
-      { time: '06:58 AM', event: 'Clock Out', type: 'success' },
-      { time: '07:00 AM', event: 'Scheduled End', type: 'info' }
-    ],
-    history: []
-  },
-  { 
-    id: 'a2', empId: 'EMP002', name: 'Priya Sharma', dept: 'HR', office: 'Bangalore',
-    shift: 'Morning', shiftTime: '09:00 AM - 06:00 PM', overnight: false, mode: 'WFH',
-    clockIn: '08:55 AM', clockOut: '—', workHours: '04h 30m', breakMins: 0,
-    late: '—', early: '—', status: 'PRESENT', locationVerified: null, faceVerified: true,
-    missingOut: false, autoLogout: false,
-    timeline: [], history: []
-  },
-  { 
-    id: 'a3', empId: 'EMP003', name: 'Kumar Raj', dept: 'Support', office: 'Chennai',
-    shift: 'General', shiftTime: '09:00 AM - 06:00 PM', overnight: false, mode: 'Office',
-    clockIn: '09:00 AM', clockOut: '03:30 PM', workHours: '05h 30m', breakMins: 60,
-    late: '—', early: '02h 30m', status: 'EARLY LOGOUT', locationVerified: true, faceVerified: false,
-    missingOut: false, autoLogout: false,
-    timeline: [], history: []
-  },
-  { 
-    id: 'a4', empId: 'EMP004', name: 'Anitha S', dept: 'Finance', office: 'Remote',
-    shift: 'General', shiftTime: '09:00 AM - 06:00 PM', overnight: false, mode: 'Leave',
-    clockIn: '—', clockOut: '—', workHours: '—', breakMins: 0,
-    late: '—', early: '—', status: 'LEAVE', locationVerified: null, faceVerified: null,
-    missingOut: false, autoLogout: false,
-    timeline: [], history: []
-  },
-  { 
-    id: 'a5', empId: 'EMP005', name: 'Rahul K', dept: 'Development', office: 'Chennai',
-    shift: 'General', shiftTime: '09:00 AM - 06:00 PM', overnight: false, mode: 'Office',
-    clockIn: '09:05 AM', clockOut: '—', workHours: '09h 00m', breakMins: 0,
-    late: '05 min', early: '—', status: 'AUTO LOGOUT', locationVerified: true, faceVerified: true,
-    missingOut: true, autoLogout: true,
-    timeline: [], history: []
-  }
-];
 
-const liveStatus = [
-  { emp: 'Arun Kumar', shift: 'Night', status: 'Working', since: '10:07 PM' },
-  { emp: 'Priya Sharma', shift: 'Morning', status: 'Working', since: '08:55 AM' },
-  { emp: 'Sanjay Dutt', shift: 'General', status: 'On Break', since: '01:05 PM' },
-];
+const mockAttendance: any[] = [];
 
-const exceptions = [
-  { type: 'Late', count: 5 },
-  { type: 'Early Logout', count: 1 },
-  { type: 'Missing Clock Out', count: 2 },
-  { type: 'Face Verification Failed', count: 1 }
-];
+const liveStatus: any[] = [];
+const exceptions: any[] = [];
 
 const AdminAttendance: React.FC = () => {
   const navigate = useNavigate();
@@ -96,10 +36,52 @@ const AdminAttendance: React.FC = () => {
   
   // Current Date Display
   const currentDateDisplay = 'Wednesday, 24 September 2026';
+  
+  const [attendanceData, setAttendanceData] = useState<any[]>([]);
+
+  const fetchAttendance = async () => {
+    setLoading(true);
+    // Ideally use today's date, but for now we fetch all
+    const { data } = await attendanceService.getAllAttendance();
+    if (data) {
+      setAttendanceData(data.map((a: any) => ({
+        id: a.id,
+        empId: a.employees?.employee_code || '-',
+        name: a.employees ? `${a.employees.first_name} ${a.employees.last_name}` : 'Unknown',
+        dept: a.employees?.departments?.name || '-',
+        office: '-',
+        shift: a.shift_template_id || '-',
+        shiftTime: '-',
+        overnight: false,
+        mode: a.work_mode || 'Office',
+        clockIn: a.clock_in_at ? new Date(a.clock_in_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--',
+        clockOut: a.clock_out_at ? new Date(a.clock_out_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--',
+        workHours: '-',
+        breakMins: a.break_minutes || 0,
+        late: a.late_minutes ? `${a.late_minutes} min` : '-',
+        early: a.early_logout_minutes ? `${a.early_logout_minutes} min` : '-',
+        status: a.status || 'ABSENT',
+        locationVerified: true,
+        faceVerified: true,
+        missingOut: false,
+        autoLogout: a.is_auto_logged_out || false,
+        timeline: [],
+        history: []
+      })));
+    }
+    setLoading(false);
+  };
 
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 800);
-    return () => clearTimeout(timer);
+    fetchAttendance();
+
+    const channel = realtimeService.subscribeToAdminAttendance((payload) => {
+      fetchAttendance();
+    });
+
+    return () => {
+      realtimeService.unsubscribe(channel);
+    };
   }, []);
 
   const showToast = (msg: string) => {
@@ -107,7 +89,7 @@ const AdminAttendance: React.FC = () => {
     setTimeout(() => setToast(''), 3000);
   };
 
-  const filteredData = mockAttendance.filter(a => {
+  const filteredData = attendanceData.filter(a => {
     const matchSearch = a.name.toLowerCase().includes(search.toLowerCase()) || a.empId.toLowerCase().includes(search.toLowerCase());
     const matchDept = filterDept === 'All' || a.dept === filterDept;
     const matchStatus = filterStatus === 'All' || a.status === filterStatus;
@@ -125,6 +107,17 @@ const AdminAttendance: React.FC = () => {
       case 'AUTO LOGOUT': return <span className="badge" style={{ backgroundColor: 'var(--gray-200)', color: 'var(--gray-800)' }}>AUTO LOGOUT</span>;
       default: return <span className="badge badge-gray">{status}</span>;
     }
+  };
+
+  const kpis = {
+    total: attendanceData.length,
+    present: attendanceData.filter(a => a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'EARLY LOGOUT').length,
+    absent: attendanceData.filter(a => a.status === 'ABSENT').length,
+    late: attendanceData.filter(a => a.status === 'LATE').length,
+    onLeave: attendanceData.filter(a => a.status === 'LEAVE').length,
+    wfh: attendanceData.filter(a => a.mode === 'WFH').length,
+    halfDay: 0,
+    working: attendanceData.filter(a => a.clockOut === '--:--' && (a.status === 'PRESENT' || a.status === 'LATE')).length
   };
 
   const handleSaveCorrection = (e: React.FormEvent) => {
@@ -192,35 +185,35 @@ const AdminAttendance: React.FC = () => {
       ) : (
         <div className="kpi-grid">
           <div className="tracking-kpi-card">
-            <div className="sc-val">{mockStats.total}</div>
+            <div className="sc-val">{kpis.total}</div>
             <div className="sc-title">Total Employees</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('PRESENT')}>
-            <div className="sc-val" style={{ color: 'var(--success)' }}>{mockStats.present}</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.present}</div>
             <div className="sc-title">Present</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('ABSENT')}>
-            <div className="sc-val" style={{ color: 'var(--danger)' }}>{mockStats.absent}</div>
+            <div className="sc-val" style={{ color: 'var(--danger)' }}>{kpis.absent}</div>
             <div className="sc-title">Absent</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('LATE')}>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>{mockStats.late}</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.late}</div>
             <div className="sc-title">Late</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('LEAVE')}>
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{mockStats.onLeave}</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.onLeave}</div>
             <div className="sc-title">On Leave</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setFilterMode('WFH')}>
-            <div className="sc-val" style={{ color: 'var(--purple-700)' }}>{mockStats.wfh}</div>
+            <div className="sc-val" style={{ color: 'var(--purple-700)' }}>{kpis.wfh}</div>
             <div className="sc-title">WFH</div>
           </div>
           <div className="tracking-kpi-card">
-            <div className="sc-val">{mockStats.halfDay}</div>
+            <div className="sc-val">{kpis.halfDay}</div>
             <div className="sc-title">Half Day</div>
           </div>
           <div className="tracking-kpi-card" style={{ backgroundColor: 'var(--success-50)', borderColor: 'var(--success-200)' }}>
-            <div className="sc-val" style={{ color: 'var(--success-800)' }}>{mockStats.working}</div>
+            <div className="sc-val" style={{ color: 'var(--success-800)' }}>{kpis.working}</div>
             <div className="sc-title" style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}><Activity size={12}/> Currently Working</div>
           </div>
         </div>
@@ -232,35 +225,44 @@ const AdminAttendance: React.FC = () => {
           <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <AlertCircle size={18} color="var(--danger)"/> Attendance Exceptions
           </h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-            {exceptions.map((ex, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)', border: '1px solid var(--danger-100)' }}>
-                <span style={{ fontSize: '0.875rem', color: 'var(--danger-900)' }}>{ex.type}</span>
-                <span className="badge" style={{ backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--danger)', fontWeight: 700 }}>{ex.count}</span>
-              </div>
-            ))}
-          </div>
+          {exceptions.length === 0 ? (
+            <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No exceptions found.</div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              {exceptions.map((ex, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)', border: '1px solid var(--danger-100)' }}>
+                  <span style={{ fontSize: '0.875rem', color: 'var(--danger-900)' }}>{ex.type}</span>
+                  <span className="badge" style={{ backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--danger)', fontWeight: 700 }}>{ex.count}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="card" style={{ padding: '1.25rem' }}>
           <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Activity size={18} color="var(--success)"/> Live Work Status
           </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {liveStatus.map((ls, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0', borderBottom: i !== liveStatus.length-1 ? '1px solid var(--gray-200)' : 'none' }}>
-                <div>
-                  <div style={{ fontWeight: 500, fontSize: '0.875rem' }}>{ls.emp}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{ls.shift}</div>
+          {liveStatus.length === 0 ? (
+            <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No live tracking data available.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {liveStatus.map((ls, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0', borderBottom: i !== liveStatus.length-1 ? '1px solid var(--gray-200)' : 'none' }}>
+                  <div>
+                    <div style={{ fontWeight: 500, fontSize: '0.875rem' }}>{ls.emp}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{ls.shift}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <span className={`badge ${ls.status === 'Working' ? 'badge-success' : 'badge-warning'}`}>{ls.status}</span>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Since {ls.since}</div>
+                  </div>
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '0.875rem', color: ls.status === 'Working' ? 'var(--success)' : 'var(--warning)', fontWeight: 600 }}>{ls.status}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Since {ls.since}</div>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
+
       </div>
 
       {/* Main Roster Card */}

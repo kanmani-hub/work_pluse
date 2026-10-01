@@ -5,27 +5,14 @@ import {
   AlertTriangle, Users, Eye, Edit, Trash2, ShieldAlert
 } from 'lucide-react';
 
-const initialDepartments = [
-  { id: 'd1', name: 'Development', code: 'DEV', manager: 'Rahul Kumar', employees: 42, status: 'Active', created: '10 Jan 2026', desc: 'Software engineering and product development.' },
-  { id: 'd2', name: 'Human Resources', code: 'HR', manager: 'Priya Sharma', employees: 12, status: 'Active', created: '15 Jan 2026', desc: 'Employee relations, recruitment, and payroll.' },
-  { id: 'd3', name: 'Finance', code: 'FIN', manager: 'Meena Krishnan', employees: 10, status: 'Active', created: '20 Jan 2026', desc: 'Accounting and financial planning.' },
-  { id: 'd4', name: 'Marketing', code: 'MKT', manager: 'Arun Singh', employees: 15, status: 'Active', created: '01 Feb 2026', desc: 'Brand management and lead generation.' },
-  { id: 'd5', name: 'Customer Support', code: 'SUP', manager: 'Anita Desai', employees: 49, status: 'Active', created: '10 Feb 2026', desc: 'Client success and technical support.' },
-  { id: 'd6', name: 'Legal', code: 'LGL', manager: 'Vikram Patel', employees: 4, status: 'Inactive', created: '15 Feb 2026', desc: 'Corporate legal counsel.' },
-];
-
-const mockDeptEmployees = [
-  { id: 'EMP001', name: 'Arun Kumar', desig: 'Software Developer', office: 'Chennai Main', shift: 'General', status: 'Active' },
-  { id: 'EMP012', name: 'Neha Gupta', desig: 'Frontend Engineer', office: 'Remote', shift: 'General', status: 'Active' },
-  { id: 'EMP024', name: 'Sanjay Dutt', desig: 'Backend Engineer', office: 'Chennai Main', shift: 'Evening', status: 'On Leave' },
-];
+import { departmentService } from '../../services/department/departmentService';
 
 const AdminDepartments: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
   
-  const [departments, setDepartments] = useState(initialDepartments);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   
@@ -40,9 +27,17 @@ const AdminDepartments: React.FC = () => {
   const [formData, setFormData] = useState<any>({});
   const [formError, setFormError] = useState('');
 
+  const fetchDepartments = async () => {
+    setLoading(true);
+    const { data, error } = await departmentService.getDepartments();
+    if (data) {
+      setDepartments(data);
+    }
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(timer);
+    fetchDepartments();
   }, []);
 
   const showToast = (msg: string) => {
@@ -51,8 +46,9 @@ const AdminDepartments: React.FC = () => {
   };
 
   const filteredDepts = departments.filter(d => {
-    const matchesSearch = d.name.toLowerCase().includes(search.toLowerCase()) || d.code.toLowerCase().includes(search.toLowerCase());
-    const matchesStatus = filterStatus === 'All' || d.status === filterStatus;
+    const matchesSearch = d.name?.toLowerCase().includes(search.toLowerCase());
+    const statusLabel = d.is_active ? 'Active' : 'Inactive';
+    const matchesStatus = filterStatus === 'All' || statusLabel === filterStatus;
     return matchesSearch && matchesStatus;
   });
 
@@ -60,43 +56,76 @@ const AdminDepartments: React.FC = () => {
     setActiveMenu(null);
     switch(action) {
       case 'view': setShowDetail(dept); break;
-      case 'edit': setFormData(dept); setShowForm(dept.id); break;
+      case 'edit': {
+        let parsedDesc = { desc: dept.description || '', code: '', manager: '' };
+        try {
+          const parsed = JSON.parse(dept.description || '{}');
+          if (parsed.desc !== undefined) parsedDesc = parsed;
+        } catch (e) {
+          // ignore
+        }
+        setFormData({ 
+          name: dept.name, 
+          code: parsedDesc.code, 
+          manager: parsedDesc.manager, 
+          desc: parsedDesc.desc,
+          status: dept.is_active ? 'Active' : 'Inactive'
+        }); 
+        setShowForm(dept.id); 
+        break;
+      }
       case 'deactivate': setDeactivateModal(dept); break;
     }
   };
 
-  const handleSaveForm = (e: React.FormEvent) => {
+  const handleSaveForm = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
-    if (!formData.name || !formData.code) return setFormError('Department Name and Code are required.');
+    if (!formData.name) return setFormError('Department Name is required.');
     
-    // Mock validation for duplicate code
+    setLoading(true);
     if (!showForm || typeof showForm === 'boolean') {
-      if (departments.some(d => d.code.toUpperCase() === formData.code.toUpperCase())) {
-        return setFormError('Department code already exists.');
+      if (departments.some(d => d.name.toUpperCase() === formData.name.toUpperCase())) {
+        setLoading(false);
+        return setFormError('Department name already exists.');
       }
-      setDepartments(prev => [{
-        id: `d${Date.now()}`,
+      const payload = { code: formData.code, manager: formData.manager, desc: formData.desc };
+      const { error } = await departmentService.createDepartment({
         name: formData.name,
-        code: formData.code.toUpperCase(),
-        manager: formData.manager || 'Unassigned',
-        employees: 0,
-        status: formData.status || 'Active',
-        created: 'Today',
-        desc: formData.desc || ''
-      }, ...prev]);
+        description: JSON.stringify(payload),
+        is_active: formData.status === 'Inactive' ? false : true
+      });
+      if (error) {
+        setFormError(error.message);
+        setLoading(false);
+        return;
+      }
       showToast('Department created successfully');
     } else {
-      setDepartments(prev => prev.map(d => d.id === showForm ? { ...d, ...formData, code: formData.code.toUpperCase() } : d));
+      const payload = { code: formData.code, manager: formData.manager, desc: formData.desc };
+      const { error } = await departmentService.updateDepartment(showForm as string, {
+        name: formData.name,
+        description: JSON.stringify(payload),
+        is_active: formData.status === 'Inactive' ? false : true
+      });
+      if (error) {
+        setFormError(error.message);
+        setLoading(false);
+        return;
+      }
       showToast('Department updated successfully');
     }
     setShowForm(false);
+    fetchDepartments();
   };
 
-  const handleDeactivate = () => {
-    setDepartments(prev => prev.map(d => d.id === deactivateModal.id ? { ...d, status: 'Inactive' } : d));
+  const handleDeactivate = async () => {
+    if (!deactivateModal) return;
+    setLoading(true);
+    await departmentService.deactivateDepartment(deactivateModal.id);
     setDeactivateModal(null);
     showToast('Department deactivated successfully');
+    fetchDepartments();
   };
 
   return (
@@ -126,22 +155,22 @@ const AdminDepartments: React.FC = () => {
         <div className="kpi-grid">
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon"><Building2 size={18} /></div></div>
-            <div className="sc-val">8</div>
+            <div className="sc-val">{departments.length}</div>
             <div className="sc-title">Total Departments</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-100)', color: 'var(--success)' }}><CheckCircle2 size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--success)' }}>7</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{departments.filter(d => d.is_active).length}</div>
             <div className="sc-title">Active Departments</div>
           </div>
           <div className="tracking-kpi-card" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}><Users size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>128</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{departments.reduce((sum, d) => sum + (d.employeeCount || 0), 0)}</div>
             <div className="sc-title">Total Employees</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-100)', color: 'var(--warning)' }}><AlertTriangle size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>3</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>0</div>
             <div className="sc-title">Unassigned Employees</div>
           </div>
         </div>
@@ -192,21 +221,29 @@ const AdminDepartments: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {filteredDepts.map(dept => (
+                {filteredDepts.map(dept => {
+                  let parsedDesc = { desc: dept.description || '', code: '-', manager: '-' };
+                  try {
+                    const parsed = JSON.parse(dept.description || '{}');
+                    if (parsed.desc !== undefined) parsedDesc = parsed;
+                  } catch (e) {
+                    // Not JSON, ignore
+                  }
+                  return (
                   <tr key={dept.id}>
                     <td>
                       <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{dept.name}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dept.desc}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{parsedDesc.desc}</div>
                     </td>
-                    <td style={{ fontWeight: 600, fontFamily: 'monospace' }}>{dept.code}</td>
-                    <td>{dept.manager}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{dept.employees}</td>
+                    <td style={{ fontWeight: 600, fontFamily: 'monospace' }}>{parsedDesc.code}</td>
+                    <td>{parsedDesc.manager}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{dept.employeeCount || 0}</td>
                     <td>
-                      <span className={`badge ${dept.status === 'Active' ? 'badge-success' : 'badge-gray'}`}>
-                        {dept.status}
+                      <span className={`badge ${dept.is_active ? 'badge-success' : 'badge-gray'}`}>
+                        {dept.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </td>
-                    <td style={{ fontSize: '0.875rem' }}>{dept.created}</td>
+                    <td style={{ fontSize: '0.875rem' }}>{new Date(dept.created_at).toLocaleDateString()}</td>
                     <td style={{ textAlign: 'right', position: 'relative' }}>
                       <button onClick={() => setActiveMenu(activeMenu === dept.id ? null : dept.id)} className="icon-button"><MoreVertical size={18}/></button>
                       
@@ -215,14 +252,14 @@ const AdminDepartments: React.FC = () => {
                           <button onClick={() => handleActionClick('view', dept)} className="dropdown-item"><Eye size={14}/> View Details</button>
                           <button onClick={() => handleActionClick('edit', dept)} className="dropdown-item"><Edit size={14}/> Edit Department</button>
                           <div className="dropdown-divider"></div>
-                          {dept.status === 'Active' && (
+                          {dept.is_active && (
                             <button onClick={() => handleActionClick('deactivate', dept)} className="dropdown-item danger"><Trash2 size={14}/> Deactivate</button>
                           )}
                         </div>
                       )}
                     </td>
                   </tr>
-                ))}
+                )})}
               </tbody>
             </table>
           </div>
@@ -332,17 +369,21 @@ const AdminDepartments: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {mockDeptEmployees.map(emp => (
-                          <tr key={emp.id} style={{ cursor: 'pointer' }} onClick={() => navigate('/admin/employees')}>
-                            <td>
-                              <div style={{ fontWeight: 500 }}>{emp.name}</div>
-                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.id}</div>
-                            </td>
-                            <td style={{ fontSize: '0.875rem' }}>{emp.desig}</td>
-                            <td style={{ fontSize: '0.875rem' }}>{emp.office}</td>
-                            <td><span className={`badge ${emp.status === 'Active' ? 'badge-success' : 'badge-warning'}`}>{emp.status}</span></td>
-                          </tr>
-                        ))}
+                        {showDetail.employees === 0 ? (
+                          <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>No employees found in this department</td></tr>
+                        ) : (
+                          [].map((emp: any) => (
+                            <tr key={emp.id} style={{ cursor: 'pointer' }} onClick={() => navigate('/admin/employees')}>
+                              <td>
+                                <div style={{ fontWeight: 500 }}>{emp.name}</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.id}</div>
+                              </td>
+                              <td style={{ fontSize: '0.875rem' }}>{emp.desig}</td>
+                              <td style={{ fontSize: '0.875rem' }}>{emp.office}</td>
+                              <td><span className={`badge ${emp.status === 'Active' ? 'badge-success' : 'badge-warning'}`}>{emp.status}</span></td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>

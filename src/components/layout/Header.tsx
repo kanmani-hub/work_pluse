@@ -2,6 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Menu, Bell, CheckCircle2, Search, Command, Sun, Moon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../../context/ThemeContext';
+import { useAuth } from '../../context/AuthContext';
+import { notificationService } from '../../services/notifications/notificationService';
+import { realtimeService } from '../../services/realtime/realtimeService';
 
 interface HeaderProps {
   toggleMenu: () => void;
@@ -11,9 +14,11 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
   const navigate = useNavigate();
   const [showDropdown, setShowDropdown] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(5);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState<any[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { theme, toggleTheme } = useTheme();
+  const { employee, role: actualRole } = useAuth();
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -22,8 +27,37 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
+    
+    // Fetch initial count
+    const fetchCount = async () => {
+      const { count } = await notificationService.getUnreadNotificationCount();
+      setUnreadCount(count);
+    };
+
+    const fetchNotifications = async () => {
+      const { data } = await notificationService.getMyNotifications();
+      if (data) setNotifications(data.slice(0, 5)); // show top 5
+    };
+    
+    if (employee?.id) {
+      fetchCount();
+      fetchNotifications();
+      
+      // Subscribe to realtime notifications
+      const channel = realtimeService.subscribeToNotifications(employee.id, (payload) => {
+        // Simple logic: re-fetch count when any change happens to this employee's notifications
+        fetchCount();
+        fetchNotifications();
+      });
+      
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+        realtimeService.unsubscribe(channel);
+      };
+    }
+
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [employee]);
 
   const handleNotificationClick = () => {
     setShowDropdown(!showDropdown);
@@ -33,6 +67,10 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
     setShowDropdown(false);
     navigate(role === 'admin' ? '/admin/notifications' : '/employee/notifications');
   };
+
+  const displayName = employee ? `${employee.first_name} ${employee.last_name}` : (role === 'admin' ? 'System Admin' : 'Employee');
+  const initials = employee ? `${employee.first_name.charAt(0)}${employee.last_name.charAt(0)}` : (role === 'admin' ? 'SA' : 'EM');
+  const displayRole = actualRole || (role === 'admin' ? 'Admin' : 'Employee');
 
   return (
     <header className="header">
@@ -118,35 +156,49 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
             }}>
               <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ fontSize: '0.875rem', fontWeight: 600, margin: 0, color: 'var(--text-primary)' }}>Notifications</h3>
-                <button onClick={() => setUnreadCount(0)} style={{ background: 'none', border: 'none', color: 'var(--primary-400)', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                <button onClick={async () => {
+                  await notificationService.markAllNotificationsAsRead();
+                  setUnreadCount(0);
+                  const { data } = await notificationService.getMyNotifications();
+                  if (data) setNotifications(data.slice(0, 5));
+                }} style={{ background: 'none', border: 'none', color: 'var(--primary-400)', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                   <CheckCircle2 size={14}/> Mark all as read
                 </button>
               </div>
               <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
-                <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-color)', backgroundColor: 'rgba(255,255,255,0.02)', cursor: 'pointer' }} onClick={handleViewAll}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                    <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Leave Request Approved</div>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--primary-400)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Leave</span>
+                {notifications.length === 0 ? (
+                  <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                    No notifications yet
                   </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Your leave request for 28 Sep has been approved.</div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>10 minutes ago</div>
-                </div>
-                <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-color)', backgroundColor: 'rgba(255,255,255,0.02)', cursor: 'pointer' }} onClick={handleViewAll}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                    <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Late Login Detected</div>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--warning)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Attendance</span>
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>You logged in 18 minutes after your scheduled shift start.</div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>1 hour ago</div>
-                </div>
-                <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-color)', backgroundColor: 'rgba(255,255,255,0.02)', cursor: 'pointer' }} onClick={handleViewAll}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                    <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Missing Attendance Punch</div>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--danger)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Attendance</span>
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>Your attendance record is missing a logout entry.</div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>2 hours ago</div>
-                </div>
+                ) : (
+                  notifications.map(notif => (
+                    <div 
+                      key={notif.id}
+                      style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-color)', backgroundColor: notif.is_read ? 'transparent' : 'rgba(255,255,255,0.02)', cursor: 'pointer' }} 
+                      onClick={async () => {
+                        if (!notif.is_read) {
+                          await notificationService.markNotificationAsRead(notif.id);
+                          setUnreadCount(prev => Math.max(0, prev - 1));
+                          const { data } = await notificationService.getMyNotifications();
+                          if (data) setNotifications(data.slice(0, 5));
+                        }
+                        if (notif.action_url) {
+                          setShowDropdown(false);
+                          navigate(notif.action_url);
+                        } else {
+                          handleViewAll();
+                        }
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                        <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>{notif.title}</div>
+                        <span style={{ fontSize: '0.7rem', color: notif.notification_type === 'Attendance' ? 'var(--warning)' : 'var(--primary-400)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{notif.notification_type}</span>
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>{notif.message}</div>
+                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{new Date(notif.created_at).toLocaleString('en-GB')}</div>
+                    </div>
+                  ))
+                )}
               </div>
               <div style={{ padding: '0.75rem', borderTop: '1px solid var(--border-color)', textAlign: 'center', backgroundColor: 'var(--bg-surface)' }}>
                 <button onClick={handleViewAll} style={{ background: 'none', border: 'none', color: 'var(--primary-400)', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', width: '100%' }}>View all notifications</button>
@@ -157,14 +209,14 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
         
         <div className="user-profile" onClick={() => navigate(role === 'admin' ? '/admin/settings' : '/employee/profile')}>
           <div className="avatar">
-            {role === 'admin' ? 'JD' : 'AK'}
+            {initials}
           </div>
           <div className="user-info" style={{ paddingRight: '0.5rem', display: 'none' }} id="desktop-user">
             <span className="user-name">
-              {role === 'admin' ? 'John Doe' : 'Arun Kumar'}
+              {displayName}
             </span>
             <span className="user-role">
-              {role === 'admin' ? 'Admin' : 'Software Developer'}
+              {displayRole}
             </span>
           </div>
           <style>{`

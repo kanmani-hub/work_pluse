@@ -1,0 +1,134 @@
+﻿Folder PATH listing for volume New Volume
+Volume serial number is A87F-9305
+D:\KANZ\PRASATH\WORK_PLUSE\SRC
+|   App.css
+|   App.tsx
+|   ErrorBoundary.tsx
+|   index.css
+|   main.tsx
+|   responsive.css
+|   
++---assets
+|       hero.png
+|       react.svg
+|       vite.svg
+|       
++---components
+|   |   PayslipDocument.tsx
+|   |   SalaryEditor.tsx
+|   |   
+|   \---layout
+|           AppLayout.tsx
+|           Header.tsx
+|           ProtectedRoute.tsx
+|           Sidebar.tsx
+|           
++---context
+|       AuthContext.tsx
+|       ThemeContext.tsx
+|       
++---lib
+|       config.ts
+|       supabase.ts
+|       
++---pages
+|   |   Attendance.tsx
+|   |   ChangePassword.tsx
+|   |   Dashboard.tsx
+|   |   Employees.tsx
+|   |   Login.tsx
+|   |   Notifications.tsx
+|   |   ResetPassword.tsx
+|   |   
+|   +---admin
+|   |       Attendance.tsx
+|   |       AuditLogs.tsx
+|   |       Dashboard.tsx
+|   |       Departments.tsx
+|   |       Employees.tsx
+|   |       FaceRegistration.tsx
+|   |       Leave.tsx
+|   |       LiveTracking.tsx
+|   |       Offices.tsx
+|   |       Payroll.tsx
+|   |       Permission.tsx
+|   |       Reports.tsx
+|   |       Roster.tsx
+|   |       Settings.tsx
+|   |       Shifts.tsx
+|   |       Wfh.tsx
+|   |       
+|   \---employee
+|           Attendance.tsx
+|           Dashboard.tsx
+|           Leave.tsx
+|           Payroll.tsx
+|           Payslip.tsx
+|           Permission.tsx
+|           Wfh.tsx
+|           
++---services
+|   +---attendance
+|   |       attendanceService.ts
+|   |       breakService.ts
+|   |       
+|   +---audit
+|   |       auditService.ts
+|   |       
+|   +---auth
+|   |       authService.ts
+|   |       
+|   +---department
+|   |       departmentService.ts
+|   |       
+|   +---employees
+|   |       employeeService.ts
+|   |       
+|   +---face
+|   |   |   faceService.ts
+|   |   |   
+|   |   \---providers
+|   |           faceVerificationProvider.ts
+|   |           
+|   +---leave
+|   |       leaveService.ts
+|   |       
+|   +---location
+|   |       locationAutocomplete.ts
+|   |       locationService.ts
+|   |       
+|   +---notifications
+|   |       notificationService.ts
+|   |       
+|   +---payroll
+|   |       payrollDataService.ts
+|   |       payrollService.ts
+|   |       payrollSettingsService.ts
+|   |       payslipService.ts
+|   |       salaryService.ts
+|   |       
+|   +---permission
+|   |       permissionService.ts
+|   |       
+|   +---realtime
+|   |       realtimeService.ts
+|   |       
+|   +---reports
+|   |       reportService.ts
+|   |       
+|   +---settings
+|   |       appSettingsService.ts
+|   |       
+|   +---supabase
+|   |       connection.ts
+|   |       
+|   \---wfh
+|           wfhService.ts
+|           
++---types
+|       database.ts
+|       
+\---utils
+        exportCsv.ts
+        geofence.ts
+        

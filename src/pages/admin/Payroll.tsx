@@ -1,48 +1,33 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Banknote, Download, Settings, ChevronLeft, ChevronRight,
   Search, Filter, CheckCircle2, AlertTriangle, Eye, X, 
   FileText, Activity, ShieldCheck, History, Edit, 
-  Unlock, Lock, CheckCircle
+  Unlock, Lock, CheckCircle, ArrowRight, Send
 } from 'lucide-react';
+import { payrollService } from '../../services/payroll/payrollService';
+import { realtimeService } from '../../services/realtime/realtimeService';
+import { payslipService } from '../../services/payroll/payslipService';
+import { payrollSettingsService, type PayrollSettings } from '../../services/payroll/payrollSettingsService';
+import { payrollDataService, type PayrollEmployeeData } from '../../services/payroll/payrollDataService';
+import SalaryEditor from '../../components/SalaryEditor';
+import PayslipDocument from '../../components/PayslipDocument';
+import { supabase } from '../../lib/supabase';
+import { employeeService, type EmployeeWithRelations } from '../../services/employees/employeeService';
 
-const mockKPIs = {
-  total: 48, generated: 48, underReview: 8, approved: 35, paymentPending: 5, paid: 30,
-  gross: '₹24,00,000', deductions: '₹1,25,000', net: '₹22,75,000'
-};
-
-const mockPayroll = [
-  {
-    id: 'pr1', empId: 'EMP001', name: 'Arun Kumar', dept: 'Engineering', 
-    gross: 50000, workingDays: 26, present: 23, leave: 2, lop: 1, 
-    deductions: 2423, overtime: 850, net: 48427, status: 'UNDER REVIEW',
-    paymentDetails: null
-  },
-  {
-    id: 'pr2', empId: 'EMP002', name: 'Priya Sharma', dept: 'HR', 
-    gross: 45000, workingDays: 26, present: 26, leave: 0, lop: 0, 
-    deductions: 0, overtime: 0, net: 45000, status: 'PAYMENT PENDING',
-    paymentDetails: null
-  },
-  {
-    id: 'pr3', empId: 'EMP003', name: 'Kumar Raj', dept: 'Support', 
-    gross: 35000, workingDays: 26, present: 25, leave: 0, lop: 1, 
-    deductions: 1346.15, overtime: 1200, net: 34853.85, status: 'PAID',
-    paymentDetails: { date: '30 Sep 2026', method: 'Bank Transfer', ref: 'TXN987654321', by: 'Admin' }
-  },
-  {
-    id: 'pr4', empId: 'EMP004', name: 'Anitha S', dept: 'Finance', 
-    gross: 60000, workingDays: 26, present: 24, leave: 2, lop: 0, 
-    deductions: 0, overtime: 0, net: 60000, status: 'APPROVED',
-    paymentDetails: null
-  }
-];
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 const AdminPayroll: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState('');
+  
+  // Month selector
+  const now = new Date();
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   
   // Filters
   const [search, setSearch] = useState('');
@@ -51,80 +36,315 @@ const AdminPayroll: React.FC = () => {
   
   // Drawers & Modals
   const [detailDrawer, setDetailDrawer] = useState<any>(null);
+  const [detailEmpData, setDetailEmpData] = useState<PayrollEmployeeData | null>(null);
   const [generateModal, setGenerateModal] = useState(false);
-  const [paymentModal, setPaymentModal] = useState<any>(null); // holds emp id
+  const [paymentModal, setPaymentModal] = useState<any>(null);
+  const [showSalaryEditor, setShowSalaryEditor] = useState<string | null>(null);
+  const [showPayslip, setShowPayslip] = useState<any>(null);
   const [settingsDrawer, setSettingsDrawer] = useState(false);
   const [bulkApproveModal, setBulkApproveModal] = useState(false);
   
-  // Forms
-  const [paymentForm, setPaymentForm] = useState({ date: '2026-09-30', method: 'Bank Transfer', ref: '', remarks: '' });
+  // Settings form state
+  const [settingsForm, setSettingsForm] = useState<PayrollSettings>(payrollSettingsService.getSettings());
   
-  const [payrolls, setPayrolls] = useState(mockPayroll);
-  const [globalStatus, setGlobalStatus] = useState('UNDER REVIEW');
+  // Forms
+  const [paymentForm, setPaymentForm] = useState({ date: new Date().toISOString().split('T')[0], method: 'Bank Transfer', ref: '', remarks: '', amount: 0 });
+  
+  const [payrolls, setPayrolls] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<EmployeeWithRelations[]>([]);
+  const [allDepartments, setAllDepartments] = useState<any[]>([]);
+  const [globalStatus, setGlobalStatus] = useState('DRAFT');
+  const [departments, setDepartments] = useState<string[]>([]);
+
+  // Filter payrolls for selected month
+  const monthPayrolls = payrolls.filter(p => p.payroll_year === selectedYear && p.payroll_month === selectedMonth);
+
+  const fetchPayrolls = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [payrollRes, empRes, deptRes] = await Promise.all([
+        payrollService.getPayrolls(),
+        employeeService.getEmployees(),
+        employeeService.getDepartments()
+      ]);
+      
+      if (payrollRes.error) throw payrollRes.error;
+      if (empRes.error) throw empRes.error;
+      if (deptRes.error) throw deptRes.error;
+
+      if (empRes.data) setEmployees(empRes.data);
+      if (deptRes.data) {
+        setAllDepartments(deptRes.data);
+        setDepartments(deptRes.data.map((d: any) => d.name).sort());
+      }
+
+      if (payrollRes.data) {
+        setPayrolls(payrollRes.data);
+        
+        // Compute global status from month data
+        const monthData = payrollRes.data.filter((p: any) => p.payroll_year === selectedYear && p.payroll_month === selectedMonth);
+        if (monthData.length > 0) {
+          if (monthData.every((p: any) => p.status === 'CLOSED')) setGlobalStatus('CLOSED');
+          else if (monthData.every((p: any) => p.status === 'PAID')) setGlobalStatus('PAID');
+          else if (monthData.some((p: any) => p.status === 'PAYMENT_PENDING')) setGlobalStatus('PAYMENT_PENDING');
+          else if (monthData.some((p: any) => p.status === 'APPROVED')) setGlobalStatus('APPROVED');
+          else if (monthData.some((p: any) => p.status === 'UNDER_REVIEW')) setGlobalStatus('UNDER_REVIEW');
+          else if (monthData.some((p: any) => p.status === 'CALCULATED')) setGlobalStatus('CALCULATED');
+          else setGlobalStatus('DRAFT');
+        } else {
+          setGlobalStatus('DRAFT');
+        }
+      }
+    } catch (err: any) {
+      console.error("Error loading payroll data:", err);
+      setError(err.message || 'Unable to load payroll data');
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedYear, selectedMonth]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 700);
-    return () => clearTimeout(timer);
-  }, []);
+    fetchPayrolls();
+    const channel = realtimeService.subscribeToAdminPayroll(() => fetchPayrolls());
+    return () => { realtimeService.unsubscribe(channel); };
+  }, [fetchPayrolls]);
 
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(''), 3000);
   };
 
-  const filteredData = payrolls.filter(p => {
-    const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.empId.toLowerCase().includes(search.toLowerCase());
-    const matchDept = filterDept === 'All' || p.dept === filterDept;
-    const matchStatus = filterStatus === 'All' || p.status === filterStatus;
+  // Parse data summary from payroll.notes
+  const parseDataSummary = (payroll: any) => {
+    try {
+      if (payroll?.notes) return JSON.parse(payroll.notes);
+    } catch {}
+    return null;
+  };
+
+  const filteredData = employees.map(emp => {
+    const payroll = monthPayrolls.find(p => p.employee_id === emp.id) || null;
+    return { emp, payroll };
+  }).filter(({ emp, payroll }) => {
+    const name = `${emp.first_name || ''} ${emp.last_name || ''}`;
+    const empCode = emp.employee_code || '';
+    const dept = emp.department?.name || 'Unknown';
+    const matchSearch = name.toLowerCase().includes(search.toLowerCase()) || empCode.toLowerCase().includes(search.toLowerCase());
+    const matchDept = filterDept === 'All' || dept === filterDept;
+    const matchStatus = filterStatus === 'All' || (payroll ? payroll.status === filterStatus : filterStatus === 'NOT_GENERATED');
     return matchSearch && matchDept && matchStatus;
   });
 
+  const getKPIs = () => {
+    return {
+      total: monthPayrolls.length,
+      generated: monthPayrolls.filter(p => p.status !== 'DRAFT').length,
+      underReview: monthPayrolls.filter(p => p.status === 'UNDER_REVIEW').length,
+      approved: monthPayrolls.filter(p => p.status === 'APPROVED').length,
+      paymentPending: monthPayrolls.filter(p => p.status === 'PAYMENT_PENDING').length,
+      paid: monthPayrolls.filter(p => p.status === 'PAID' || p.status === 'CLOSED').length,
+      gross: monthPayrolls.reduce((sum, p) => sum + Number(p.gross_salary), 0),
+      deductions: monthPayrolls.reduce((sum, p) => sum + Number(p.total_deductions), 0),
+      net: monthPayrolls.reduce((sum, p) => sum + Number(p.net_salary), 0)
+    };
+  };
+  const kpis = getKPIs();
+
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'DRAFT': return <span className="badge badge-gray">DRAFT</span>;
-      case 'CALCULATED': return <span className="badge badge-primary">CALCULATED</span>;
-      case 'UNDER REVIEW': return <span className="badge badge-warning">UNDER REVIEW</span>;
-      case 'APPROVED': return <span className="badge" style={{ backgroundColor: 'var(--purple-100)', color: 'var(--purple-800)' }}>APPROVED</span>;
-      case 'PAYMENT PENDING': return <span className="badge" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-800)' }}>PAYMENT PENDING</span>;
-      case 'PAID': return <span className="badge badge-success">PAID</span>;
-      case 'CLOSED': return <span className="badge badge-gray">CLOSED</span>;
+      case 'NOT_GENERATED': return <span className="badge badge-gray" style={{ opacity: 0.7 }}>Not Generated</span>;
+      case 'DRAFT': return <span className="badge badge-gray">Draft</span>;
+      case 'CALCULATED': return <span className="badge badge-primary">Calculated</span>;
+      case 'UNDER_REVIEW': return <span className="badge badge-warning">Under Review</span>;
+      case 'APPROVED': return <span className="badge badge-primary" style={{ backgroundColor: 'rgba(168,85,247,0.15)', color: '#a855f7', borderColor: 'rgba(168,85,247,0.3)' }}>Approved</span>;
+      case 'PAYMENT_PENDING': return <span className="badge badge-primary">Payment Pending</span>;
+      case 'PAID': return <span className="badge badge-success">Paid</span>;
+      case 'CLOSED': return <span className="badge badge-gray">Closed</span>;
       default: return <span className="badge badge-gray">{status}</span>;
     }
   };
 
-  const handleGenerate = (e: React.FormEvent) => {
-    e.preventDefault();
-    setGenerateModal(false);
-    setGlobalStatus('CALCULATED');
-    showToast('September 2026 payroll calculated successfully.');
+  // Month navigation
+  const handlePrevMonth = () => {
+    if (selectedMonth === 1) { setSelectedMonth(12); setSelectedYear(y => y - 1); }
+    else setSelectedMonth(m => m - 1);
+  };
+  const handleNextMonth = () => {
+    if (selectedMonth === 12) { setSelectedMonth(1); setSelectedYear(y => y + 1); }
+    else setSelectedMonth(m => m + 1);
+  };
+  const handleCurrentMonth = () => {
+    setSelectedYear(now.getFullYear());
+    setSelectedMonth(now.getMonth() + 1);
   };
 
-  const handleApprove = (e: React.FormEvent) => {
+  const handleGenerate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setGenerateModal(false);
+    showToast(`Calculating payroll for ${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}...`);
+    
+    const result = await payrollService.generatePayroll(selectedYear, selectedMonth);
+    
+    if (result.success) {
+      await fetchPayrolls();
+      showToast(`${MONTH_NAMES[selectedMonth - 1]} ${selectedYear} payroll calculated for ${result.count} employee(s).`);
+    } else {
+      showToast(result.error || 'Failed to generate payroll');
+    }
+  };
+
+  const handleApprove = async (e: React.FormEvent) => {
     e.preventDefault();
     setBulkApproveModal(false);
-    setGlobalStatus('APPROVED');
-    setPayrolls(prev => prev.map(p => p.status === 'UNDER REVIEW' ? { ...p, status: 'APPROVED' } : p));
-    if (detailDrawer?.status === 'UNDER REVIEW') setDetailDrawer({ ...detailDrawer, status: 'APPROVED' });
-    showToast('Payroll approved successfully.');
+    
+    let count = 0;
+    for (const p of monthPayrolls) {
+      if (p.status === 'UNDER_REVIEW') {
+        await payrollService.approvePayroll(p.id);
+        count++;
+      }
+    }
+    
+    await fetchPayrolls();
+    if (detailDrawer?.status === 'UNDER_REVIEW') setDetailDrawer({ ...detailDrawer, status: 'APPROVED' });
+    showToast(`${count} payroll(s) approved.`);
+  };
+
+  const handleProceedToPayments = async () => {
+    let count = 0;
+    for (const p of monthPayrolls) {
+      if (p.status === 'APPROVED') {
+        await payrollService.movePayrollToPaymentPending(p.id);
+        count++;
+      }
+    }
+    await fetchPayrolls();
+    showToast(`${count} payroll(s) moved to Payment Pending.`);
+  };
+
+  // Detail drawer: individual actions
+  const handleDetailSubmitReview = async () => {
+    if (!detailDrawer) return;
+    const { error } = await payrollService.submitPayrollForReview(detailDrawer.id);
+    if (!error) {
+      setDetailDrawer({ ...detailDrawer, status: 'UNDER_REVIEW' });
+      await fetchPayrolls();
+      showToast('Submitted for review.');
+    } else { showToast(error.message); }
+  };
+
+  const handleDetailApprove = async () => {
+    if (!detailDrawer) return;
+    const { error } = await payrollService.approvePayroll(detailDrawer.id);
+    if (!error) {
+      setDetailDrawer({ ...detailDrawer, status: 'APPROVED' });
+      await fetchPayrolls();
+      showToast('Payroll approved.');
+    } else { showToast(error.message); }
+  };
+
+  const handleDetailProceedPayment = async () => {
+    if (!detailDrawer) return;
+    const { error } = await payrollService.movePayrollToPaymentPending(detailDrawer.id);
+    if (!error) {
+      setDetailDrawer({ ...detailDrawer, status: 'PAYMENT_PENDING' });
+      await fetchPayrolls();
+      showToast('Moved to Payment Pending.');
+    } else { showToast(error.message); }
+  };
+
+  const handleDetailClose = async () => {
+    if (!detailDrawer) return;
+    const { error } = await payrollService.closePayroll(detailDrawer.id);
+    if (!error) {
+      setDetailDrawer({ ...detailDrawer, status: 'CLOSED' });
+      await fetchPayrolls();
+      showToast('Payroll closed.');
+    } else { showToast(error.message); }
   };
   
-  const handleRecordPayment = (e: React.FormEvent) => {
+  const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    setPayrolls(prev => prev.map(p => p.id === paymentModal ? { 
-      ...p, 
-      status: 'PAID',
-      paymentDetails: { date: paymentForm.date, method: paymentForm.method, ref: paymentForm.ref, by: 'Admin User' }
-    } : p));
-    if (detailDrawer?.id === paymentModal) {
-      setDetailDrawer({
-        ...detailDrawer, 
-        status: 'PAID',
-        paymentDetails: { date: paymentForm.date, method: paymentForm.method, ref: paymentForm.ref, by: 'Admin User' }
-      });
+    
+    if (paymentModal) {
+      const payroll = monthPayrolls.find(p => p.id === paymentModal);
+      await payrollService.markPayrollPaid(paymentModal, paymentForm.amount || payroll?.net_salary || 0, paymentForm.method, paymentForm.ref, paymentForm.remarks);
+      await fetchPayrolls();
+      setPaymentModal(null);
+      if (detailDrawer?.id === paymentModal) setDetailDrawer({ ...detailDrawer, status: 'PAID' });
+      showToast('Payment recorded successfully.');
     }
-    setPaymentModal(null);
-    showToast('Payment recorded successfully.');
   };
+
+  const handleViewPayslip = async (payrollId: string) => {
+    setLoading(true);
+    let { data } = await payslipService.getAdminPayslipByPayrollId(payrollId);
+    
+    if (!data && detailDrawer) {
+      const { data: fullPayroll } = await supabase
+        .from('payroll')
+        .select('*, employees!payroll_employee_id_fkey(first_name, last_name, employee_code, departments(name)), payroll_items(*)')
+        .eq('id', payrollId)
+        .single();
+        
+      data = {
+        payslip_period: `${MONTH_NAMES[detailDrawer.payroll_month - 1]} ${detailDrawer.payroll_year}`,
+        payslip_number: detailDrawer.status === 'PAID' || detailDrawer.status === 'CLOSED' ? `PS-${Date.now()}` : 'PENDING',
+        payroll: fullPayroll || detailDrawer
+      };
+    }
+
+    if (data) {
+      setShowPayslip(data);
+    } else {
+      showToast('Payslip not available.');
+    }
+    setLoading(false);
+  };
+
+  // When opening detail drawer, fetch employee data
+  const openDetailDrawer = async (p: any) => {
+    setDetailDrawer(p);
+    setDetailEmpData(null);
+    const data = await payrollDataService.getEmployeePayrollData(p.employee_id, p.payroll_year, p.payroll_month);
+    setDetailEmpData(data);
+  };
+
+  // Payroll settings save
+  const handleSaveSettings = () => {
+    payrollSettingsService.saveSettings(settingsForm);
+    setSettingsDrawer(false);
+    showToast('Payroll settings saved.');
+  };
+
+  // Helper: get data summary values for table display
+  const getTableSummary = (p: any) => {
+    const summary = parseDataSummary(p);
+    const settings = payrollSettingsService.getSettings();
+    const workingDays = summary?.settings?.workingDaysUsed ?? payrollSettingsService.getWorkingDaysForMonth(p.payroll_year, p.payroll_month, settings);
+    const present = summary?.attendance?.presentDays ?? 0;
+    const approvedLeave = summary?.leave?.approvedLeave ?? 0;
+    const lopLeave = summary?.leave?.lopLeave ?? 0;
+    return { workingDays, present, approvedLeave, lopLeave };
+  };
+
+  // Get detail summary (from drawer empData or stored notes)
+  const getDetailSummary = () => {
+    if (detailEmpData) return detailEmpData;
+    const summary = parseDataSummary(detailDrawer);
+    if (summary) {
+      return {
+        attendance: summary.attendance || { workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0 },
+        leave: summary.leave || { approvedLeave: 0, lopLeave: 0, totalLeaveDays: 0 },
+        wfh: summary.wfh || { wfhDays: 0 },
+        permission: summary.permission || { permissionCount: 0, totalMinutes: 0 },
+      } as PayrollEmployeeData;
+    }
+    return null;
+  };
+
+  const monthLabel = `${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}`;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', position: 'relative' }}>
@@ -143,52 +363,58 @@ const AdminPayroll: React.FC = () => {
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem', overflowWrap: 'anywhere', whiteSpace: 'normal' }}>Manage monthly salary calculations, deductions, approvals, payments, and payslips.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <button onClick={() => setSettingsDrawer(true)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Settings size={16}/> Payroll Settings</button>
-          <button onClick={() => showToast('Payroll export prepared successfully.')} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export</button>
+          <button onClick={() => { setSettingsForm(payrollSettingsService.getSettings()); setSettingsDrawer(true); }} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Settings size={16}/> Payroll Settings</button>
+          <button onClick={() => showToast('Payroll export prepared.')} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export</button>
           <button onClick={() => setGenerateModal(true)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Activity size={16}/> Generate</button>
         </div>
       </div>
 
       {/* Month Selector */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', borderBottom: '1px solid var(--gray-200)', paddingBottom: '1rem' }}>
-        <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>Payroll Period: <span style={{ color: 'var(--primary-700)' }}>September 2026</span></div>
+        <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>Payroll Period: <span style={{ color: 'var(--primary-700)' }}>{monthLabel}</span></div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface-elevated)' }}>
-            <button className="icon-button" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)', padding: '0.5rem' }}><ChevronLeft size={16}/></button>
-            <div style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600 }}>September 2026</div>
-            <button className="icon-button" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0', padding: '0.5rem' }}><ChevronRight size={16}/></button>
+            <button onClick={handlePrevMonth} className="icon-button" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)', padding: '0.5rem' }}><ChevronLeft size={16}/></button>
+            <div style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600 }}>{monthLabel}</div>
+            <button onClick={handleNextMonth} className="icon-button" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0', padding: '0.5rem' }}><ChevronRight size={16}/></button>
           </div>
-          <button className="btn btn-outline" style={{ fontSize: '0.875rem', padding: '0.5rem 1rem' }}>Current Month</button>
+          <button onClick={handleCurrentMonth} className="btn btn-outline" style={{ fontSize: '0.875rem', padding: '0.5rem 1rem' }}>Current Month</button>
         </div>
       </div>
 
-      {loading ? (
+      {error ? (
+        <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--danger)', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)' }}>
+          <AlertTriangle size={48} style={{ margin: '0 auto 1rem auto' }} />
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Unable to load payroll data</h3>
+          <p style={{ marginTop: '0.5rem', color: 'var(--danger-700)' }}>{error}</p>
+        </div>
+      ) : loading ? (
         <div className="skeleton-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '1rem' }}>
           {[...Array(9)].map((_, i) => <div key={i} className="skeleton" style={{ height: '70px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', minWidth: 0 }}>
           <div className="kpi-grid">
-            <div className="tracking-kpi-card"><div className="sc-val">{mockKPIs.total}</div><div className="sc-title">Total Employees</div></div>
-            <div className="tracking-kpi-card"><div className="sc-val">{mockKPIs.generated}</div><div className="sc-title">Payroll Generated</div></div>
-            <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('UNDER REVIEW')}><div className="sc-val" style={{ color: 'var(--warning)' }}>{mockKPIs.underReview}</div><div className="sc-title">Under Review</div></div>
-            <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('APPROVED')}><div className="sc-val" style={{ color: 'var(--purple-700)' }}>{mockKPIs.approved}</div><div className="sc-title">Approved</div></div>
-            <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('PAYMENT PENDING')}><div className="sc-val" style={{ color: 'var(--primary-700)' }}>{mockKPIs.paymentPending}</div><div className="sc-title">Payment Pending</div></div>
-            <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('PAID')}><div className="sc-val" style={{ color: 'var(--success)' }}>{mockKPIs.paid}</div><div className="sc-title">Paid</div></div>
+            <div className="tracking-kpi-card"><div className="sc-val">{kpis.total}</div><div className="sc-title">Total Employees</div></div>
+            <div className="tracking-kpi-card"><div className="sc-val">{kpis.generated}</div><div className="sc-title">Payroll Generated</div></div>
+            <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('UNDER_REVIEW')}><div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.underReview}</div><div className="sc-title">Under Review</div></div>
+            <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('APPROVED')}><div className="sc-val" style={{ color: '#a855f7' }}>{kpis.approved}</div><div className="sc-title">Approved</div></div>
+            <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('PAYMENT_PENDING')}><div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.paymentPending}</div><div className="sc-title">Payment Pending</div></div>
+            <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('PAID')}><div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.paid}</div><div className="sc-title">Paid</div></div>
           </div>
           
-          <div className="payroll-financial-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', width: '100%', minWidth: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', width: '100%', minWidth: 0 }}>
             <div className="tracking-kpi-card">
               <div className="sc-title">Gross Payroll</div>
-              <div className="financial-value" style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--text-primary)' }}>{mockKPIs.gross}</div>
+              <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--text-primary)' }}>₹{kpis.gross.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
             </div>
             <div className="tracking-kpi-card">
               <div className="sc-title">Total Deductions</div>
-              <div className="financial-value" style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--danger)' }}>{mockKPIs.deductions}</div>
+              <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--danger)' }}>₹{kpis.deductions.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
             </div>
             <div className="tracking-kpi-card" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--success)' }}>
               <div className="sc-title" style={{ color: 'var(--success)' }}>Net Payroll</div>
-              <div className="financial-value" style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 800, color: 'var(--success)' }}>{mockKPIs.net}</div>
+              <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 800, color: 'var(--success)' }}>₹{kpis.net.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
             </div>
           </div>
         </div>
@@ -196,19 +422,21 @@ const AdminPayroll: React.FC = () => {
 
       {/* Progress Banner */}
       <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', backgroundColor: 'var(--bg-surface-elevated)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
           <div>
-            <h3 style={{ fontSize: '1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>September 2026 Payroll</h3>
+            <h3 style={{ fontSize: '1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>{monthLabel} Payroll</h3>
             <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Status: {getStatusBadge(globalStatus)}</div>
           </div>
-          {globalStatus === 'UNDER REVIEW' && <button onClick={() => setBulkApproveModal(true)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}>Approve Payroll</button>}
-          {globalStatus === 'APPROVED' && <button className="btn btn-outline" style={{ fontSize: '0.875rem', color: 'var(--primary-700)', borderColor: 'var(--primary-300)' }}>Proceed to Payments</button>}
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {globalStatus === 'UNDER_REVIEW' && <button onClick={() => setBulkApproveModal(true)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}>Approve Payroll</button>}
+            {globalStatus === 'APPROVED' && <button onClick={handleProceedToPayments} className="btn btn-outline" style={{ fontSize: '0.875rem', color: 'var(--primary-700)', borderColor: 'var(--primary-400)' }}><ArrowRight size={16}/> Proceed to Payments</button>}
+          </div>
         </div>
         
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem', position: 'relative' }}>
           <div style={{ position: 'absolute', top: '12px', left: '20px', right: '20px', height: '2px', backgroundColor: 'var(--gray-200)', zIndex: 0 }}></div>
           {['Draft', 'Calculated', 'Under Review', 'Approved', 'Payment Pending', 'Paid', 'Closed'].map((step, i) => {
-            const steps = ['DRAFT', 'CALCULATED', 'UNDER REVIEW', 'APPROVED', 'PAYMENT PENDING', 'PAID', 'CLOSED'];
+            const steps = ['DRAFT', 'CALCULATED', 'UNDER_REVIEW', 'APPROVED', 'PAYMENT_PENDING', 'PAID', 'CLOSED'];
             const currentIndex = steps.indexOf(globalStatus);
             const isCompleted = i <= currentIndex;
             const isCurrent = i === currentIndex;
@@ -237,12 +465,19 @@ const AdminPayroll: React.FC = () => {
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} />
           </div>
           <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
-            <option value="All">All Departments</option><option>Engineering</option><option>HR</option><option>Finance</option>
+            <option value="All">All Departments</option>
+            {departments.map(d => <option key={d}>{d}</option>)}
           </select>
           <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
-            <option value="All">All Statuses</option><option>UNDER REVIEW</option><option>APPROVED</option><option>PAYMENT PENDING</option><option>PAID</option>
+            <option value="All">All Statuses</option>
+            <option value="NOT_GENERATED">Not Generated</option>
+            <option value="CALCULATED">Calculated</option>
+            <option value="UNDER_REVIEW">Under Review</option>
+            <option value="APPROVED">Approved</option>
+            <option value="PAYMENT_PENDING">Payment Pending</option>
+            <option value="PAID">Paid</option>
+            <option value="CLOSED">Closed</option>
           </select>
-          <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem' }}><Filter size={14} style={{ marginRight: '0.25rem' }}/> More</button>
           {(search || filterDept !== 'All' || filterStatus !== 'All') && (
             <button onClick={() => { setSearch(''); setFilterDept('All'); setFilterStatus('All'); }} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem' }}>Clear</button>
           )}
@@ -254,6 +489,7 @@ const AdminPayroll: React.FC = () => {
           <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
             <Banknote size={48} style={{ margin: '0 auto 1rem auto', opacity: 0.3 }} />
             <h3 style={{ fontSize: '1.125rem', color: 'var(--text-primary)' }}>No payroll records found</h3>
+            <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>Generate payroll to create records for this month.</p>
           </div>
         ) : (
           <div className="table-container desktop-only">
@@ -273,35 +509,54 @@ const AdminPayroll: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {filteredData.map(p => (
-                  <tr key={p.id}>
-                    <td>
-                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{p.name}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{p.empId} • {p.dept}</div>
-                    </td>
-                    <td style={{ textAlign: 'right', fontWeight: 500 }}>₹{p.gross.toLocaleString('en-IN')}</td>
-                    <td style={{ textAlign: 'right' }}>{p.workingDays}</td>
-                    <td style={{ textAlign: 'right' }}>{p.present}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>{p.leave}</span> / <span style={{ color: p.lop > 0 ? 'var(--danger-600)' : 'var(--gray-600)', fontWeight: p.lop > 0 ? 600 : 400 }}>{p.lop}</span>
-                    </td>
-                    <td style={{ textAlign: 'right', color: p.deductions > 0 ? 'var(--danger)' : 'inherit' }}>
-                      ₹{p.deductions.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                    </td>
-                    <td style={{ textAlign: 'right', color: p.overtime > 0 ? 'var(--success)' : 'inherit' }}>
-                      ₹{p.overtime.toLocaleString('en-IN')}
-                    </td>
-                    <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)', fontSize: '1rem' }}>
-                      ₹{p.net.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                    </td>
-                    <td>{getStatusBadge(p.status)}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                        <button onClick={() => setDetailDrawer(p)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>View</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {filteredData.map(({ emp, payroll }) => {
+                  if (!payroll) {
+                    return (
+                      <tr key={emp.id}>
+                        <td>
+                          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{emp.first_name} {emp.last_name}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.employee_code} • {emp.department?.name || 'Unknown'}</div>
+                        </td>
+                        <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
+                          Employee exists, but no payroll record exists for this period.
+                        </td>
+                        <td>{getStatusBadge('NOT_GENERATED')}</td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button onClick={() => setGenerateModal(true)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>Generate</button>
+                        </td>
+                      </tr>
+                    );
+                  }
+                  
+                  const ts = getTableSummary(payroll);
+                  return (
+                    <tr key={payroll.id}>
+                      <td>
+                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{emp.first_name} {emp.last_name}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.employee_code} • {emp.department?.name || 'Unknown'}</div>
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: 500 }}>₹{Number(payroll.gross_salary).toLocaleString('en-IN')}</td>
+                      <td style={{ textAlign: 'right' }}>{ts.workingDays}</td>
+                      <td style={{ textAlign: 'right' }}>{ts.present}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>{ts.approvedLeave}</span> / <span style={{ color: ts.lopLeave > 0 ? 'var(--danger-600)' : 'var(--gray-600)', fontWeight: ts.lopLeave > 0 ? 600 : 400 }}>{ts.lopLeave}</span>
+                      </td>
+                      <td style={{ textAlign: 'right', color: Number(payroll.total_deductions) > 0 ? 'var(--danger)' : 'inherit' }}>
+                        ₹{Number(payroll.total_deductions).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ textAlign: 'right', color: Number(payroll.overtime_amount) > 0 ? 'var(--success)' : 'inherit' }}>
+                        ₹{Number(payroll.overtime_amount).toLocaleString('en-IN')}
+                      </td>
+                      <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)', fontSize: '1rem' }}>
+                        ₹{Number(payroll.net_salary).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      </td>
+                      <td>{getStatusBadge(payroll.status)}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button onClick={() => openDetailDrawer(payroll)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>View</button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -309,20 +564,31 @@ const AdminPayroll: React.FC = () => {
         
         {!loading && filteredData.length > 0 && (
           <div className="mobile-only" style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {filteredData.map(p => (
-              <div key={p.id} className="card" style={{ padding: '1rem' }}>
+            {filteredData.map(({ emp, payroll }) => (
+              <div key={emp.id} className="card" style={{ padding: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <div><div style={{ fontWeight: 600, fontSize: '1rem' }}>{p.name}</div><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{p.empId}</div></div>
-                  <div>{getStatusBadge(p.status)}</div>
+                  <div><div style={{ fontWeight: 600, fontSize: '1rem' }}>{emp.first_name} {emp.last_name}</div><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.employee_code} • {emp.department?.name || 'Unknown'}</div></div>
+                  <div>{getStatusBadge(payroll ? payroll.status : 'NOT_GENERATED')}</div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.875rem', marginTop: '1rem' }}>
-                  <div><span style={{ color: 'var(--text-secondary)' }}>Gross:</span> ₹{p.gross.toLocaleString('en-IN')}</div>
-                  <div><span style={{ color: 'var(--danger-600)' }}>Ded:</span> ₹{p.deductions.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
-                  <div style={{ gridColumn: '1 / -1', fontSize: '1rem', fontWeight: 700, marginTop: '0.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem' }}>
-                    Net: ₹{p.net.toLocaleString('en-IN', {maximumFractionDigits:2})}
-                  </div>
-                </div>
-                <button onClick={() => setDetailDrawer(p)} className="btn btn-outline" style={{ width: '100%', marginTop: '1rem', fontSize: '0.875rem' }}>View Payroll</button>
+                {payroll ? (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.875rem', marginTop: '1rem' }}>
+                      <div><span style={{ color: 'var(--text-secondary)' }}>Gross:</span> ₹{Number(payroll.gross_salary).toLocaleString('en-IN')}</div>
+                      <div><span style={{ color: 'var(--danger-600)' }}>Ded:</span> ₹{Number(payroll.total_deductions).toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
+                      <div style={{ gridColumn: '1 / -1', fontSize: '1rem', fontWeight: 700, marginTop: '0.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem' }}>
+                        Net: ₹{Number(payroll.net_salary).toLocaleString('en-IN', {maximumFractionDigits:2})}
+                      </div>
+                    </div>
+                    <button onClick={() => openDetailDrawer(payroll)} className="btn btn-outline" style={{ width: '100%', marginTop: '1rem', fontSize: '0.875rem' }}>View Payroll</button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ textAlign: 'center', color: 'var(--text-secondary)', margin: '1rem 0' }}>
+                      Employee exists, but no payroll record exists for this period.
+                    </div>
+                    <button onClick={() => setGenerateModal(true)} className="btn btn-outline" style={{ width: '100%', marginTop: '1rem', fontSize: '0.875rem' }}>Generate Payroll</button>
+                  </>
+                )}
               </div>
             ))}
           </div>
@@ -330,21 +596,31 @@ const AdminPayroll: React.FC = () => {
       </div>
 
       {/* Detail Drawer */}
-      {detailDrawer && (
-        <div className="drawer-overlay" onClick={() => setDetailDrawer(null)}>
+      {detailDrawer && (() => {
+        const ds = getDetailSummary();
+        const storedSummary = parseDataSummary(detailDrawer);
+        const att = ds?.attendance || { workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0 };
+        const lv = ds?.leave || { approvedLeave: 0, lopLeave: 0, totalLeaveDays: 0 };
+        const wfh = ds?.wfh || { wfhDays: 0 };
+        const perm = ds?.permission || { permissionCount: 0, totalMinutes: 0 };
+        const settings = payrollSettingsService.getSettings();
+        const workingDays = storedSummary?.settings?.workingDaysUsed ?? payrollSettingsService.getWorkingDaysForMonth(detailDrawer.payroll_year, detailDrawer.payroll_month, settings);
+
+        return (
+        <div className="drawer-overlay" onClick={() => { setDetailDrawer(null); setDetailEmpData(null); }}>
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header" style={{ alignItems: 'flex-start' }}>
               <div style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{detailDrawer.name}</h2>
-                  <button className="icon-button" onClick={() => setDetailDrawer(null)}><X size={20} /></button>
+                  <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{detailDrawer.employees?.first_name} {detailDrawer.employees?.last_name}</h2>
+                  <button className="icon-button" onClick={() => { setDetailDrawer(null); setDetailEmpData(null); }}><X size={20} /></button>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                  <span>{detailDrawer.empId}</span> • <span>{detailDrawer.dept}</span>
+                  <span>{detailDrawer.employees?.employee_code}</span> • <span>{detailDrawer.employees?.departments?.name}</span>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem', alignItems: 'center' }}>
                   {getStatusBadge(detailDrawer.status)}
-                  <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--gray-700)' }}>September 2026 Payroll</span>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 500, color: 'var(--gray-700)' }}>{MONTH_NAMES[detailDrawer.payroll_month - 1]} {detailDrawer.payroll_year} Payroll</span>
                 </div>
               </div>
             </div>
@@ -352,89 +628,70 @@ const AdminPayroll: React.FC = () => {
             <div className="drawer-body" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
               
               {/* Action Bar */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-                <button onClick={() => navigate('/employee/payslip')} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><FileText size={16}/> View Payslip</button>
-                {detailDrawer.status === 'UNDER REVIEW' && <button className="btn btn-outline" style={{ fontSize: '0.875rem', color: 'var(--warning)', borderColor: 'var(--warning-300)' }}><Edit size={16}/> Send Back</button>}
-                {(detailDrawer.status === 'PAYMENT PENDING' || detailDrawer.status === 'APPROVED') && <button onClick={() => setPaymentModal(detailDrawer.id)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Banknote size={16}/> Mark as Paid</button>}
-                {detailDrawer.status === 'PAID' && <button className="btn btn-outline" style={{ fontSize: '0.875rem', color: 'var(--danger)', borderColor: 'var(--danger-300)' }}><Lock size={16}/> Lock Payroll</button>}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', flexWrap: 'wrap' }}>
+                {!['CLOSED'].includes(detailDrawer.status) && (
+                  <button type="button" onClick={() => setShowSalaryEditor(detailDrawer.employee_id)} className="btn btn-outline" style={{ fontSize: '0.8rem' }}><Settings size={14}/> Edit Salary</button>
+                )}
+                <button type="button" onClick={() => handleViewPayslip(detailDrawer.id)} className="btn btn-outline" style={{ fontSize: '0.8rem' }}><FileText size={14}/> View Payslip</button>
+                
+                {detailDrawer.status === 'CALCULATED' && (
+                  <button type="button" onClick={handleDetailSubmitReview} className="btn btn-outline" style={{ fontSize: '0.8rem', color: 'var(--warning)', borderColor: 'var(--warning)' }}><Send size={14}/> Submit for Review</button>
+                )}
+                {detailDrawer.status === 'UNDER_REVIEW' && (
+                  <button type="button" onClick={handleDetailApprove} className="btn btn-primary" style={{ fontSize: '0.8rem' }}><CheckCircle size={14}/> Approve</button>
+                )}
+                {detailDrawer.status === 'APPROVED' && (
+                  <button type="button" onClick={handleDetailProceedPayment} className="btn btn-outline" style={{ fontSize: '0.8rem', color: 'var(--primary-700)', borderColor: 'var(--primary-400)' }}><ArrowRight size={14}/> Proceed to Payment</button>
+                )}
+                {detailDrawer.status === 'PAYMENT_PENDING' && (
+                  <button type="button" onClick={() => { setPaymentForm({...paymentForm, amount: detailDrawer.net_salary}); setPaymentModal(detailDrawer.id); }} className="btn btn-primary" style={{ fontSize: '0.8rem' }}><Banknote size={14}/> Mark as Paid</button>
+                )}
+                {detailDrawer.status === 'PAID' && (
+                  <button type="button" onClick={handleDetailClose} className="btn btn-outline" style={{ fontSize: '0.8rem', color: 'var(--danger)', borderColor: 'var(--danger)' }}><Lock size={14}/> Close Payroll</button>
+                )}
               </div>
 
-              {/* Net Salary Calculation Highlight */}
+              {/* Net Salary Calculation */}
               <div style={{ backgroundColor: 'var(--bg-surface-elevated)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-lg)', padding: '1.5rem', boxShadow: 'var(--shadow-sm)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
-                  
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                     <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Gross Earnings</div>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>₹{detailDrawer.gross.toLocaleString('en-IN')}</div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>₹{Number(detailDrawer.gross_salary).toLocaleString('en-IN')}</div>
                   </div>
                   <div style={{ color: 'var(--text-secondary)', fontSize: '1.5rem', fontWeight: 300 }}>-</div>
-                  
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                     <div style={{ fontSize: '0.875rem', color: 'var(--danger-600)' }}>Total Deductions</div>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--danger)' }}>₹{detailDrawer.deductions.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--danger)' }}>₹{Number(detailDrawer.total_deductions).toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
                   </div>
                   <div style={{ color: 'var(--text-secondary)', fontSize: '1.5rem', fontWeight: 300 }}>+</div>
-                  
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                     <div style={{ fontSize: '0.875rem', color: 'var(--success-600)' }}>Approved Overtime</div>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--success)' }}>₹{detailDrawer.overtime.toLocaleString('en-IN')}</div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--success)' }}>₹{Number(detailDrawer.overtime_amount).toLocaleString('en-IN')}</div>
                   </div>
                   <div style={{ color: 'var(--text-secondary)', fontSize: '1.5rem', fontWeight: 300 }}>=</div>
-                  
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', backgroundColor: 'var(--success-50)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-md)' }}>
-                    <div style={{ fontSize: '0.875rem', color: 'var(--success-800)', fontWeight: 600 }}>Net Salary</div>
-                    <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--success-900)' }}>₹{detailDrawer.net.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
-                  </div>
-
-                </div>
-              </div>
-
-              {/* Salary Breakdown */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-                {/* Earnings */}
-                <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1.25rem' }}>
-                  <h3 className="section-title">Earnings Breakdown</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.875rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Basic Salary</span><span>₹30,000.00</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>HRA</span><span>₹10,000.00</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Allowances</span><span>₹5,000.00</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Other Earnings</span><span>₹5,000.00</span></div>
-                    <div style={{ height: '1px', backgroundColor: 'var(--border-color)', margin: '0.5rem 0' }}></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, fontSize: '1rem' }}><span>Gross Earnings</span><span>₹{detailDrawer.gross.toLocaleString('en-IN', {minimumFractionDigits:2})}</span></div>
-                  </div>
-                </div>
-
-                {/* Deductions */}
-                <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1.25rem' }}>
-                  <h3 className="section-title" style={{ color: 'var(--danger)' }}>Deductions Breakdown</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', fontSize: '0.875rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', color: detailDrawer.lop > 0 ? 'var(--danger)' : 'inherit' }}><span>Loss of Pay ({detailDrawer.lop} days)</span><span>₹{(detailDrawer.lop * 1923.08).toLocaleString('en-IN', {maximumFractionDigits:2, minimumFractionDigits:2})}</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Half Day</span><span>₹0.00</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Late Login</span><span>₹500.00</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Statutory / Tax</span><span>₹0.00</span></div>
-                    <div style={{ height: '1px', backgroundColor: 'var(--border-color)', margin: '0.5rem 0' }}></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, fontSize: '1rem', color: 'var(--danger)' }}><span>Total Deductions</span><span>₹{detailDrawer.deductions.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</span></div>
+                    <div style={{ fontSize: '0.875rem', color: 'var(--success)', fontWeight: 600 }}>Net Salary</div>
+                    <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--success)' }}>₹{Number(detailDrawer.net_salary).toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
                   </div>
                 </div>
               </div>
 
               {/* LOP Visualizer */}
-              {detailDrawer.lop > 0 && (
-                <div style={{ backgroundColor: 'var(--danger-50)', padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px dashed var(--danger-300)' }}>
-                  <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--danger-800)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <AlertTriangle size={16}/> Loss of Pay (LOP) Calculation
+              {Number(detailDrawer.lop_deduction) > 0 && (
+                <div style={{ backgroundColor: 'var(--danger-50)', padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px dashed var(--danger)' }}>
+                  <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--danger)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <AlertTriangle size={16}/> Loss of Pay (LOP) Deduction
                   </h4>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', fontSize: '0.875rem' }}>
-                    <div><div style={{ color: 'var(--danger)' }}>Monthly Salary</div><div style={{ fontWeight: 600 }}>₹{detailDrawer.gross.toLocaleString('en-IN')}</div></div>
-                    <div><div style={{ color: 'var(--danger)' }}>Payable Days Policy</div><div style={{ fontWeight: 600 }}>26 Working Days</div></div>
-                    <div><div style={{ color: 'var(--danger)' }}>Daily Rate</div><div style={{ fontWeight: 600 }}>₹1,923.08</div></div>
-                    <div><div style={{ color: 'var(--danger)' }}>Total LOP (1 Day)</div><div style={{ fontWeight: 700, color: 'var(--danger-800)' }}>₹1,923.08</div></div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '1rem', fontSize: '0.875rem' }}>
+                    <div><div style={{ color: 'var(--danger)' }}>Monthly Gross</div><div style={{ fontWeight: 600 }}>₹{Number(detailDrawer.gross_salary).toLocaleString('en-IN')}</div></div>
+                    <div><div style={{ color: 'var(--danger)' }}>Working Days Basis</div><div style={{ fontWeight: 600 }}>{workingDays} Days</div></div>
+                    <div><div style={{ color: 'var(--danger)' }}>Daily Rate</div><div style={{ fontWeight: 600 }}>₹{workingDays > 0 ? Math.round(Number(detailDrawer.gross_salary) / workingDays).toLocaleString('en-IN') : '-'}</div></div>
+                    <div><div style={{ color: 'var(--danger)' }}>Total LOP</div><div style={{ fontWeight: 700, color: 'var(--danger)' }}>₹{Number(detailDrawer.lop_deduction).toLocaleString('en-IN')}</div></div>
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--danger-600)', marginTop: '0.75rem' }}>* Payable days and LOP treatment are determined by Admin payroll configuration.</div>
                 </div>
               )}
 
-              {/* Modules Integration Summaries */}
+              {/* Data Source Summaries */}
               <div>
                 <h3 className="section-title">Data Source Summaries</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -443,11 +700,11 @@ const AdminPayroll: React.FC = () => {
                   <div className="card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
                     <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--gray-700)' }}>Attendance Summary</h4>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.875rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Working Days</span><span className="info-val">{detailDrawer.workingDays}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Present</span><span className="info-val">{detailDrawer.present}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Late Login</span><span className="info-val">3</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Early Logout</span><span className="info-val">2</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gridColumn: '1 / -1' }}><span className="info-label">Payroll Policy</span><span className="info-val" style={{ color: 'var(--danger-600)' }}>Deductions Enabled for Late</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Working Days</span><span className="info-val">{workingDays}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Present</span><span className="info-val">{att.presentDays}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Late Login</span><span className="info-val">{att.lateLogins}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Early Logout</span><span className="info-val">{att.earlyLogouts}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gridColumn: '1 / -1' }}><span className="info-label">Half Days</span><span className="info-val">{att.halfDays}</span></div>
                     </div>
                   </div>
 
@@ -455,29 +712,43 @@ const AdminPayroll: React.FC = () => {
                   <div className="card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
                     <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--gray-700)' }}>Leave, WFH & Permission</h4>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.875rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Approved Leave</span><span className="info-val">{detailDrawer.leave}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">WFH Days</span><span className="info-val">4</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Permissions</span><span className="info-val">3h 30m</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gridColumn: '1 / -1' }}><span className="info-label">Payroll Policy</span><span className="info-val">No deductions (Within limits)</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Approved Leave</span><span className="info-val">{lv.approvedLeave}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">LOP Leave</span><span className="info-val" style={{ color: lv.lopLeave > 0 ? 'var(--danger)' : undefined }}>{lv.lopLeave}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">WFH Days</span><span className="info-val">{wfh.wfhDays}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Permissions</span><span className="info-val">{perm.permissionCount}</span></div>
                     </div>
                   </div>
 
                 </div>
               </div>
 
-              {/* Payment Details if Paid */}
-              {detailDrawer.status === 'PAID' && detailDrawer.paymentDetails && (
-                <div style={{ backgroundColor: 'var(--success-50)', padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--success-200)' }}>
-                  <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--success-800)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <CheckCircle2 size={16}/> Payment Recorded Successfully
-                  </h4>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', fontSize: '0.875rem' }}>
-                    <div><div style={{ color: 'var(--success)' }}>Payment Date</div><div style={{ fontWeight: 600 }}>{detailDrawer.paymentDetails.date}</div></div>
-                    <div><div style={{ color: 'var(--success)' }}>Amount</div><div style={{ fontWeight: 600 }}>₹{detailDrawer.net.toLocaleString('en-IN', {maximumFractionDigits:2})}</div></div>
-                    <div><div style={{ color: 'var(--success)' }}>Method</div><div style={{ fontWeight: 600 }}>{detailDrawer.paymentDetails.method}</div></div>
-                    <div><div style={{ color: 'var(--success)' }}>Reference ID</div><div style={{ fontWeight: 600 }}>{detailDrawer.paymentDetails.ref}</div></div>
+              {/* Deduction Breakdown */}
+              {storedSummary?.deductionBreakdown && storedSummary.deductionBreakdown.length > 0 && (
+                <div>
+                  <h3 className="section-title">Deduction Breakdown</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
+                    {storedSummary.deductionBreakdown.map((d: any, i: number) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border-color)' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>{d.name}</span>
+                        <span style={{ fontWeight: 600, color: 'var(--danger)' }}>₹{Number(d.amount).toLocaleString('en-IN', {maximumFractionDigits:2})}</span>
+                      </div>
+                    ))}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--success)', marginTop: '0.75rem' }}>Recorded by {detailDrawer.paymentDetails.by}. Employees cannot modify or record their own payments.</div>
+                </div>
+              )}
+
+              {/* Payment Details */}
+              {(detailDrawer.status === 'PAID' || detailDrawer.status === 'CLOSED') && detailDrawer.payroll_payments?.[0] && (
+                <div style={{ backgroundColor: 'var(--success-50)', padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--success)' }}>
+                  <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--success)', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <CheckCircle2 size={16}/> Payment Recorded
+                  </h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '1rem', fontSize: '0.875rem' }}>
+                    <div><div style={{ color: 'var(--success)' }}>Payment Date</div><div style={{ fontWeight: 600 }}>{new Date(detailDrawer.payroll_payments[0].paid_at).toLocaleDateString('en-GB')}</div></div>
+                    <div><div style={{ color: 'var(--success)' }}>Amount</div><div style={{ fontWeight: 600 }}>₹{Number(detailDrawer.payroll_payments[0].amount).toLocaleString('en-IN', {maximumFractionDigits:2})}</div></div>
+                    <div><div style={{ color: 'var(--success)' }}>Method</div><div style={{ fontWeight: 600 }}>{detailDrawer.payroll_payments[0].payment_method}</div></div>
+                    <div><div style={{ color: 'var(--success)' }}>Reference</div><div style={{ fontWeight: 600 }}>{detailDrawer.payroll_payments[0].transaction_reference || '-'}</div></div>
+                  </div>
                 </div>
               )}
 
@@ -486,22 +757,40 @@ const AdminPayroll: React.FC = () => {
                 <h3 className="section-title">Payroll Change History</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingLeft: '1rem', borderLeft: '2px solid var(--gray-200)' }}>
                   <div style={{ position: 'relative' }}>
-                    <div style={{ position: 'absolute', left: '-1.35rem', top: '2px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--gray-400)', border: '2px solid white' }}></div>
-                    <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>Payroll Generated</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>24 Sep 2026 by System</div>
+                    <div style={{ position: 'absolute', left: '-1.35rem', top: '2px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--gray-400)', border: '2px solid var(--bg-surface)' }}></div>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>Payroll Calculated</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{detailDrawer.calculated_at ? new Date(detailDrawer.calculated_at).toLocaleString('en-GB') : MONTH_NAMES[detailDrawer.payroll_month - 1] + ' ' + detailDrawer.payroll_year}</div>
                   </div>
-                  {detailDrawer.status !== 'UNDER REVIEW' && detailDrawer.status !== 'DRAFT' && detailDrawer.status !== 'CALCULATED' && (
+                  {['UNDER_REVIEW','APPROVED','PAYMENT_PENDING','PAID','CLOSED'].includes(detailDrawer.status) && (
                     <div style={{ position: 'relative' }}>
-                      <div style={{ position: 'absolute', left: '-1.35rem', top: '2px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--primary-500)', border: '2px solid white' }}></div>
-                      <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>Payroll Reviewed & Approved</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>25 Sep 2026 by HR Admin</div>
+                      <div style={{ position: 'absolute', left: '-1.35rem', top: '2px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--warning)', border: '2px solid var(--bg-surface)' }}></div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>Submitted for Review</div>
                     </div>
                   )}
-                  {detailDrawer.status === 'PAID' && (
+                  {['APPROVED','PAYMENT_PENDING','PAID','CLOSED'].includes(detailDrawer.status) && (
                     <div style={{ position: 'relative' }}>
-                      <div style={{ position: 'absolute', left: '-1.35rem', top: '2px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--success)', border: '2px solid white' }}></div>
+                      <div style={{ position: 'absolute', left: '-1.35rem', top: '2px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--primary-500)', border: '2px solid var(--bg-surface)' }}></div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>Payroll Approved</div>
+                      {detailDrawer.approved_at && <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{new Date(detailDrawer.approved_at).toLocaleString('en-GB')}</div>}
+                    </div>
+                  )}
+                  {['PAYMENT_PENDING','PAID','CLOSED'].includes(detailDrawer.status) && (
+                    <div style={{ position: 'relative' }}>
+                      <div style={{ position: 'absolute', left: '-1.35rem', top: '2px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--primary-400)', border: '2px solid var(--bg-surface)' }}></div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>Moved to Payment Pending</div>
+                    </div>
+                  )}
+                  {['PAID','CLOSED'].includes(detailDrawer.status) && detailDrawer.payroll_payments?.[0] && (
+                    <div style={{ position: 'relative' }}>
+                      <div style={{ position: 'absolute', left: '-1.35rem', top: '2px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--success)', border: '2px solid var(--bg-surface)' }}></div>
                       <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>Payment Recorded</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{detailDrawer.paymentDetails?.date} by {detailDrawer.paymentDetails?.by}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{new Date(detailDrawer.payroll_payments[0].paid_at).toLocaleString('en-GB')}</div>
+                    </div>
+                  )}
+                  {detailDrawer.status === 'CLOSED' && (
+                    <div style={{ position: 'relative' }}>
+                      <div style={{ position: 'absolute', left: '-1.35rem', top: '2px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--gray-500)', border: '2px solid var(--bg-surface)' }}></div>
+                      <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>Payroll Closed</div>
                     </div>
                   )}
                 </div>
@@ -510,26 +799,27 @@ const AdminPayroll: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Generate Payroll Modal */}
       {generateModal && (
         <div className="drawer-overlay" style={{ alignItems: 'center', zIndex: 120 }}>
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '500px', animation: 'slideUp 0.3s' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem' }}>Generate September 2026 Payroll?</h3>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem' }}>Generate {monthLabel} Payroll?</h3>
             
             <div style={{ backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem' }}>
-              <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem' }}>Payroll Validation Checks</h4>
+              <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem' }}>Payroll Configuration</h4>
               <ul style={{ margin: 0, paddingLeft: '1.5rem', fontSize: '0.875rem', color: 'var(--gray-700)', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                <li style={{ color: 'var(--success)' }}>48 Employees configured</li>
-                <li style={{ color: 'var(--success)' }}>Attendance processing complete</li>
-                <li style={{ color: 'var(--warning)' }}>3 employees have unresolved attendance exceptions</li>
+                <li>Working Days Basis: {settingsForm.workingDaysBasis === 'configured' ? `Configured (${settingsForm.configuredWorkingDays})` : settingsForm.workingDaysBasis === 'calendar' ? 'Calendar Days' : 'Actual Working Days'}</li>
+                <li>Rounding: {settingsForm.salaryRounding === 'round' ? 'Nearest Integer' : 'Exact Decimals'}</li>
+                <li style={{ color: settingsForm.enableLopDeductions ? 'var(--success)' : 'var(--text-secondary)' }}>LOP Deductions: {settingsForm.enableLopDeductions ? 'Enabled' : 'Disabled'}</li>
               </ul>
             </div>
 
-            <div style={{ padding: '0.75rem', backgroundColor: 'var(--warning-50)', color: 'var(--warning-800)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
-              <AlertTriangle size={16} style={{ marginTop: '0.125rem' }} /> 
-              <div>Warning: Generating payroll will snapshot current attendance and leave records for calculations. You can recalculate later if needed.</div>
+            <div style={{ padding: '0.75rem', backgroundColor: 'var(--warning-50)', color: 'var(--warning)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
+              <AlertTriangle size={16} style={{ marginTop: '0.125rem', flexShrink: 0 }} /> 
+              <div>Generating payroll will snapshot current attendance and leave records for calculations.</div>
             </div>
 
             <form onSubmit={handleGenerate} style={{ display: 'flex', gap: '1rem' }}>
@@ -547,13 +837,66 @@ const AdminPayroll: React.FC = () => {
             <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>Approve Payroll?</h3>
             <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Approving payroll confirms the current salary calculations and deductions for this period.</p>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', marginBottom: '1.5rem', fontWeight: 600 }}>
-              <span>Total Employees: 48</span>
-              <span>Net Payroll: ₹22.75L</span>
+              <span>Under Review: {kpis.underReview}</span>
+              <span>Net Payroll: ₹{kpis.net.toLocaleString('en-IN')}</span>
             </div>
             <form onSubmit={handleApprove} style={{ display: 'flex', gap: '1rem' }}>
               <button type="button" onClick={() => setBulkApproveModal(false)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
-              <button type="submit" className="btn btn-primary" style={{ flex: 1, backgroundColor: 'var(--purple-600)', borderColor: 'var(--purple-600)' }}>Approve & Proceed</button>
+              <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Approve & Proceed</button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Salary Editor Modal */}
+      {showSalaryEditor && (
+        <div className="modal-overlay" style={{ zIndex: 120 }}>
+          <div className="modal-content" style={{ maxWidth: '800px', width: '90%' }}>
+            <div className="modal-header">
+              <h2>Edit Salary Structure</h2>
+              <button className="icon-button" onClick={() => setShowSalaryEditor(null)}><X size={20}/></button>
+            </div>
+            <div style={{ padding: '1.5rem' }}>
+              <SalaryEditor 
+                employeeId={showSalaryEditor} 
+                payrollYear={detailDrawer?.payroll_year}
+                payrollMonth={detailDrawer?.payroll_month}
+                onSuccess={async () => {
+                  await fetchPayrolls();
+                  if (detailDrawer) {
+                    const { data } = await supabase
+                      .from('payroll')
+                      .select('*, employees!payroll_employee_id_fkey(first_name, last_name, employee_code, departments(name)), payroll_payments(paid_at, payment_method, transaction_reference, amount)')
+                      .eq('employee_id', detailDrawer.employee_id)
+                      .eq('payroll_year', detailDrawer.payroll_year)
+                      .eq('payroll_month', detailDrawer.payroll_month)
+                      .single();
+                    if (data) setDetailDrawer(data);
+                  }
+                  setShowSalaryEditor(null);
+                  showToast('Salary structure updated and payroll recalculated.');
+                }}
+                onCancel={() => setShowSalaryEditor(null)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payslip Modal */}
+      {showPayslip && (
+        <div className="modal-overlay" style={{ zIndex: 120 }}>
+          <div className="modal-content" style={{ maxWidth: '900px', width: '90%', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="modal-header">
+              <h2>Payslip</h2>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="btn btn-outline" onClick={() => window.print()} style={{ fontSize: '0.875rem', padding: '0.25rem 0.75rem' }}>Print</button>
+                <button className="icon-button" onClick={() => setShowPayslip(null)}><X size={20}/></button>
+              </div>
+            </div>
+            <div style={{ padding: '1.5rem', backgroundColor: 'var(--gray-50)' }}>
+              <PayslipDocument currentPayslip={showPayslip} />
+            </div>
           </div>
         </div>
       )}
@@ -569,7 +912,7 @@ const AdminPayroll: React.FC = () => {
               <div style={{ backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px', textAlign: 'center', marginBottom: '0.5rem' }}>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Amount to Pay</div>
                 <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                  ₹{payrolls.find(p => p.id === paymentModal)?.net.toLocaleString('en-IN', {maximumFractionDigits:2})}
+                  ₹{Number(monthPayrolls.find(p => p.id === paymentModal)?.net_salary || 0).toLocaleString('en-IN', {maximumFractionDigits:2})}
                 </div>
               </div>
 
@@ -583,7 +926,7 @@ const AdminPayroll: React.FC = () => {
               <div><label className="form-label">Transaction Reference Number *</label><input required type="text" className="form-control" placeholder="e.g. TXN12345678" value={paymentForm.ref} onChange={e => setPaymentForm({...paymentForm, ref: e.target.value})} /></div>
               <div><label className="form-label">Remarks (Optional)</label><input type="text" className="form-control" value={paymentForm.remarks} onChange={e => setPaymentForm({...paymentForm, remarks: e.target.value})} /></div>
 
-              <div style={{ padding: '0.75rem', backgroundColor: 'var(--primary-50)', color: 'var(--primary-800)', borderRadius: 'var(--radius-md)', fontSize: '0.75rem', display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+              <div style={{ padding: '0.75rem', backgroundColor: 'var(--primary-50)', color: 'var(--primary-400)', borderRadius: 'var(--radius-md)', fontSize: '0.75rem', display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
                 <ShieldCheck size={16} /> I confirm that this salary payment has been successfully completed.
               </div>
 
@@ -605,16 +948,38 @@ const AdminPayroll: React.FC = () => {
               <button className="icon-button" onClick={() => setSettingsDrawer(false)}><X size={20} /></button>
             </div>
             <div className="drawer-body">
-              <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '2rem' }}>Define how attendance, leave, and permissions impact final salary calculations. Do not hard-code rules.</p>
+              <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '2rem' }}>Configure how attendance, leave, and permissions impact salary calculations. Settings are persisted.</p>
               
               <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
                 
                 <div>
                   <h3 className="section-title">General Settings</h3>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
-                    <div><label className="form-label">Working Days Basis</label><select className="form-control"><option>Configured Working Days (e.g. 26)</option><option>Calendar Days (e.g. 30/31)</option><option>Actual Working Days</option></select></div>
-                    <div><label className="form-label">Salary Rounding</label><select className="form-control"><option>Round to nearest integer</option><option>Exact decimals</option></select></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0' }}><span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Require Multi-Level Approval</span><input type="checkbox" defaultChecked /></div>
+                    <div>
+                      <label className="form-label">Working Days Basis</label>
+                      <select className="form-control" value={settingsForm.workingDaysBasis} onChange={e => setSettingsForm({...settingsForm, workingDaysBasis: e.target.value as any})}>
+                        <option value="configured">Configured Working Days</option>
+                        <option value="calendar">Calendar Days</option>
+                        <option value="actual">Actual Working Days (excl. weekends)</option>
+                      </select>
+                    </div>
+                    {settingsForm.workingDaysBasis === 'configured' && (
+                      <div>
+                        <label className="form-label">Configured Working Days</label>
+                        <input type="number" className="form-control" min={1} max={31} value={settingsForm.configuredWorkingDays} onChange={e => setSettingsForm({...settingsForm, configuredWorkingDays: Number(e.target.value)})} />
+                      </div>
+                    )}
+                    <div>
+                      <label className="form-label">Salary Rounding</label>
+                      <select className="form-control" value={settingsForm.salaryRounding} onChange={e => setSettingsForm({...settingsForm, salaryRounding: e.target.value as any})}>
+                        <option value="round">Round to nearest integer</option>
+                        <option value="exact">Exact decimals</option>
+                      </select>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0' }}>
+                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Require Multi-Level Approval</span>
+                      <input type="checkbox" checked={settingsForm.requireMultiLevelApproval} onChange={e => setSettingsForm({...settingsForm, requireMultiLevelApproval: e.target.checked})} />
+                    </div>
                   </div>
                 </div>
 
@@ -622,19 +987,54 @@ const AdminPayroll: React.FC = () => {
                   <h3 className="section-title">Deduction Rules</h3>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px' }}>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Enable LOP (Loss of Pay) Deductions</span><input type="checkbox" defaultChecked />
+                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Enable LOP (Loss of Pay) Deductions</span>
+                      <input type="checkbox" checked={settingsForm.enableLopDeductions} onChange={e => setSettingsForm({...settingsForm, enableLopDeductions: e.target.checked})} />
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px' }}>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Enable Half-Day Deductions</span><input type="checkbox" defaultChecked />
+                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Enable Half-Day Deductions</span>
+                      <input type="checkbox" checked={settingsForm.enableHalfDayDeductions} onChange={e => setSettingsForm({...settingsForm, enableHalfDayDeductions: e.target.checked})} />
+                    </div>
+                    <div style={{ backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Enable Late Login Deduction</span>
+                        <input type="checkbox" checked={settingsForm.enableLateLoginDeduction} onChange={e => setSettingsForm({...settingsForm, enableLateLoginDeduction: e.target.checked})} />
+                      </div>
+                      {settingsForm.enableLateLoginDeduction && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
+                          <div>
+                            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Monthly Late Login Limit</label>
+                            <input type="number" className="form-control" min={0} value={settingsForm.monthlyLateLoginLimit} onChange={e => setSettingsForm({...settingsForm, monthlyLateLoginLimit: Number(e.target.value)})} style={{ marginTop: '0.25rem' }} />
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Deduction Method</label>
+                            <select className="form-control" value={settingsForm.lateDeductionMethod} onChange={e => setSettingsForm({...settingsForm, lateDeductionMethod: e.target.value as any})} style={{ marginTop: '0.25rem' }}>
+                              <option value="fixed">Fixed Amount</option>
+                              <option value="per_minute">Per Minute</option>
+                              <option value="half_day">Half Day (existing)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Amount / Rate (₹)</label>
+                            <input type="number" className="form-control" min={0} value={settingsForm.lateDeductionAmountOrRate} onChange={e => setSettingsForm({...settingsForm, lateDeductionAmountOrRate: Number(e.target.value)})} style={{ marginTop: '0.25rem' }} />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Deduct for Permissions Exceeding Limit</span>
+                        <input type="checkbox" checked={settingsForm.enablePermissionDeduction} onChange={e => setSettingsForm({...settingsForm, enablePermissionDeduction: e.target.checked})} />
+                      </div>
+                      {settingsForm.enablePermissionDeduction && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                          <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Permission Limit</label>
+                          <input type="number" className="form-control" min={0} value={settingsForm.permissionLimit} onChange={e => setSettingsForm({...settingsForm, permissionLimit: Number(e.target.value)})} style={{ marginTop: '0.25rem' }} />
+                        </div>
+                      )}
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px' }}>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Deduct for Late Login (Configurable limit)</span><input type="checkbox" defaultChecked />
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px' }}>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Deduct for Permissions Exceeding Limit</span><input type="checkbox" />
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px' }}>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Deduct for WFH (e.g. reduced allowances)</span><input type="checkbox" />
+                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Deduct for WFH</span>
+                      <input type="checkbox" checked={settingsForm.enableWfhDeduction} onChange={e => setSettingsForm({...settingsForm, enableWfhDeduction: e.target.checked})} />
                     </div>
                   </div>
                 </div>
@@ -642,11 +1042,23 @@ const AdminPayroll: React.FC = () => {
                 <div>
                   <h3 className="section-title">Overtime Rules</h3>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Enable Overtime Pay</span><input type="checkbox" defaultChecked /></div>
-                    <div><label className="form-label">Overtime Rate Type</label><select className="form-control"><option>Multiplier (e.g. 1.5x Hourly)</option><option>Fixed Rate</option></select></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Enable Overtime Pay</span>
+                      <input type="checkbox" checked={settingsForm.enableOvertimePay} onChange={e => setSettingsForm({...settingsForm, enableOvertimePay: e.target.checked})} />
+                    </div>
+                    {settingsForm.enableOvertimePay && (
+                      <div>
+                        <label className="form-label">Overtime Rate Type</label>
+                        <select className="form-control" value={settingsForm.overtimeRateType} onChange={e => setSettingsForm({...settingsForm, overtimeRateType: e.target.value as any})}>
+                          <option value="multiplier">Multiplier (e.g. 1.5x Hourly)</option>
+                          <option value="fixed">Fixed Rate</option>
+                        </select>
+                      </div>
+                    )}
                   </div>
                 </div>
 
+                <button onClick={handleSaveSettings} className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>Save Payroll Settings</button>
               </div>
             </div>
           </div>
@@ -654,25 +1066,13 @@ const AdminPayroll: React.FC = () => {
       )}
 
       <style>{`
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         .info-label { color: var(--gray-500); }
         .info-val { font-weight: 600; color: var(--gray-900); }
         
         .drawer-overlay { position: fixed; inset: 0; background-color: rgba(0,0,0,0.4); z-index: 100; display: flex; justify-content: flex-end; }
         .drawer { background-color: var(--bg-surface); width: 100%; height: 100%; display: flex; flex-direction: column; box-shadow: var(--shadow-xl); animation: slideInRight 0.3s forwards; }
         .wide-drawer { max-width: min(520px, 100vw); }
-        .drawer-header { padding: 1.5rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; alignItems: flex-start; }
+        .drawer-header { padding: 1.5rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: flex-start; }
         .drawer-body { padding: 1.5rem; overflow-y: auto; flex: 1; }
         
         .desktop-only { display: block; }
@@ -685,10 +1085,8 @@ const AdminPayroll: React.FC = () => {
         @media (max-width: 900px) { 
           .desktop-only { display: none; }
           .mobile-only { display: block; }
-           
         }
         @media (max-width: 600px) {
-          
           .drawer-overlay { align-items: flex-end; }
           .drawer, .wide-drawer { height: 95vh; border-top-left-radius: var(--radius-xl); border-top-right-radius: var(--radius-xl); animation: slideUp 0.3s forwards; }
         }
@@ -700,6 +1098,3 @@ const AdminPayroll: React.FC = () => {
 };
 
 export default AdminPayroll;
-
-
-

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { employeeService } from '../../services/employees/employeeService';
 import { 
   CalendarDays, Calendar, ChevronLeft, ChevronRight, Search, 
   Filter, MoreVertical, X, CheckCircle2, AlertTriangle, Users, 
@@ -7,28 +8,10 @@ import {
   Check, History, Clock, MapPin, Sun
 } from 'lucide-react';
 
-const mockShifts = [
-  { id: 's1', name: 'Morning', time: '06:00 AM - 03:00 PM', overnight: false },
-  { id: 's2', name: 'General', time: '09:00 AM - 06:00 PM', overnight: false },
-  { id: 's3', name: 'Evening', time: '02:00 PM - 11:00 PM', overnight: false },
-  { id: 's4', name: 'Night', time: '10:00 PM - 07:00 AM', overnight: true },
-];
+// Removed mockShifts
 
-const mockEmployees = [
-  { id: 'EMP001', name: 'Arun Kumar', dept: 'Development', office: 'Chennai Main' },
-  { id: 'EMP002', name: 'Priya Sharma', dept: 'HR', office: 'Chennai Main' },
-  { id: 'EMP003', name: 'Kumar Raj', dept: 'Support', office: 'Bangalore' },
-  { id: 'EMP004', name: 'Anitha S', dept: 'Finance', office: 'Remote' },
-  { id: 'EMP005', name: 'Rahul K', dept: 'Development', office: 'Chennai Main' },
-];
 
-// Seed data
-const initialRoster: any = {
-  'EMP001': { '2026-09-22': { shift: 's1', mode: 'Office' }, '2026-09-23': { shift: 's1', mode: 'Office' }, '2026-09-24': { shift: 's4', mode: 'Office' }, '2026-09-25': { shift: 's4', mode: 'Office' }, '2026-09-26': { shift: 's4', mode: 'Office' }, '2026-09-27': { type: 'Week Off' }, '2026-09-28': { type: 'Week Off' } },
-  'EMP002': { '2026-09-22': { shift: 's3', mode: 'Office' }, '2026-09-23': { shift: 's3', mode: 'Office' }, '2026-09-24': { shift: 's1', mode: 'Office' }, '2026-09-25': { shift: 's1', mode: 'Office' }, '2026-09-26': { shift: 's1', mode: 'Office' }, '2026-09-27': { shift: 's1', mode: 'WFH' }, '2026-09-28': { shift: 's1', mode: 'WFH' } },
-  'EMP003': { '2026-09-22': { shift: 's4', mode: 'Office' }, '2026-09-23': { shift: 's4', mode: 'Office' }, '2026-09-24': { shift: 's3', mode: 'Office' }, '2026-09-25': { shift: 's3', mode: 'Office' }, '2026-09-26': { shift: 's3', mode: 'Office' }, '2026-09-27': { type: 'Week Off' }, '2026-09-28': { type: 'Week Off' } },
-  'EMP004': { '2026-09-22': { shift: 's2', mode: 'WFH' }, '2026-09-23': { shift: 's2', mode: 'WFH' }, '2026-09-24': { type: 'Leave' }, '2026-09-25': { type: 'Leave' }, '2026-09-26': { type: 'Holiday' }, '2026-09-27': { type: 'Week Off' }, '2026-09-28': { type: 'Week Off' } },
-};
+const initialRoster: any = {};
 
 const weekDates = [
   { date: '2026-09-22', display: 'Mon 22' },
@@ -44,6 +27,9 @@ const AdminRoster: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [shifts, setShifts] = useState<any[]>([]);
+  const [assignments, setAssignments] = useState<any[]>([]);
   
   const [rosterData, setRosterData] = useState(initialRoster);
   const [viewMode, setViewMode] = useState('Week');
@@ -66,9 +52,65 @@ const AdminRoster: React.FC = () => {
   // Form State
   const [formData, setFormData] = useState<any>({});
 
+  const fetchData = async () => {
+    setLoading(true);
+    const [empRes, shiftRes, assignRes] = await Promise.all([
+      employeeService.getEmployees(),
+      employeeService.getShifts(),
+      employeeService.getShiftAssignments()
+    ]);
+    
+    if (empRes.data) {
+      setEmployees(empRes.data.map((e: any) => ({
+        id: e.id,
+        empCode: e.employee_code || '-',
+        name: `${e.first_name} ${e.last_name}`,
+        dept: e.department?.name || 'Unassigned',
+        office: e.office?.name || '-'
+      })));
+    }
+    
+    if (shiftRes.data) {
+      setShifts(shiftRes.data);
+    }
+    
+    if (assignRes.data) {
+      setAssignments(assignRes.data);
+      // We store all assignments in rosterData for quick lookup, but the UI should resolve effective dates
+      const newRoster: any = {};
+      assignRes.data.forEach((a: any) => {
+        if (!newRoster[a.employee_id]) newRoster[a.employee_id] = {};
+        newRoster[a.employee_id][a.effective_date] = {
+          shift: a.shift_template_id,
+          mode: 'Office',
+          shiftData: a.shift_templates
+        };
+      });
+      setRosterData(newRoster);
+    }
+    setLoading(false);
+  };
+
+  const getEffectiveCellData = (empId: string, dateStr: string) => {
+    // Exact match for the date (e.g. Leave, Holiday overrides could exist here later)
+    if (rosterData[empId]?.[dateStr]) {
+      return rosterData[empId][dateStr];
+    }
+    // Fallback to the most recent 'PERMANENT' assignment before or on this date
+    const empAssignments = assignments.filter(a => a.employee_id === empId && new Date(a.effective_date) <= new Date(dateStr));
+    if (empAssignments.length > 0) {
+      const mostRecent = empAssignments.sort((a, b) => new Date(b.effective_date).getTime() - new Date(a.effective_date).getTime())[0];
+      return {
+        shift: mostRecent.shift_template_id,
+        mode: 'Office',
+        shiftData: mostRecent.shift_templates
+      };
+    }
+    return null;
+  };
+
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 800);
-    return () => clearTimeout(timer);
+    fetchData();
   }, []);
 
   const showToast = (msg: string) => {
@@ -76,13 +118,21 @@ const AdminRoster: React.FC = () => {
     setTimeout(() => setToast(''), 3000);
   };
 
-  const filteredEmployees = mockEmployees.filter(emp => {
+  const filteredEmployees = employees.filter(emp => {
     const matchesSearch = emp.name.toLowerCase().includes(search.toLowerCase()) || emp.id.toLowerCase().includes(search.toLowerCase());
     const matchesDept = filterDept === 'All' || emp.dept === filterDept;
     return matchesSearch && matchesDept;
   });
 
-  const getShiftDetails = (shiftId: string) => mockShifts.find(s => s.id === shiftId);
+  const getShiftDetails = (shiftId: string) => {
+    const s = shifts.find(sh => sh.id === shiftId);
+    if (!s) return null;
+    return {
+      name: s.name,
+      time: `${s.start_time?.slice(0,5) || ''} - ${s.end_time?.slice(0,5) || ''}`,
+      overnight: false // Simplified for now since schema might not have is_night_shift
+    };
+  };
 
   const handleCellClick = (empId: string, date: string) => {
     if (isLocked) return showToast('Roster is locked. Unlock to make changes.');
@@ -95,27 +145,26 @@ const AdminRoster: React.FC = () => {
       if (existing?.shift) {
         setFormData({ shift: existing.shift, mode: existing.mode || 'Office' });
       } else {
-        setFormData({ shift: 's2', mode: 'Office' });
+        setFormData({ shift: shifts[0]?.id || '', mode: 'Office' });
       }
     }
   };
 
-  const handleSaveAssign = (e: React.FormEvent) => {
+  const handleSaveAssign = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.shift && formData.mode !== 'Week Off') return;
     
     const { empId, date } = assignModal;
     
-    setRosterData((prev: any) => ({
-      ...prev,
-      [empId]: {
-        ...(prev[empId] || {}),
-        [date]: formData.mode === 'Week Off' 
-          ? { type: 'Week Off' } 
-          : { shift: formData.shift, mode: formData.mode }
+    if (formData.mode !== 'Week Off') {
+      const { error } = await employeeService.assignShift(empId, formData.shift, date);
+      if (error) {
+        showToast('Error saving shift: ' + error.message);
+        return;
       }
-    }));
+    }
     
+    await fetchData();
     setAssignModal(null);
     showToast(assignModal.existing ? 'Shift assignment updated' : 'Shift assigned successfully');
   };
@@ -180,40 +229,67 @@ const AdminRoster: React.FC = () => {
         <div className="skeleton-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '1rem' }}>
           {[...Array(6)].map((_, i) => <div key={i} className="skeleton" style={{ height: '70px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
-      ) : (
+      ) : (() => {
+        let scheduled = 0, morning = 0, evening = 0, night = 0, wfh = 0;
+        let unassigned = 0;
+        
+        filteredEmployees.forEach(emp => {
+          let hasAssignment = false;
+          
+          weekDates.forEach(d => {
+            const cell = getEffectiveCellData(emp.id, d.date);
+            if (cell && cell.shift) {
+               hasAssignment = true;
+               const type = cell.shiftData?.shift_type;
+               if (type === 'MORNING') morning++;
+               if (type === 'EVENING') evening++;
+               if (type === 'NIGHT') night++;
+               if (cell.mode === 'WFH') wfh++;
+            }
+          });
+          
+          if (hasAssignment) {
+            scheduled++;
+          } else {
+            unassigned++;
+          }
+        });
+        
+        return (
         <div className="kpi-grid">
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon"><Users size={16} /></div></div>
-            <div className="sc-val">48</div>
+            <div className="sc-val">{scheduled}</div>
             <div className="sc-title">Scheduled</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-50)', color: 'var(--warning-600)' }}><Sun size={16} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>18</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>{morning}</div>
             <div className="sc-title">Morning</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-50)', color: 'var(--primary-600)' }}><Clock size={16} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>12</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{evening}</div>
             <div className="sc-title">Evening</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--purple-50)', color: 'var(--purple-600)' }}><Moon size={16} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--purple-700)' }}>10</div>
+            <div className="sc-val" style={{ color: 'var(--purple-700)' }}>{night}</div>
             <div className="sc-title">Night</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-50)', color: 'var(--success-600)' }}><MapPin size={16} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--success)' }}>5</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{wfh}</div>
             <div className="sc-title">WFH</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--gray-100)', color: 'var(--text-secondary)' }}><AlertTriangle size={16} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--gray-700)' }}>3</div>
+            <div className="sc-val" style={{ color: 'var(--gray-700)' }}>{unassigned}</div>
             <div className="sc-title">Unassigned</div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Main Roster Card */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -286,10 +362,10 @@ const AdminRoster: React.FC = () => {
                     <tr key={emp.id}>
                       <td className="sticky-col" onClick={() => setEmpDrawer(emp)} style={{ cursor: 'pointer' }}>
                         <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{emp.name}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.id} • {emp.dept}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.empCode} • {emp.dept}</div>
                       </td>
                       {weekDates.map(d => {
-                        const cellData = rosterData[emp.id]?.[d.date];
+                        const cellData = getEffectiveCellData(emp.id, d.date);
                         return (
                           <td key={d.date} className="roster-cell" onClick={() => handleCellClick(emp.id, d.date)}>
                             {cellData ? (
@@ -303,7 +379,7 @@ const AdminRoster: React.FC = () => {
                                   {viewMode === 'Week' && (
                                     <>
                                       <div className="shift-time">
-                                        {getShiftDetails(cellData.shift)?.time.split(' - ')[0]} 
+                                        {getShiftDetails(cellData.shift)?.time} 
                                         {getShiftDetails(cellData.shift)?.overnight && <span style={{ color: 'var(--purple-700)', fontWeight: 600 }}> +1d</span>}
                                       </div>
                                       <div className={`shift-mode ${cellData.mode === 'WFH' ? 'text-primary' : 'text-gray'}`}>{cellData.mode}</div>
@@ -334,13 +410,13 @@ const AdminRoster: React.FC = () => {
               </div>
               <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 {filteredEmployees.map(emp => {
-                  const cellData = rosterData[emp.id]?.['2026-09-23'];
+                  const cellData = getEffectiveCellData(emp.id, '2026-09-23');
                   return (
                     <div key={emp.id} className="card" style={{ padding: '1rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
                         <div>
                           <div style={{ fontWeight: 600 }}>{emp.name}</div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.id}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.empCode}</div>
                         </div>
                         <button onClick={() => setEmpDrawer(emp)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}>View Schedule</button>
                       </div>
@@ -381,7 +457,7 @@ const AdminRoster: React.FC = () => {
             <div className="drawer-header">
               <div>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>{assignModal.existing ? 'Edit Assignment' : 'Assign Shift'}</h2>
-                <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>{mockEmployees.find(e => e.id === assignModal.empId)?.name} • {assignModal.date}</div>
+                <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>{assignModal.date}</div>
               </div>
               <button className="icon-button" onClick={() => setAssignModal(null)}><X size={20} /></button>
             </div>
@@ -411,9 +487,8 @@ const AdminRoster: React.FC = () => {
                   <div>
                     <label className="form-label">Shift *</label>
                     <select required className="form-control" value={formData.shift || ''} onChange={e => setFormData({...formData, shift: e.target.value})}>
-                      <option value="">Select Shift</option>
-                      {mockShifts.map(s => (
-                        <option key={s.id} value={s.id}>{s.name} ({s.time}) {s.overnight ? '+1d' : ''}</option>
+                      {shifts.map(s => (
+                        <option key={s.id} value={s.id}>{s.name} ({s.start_time?.slice(0,5)} - {s.end_time?.slice(0,5)})</option>
                       ))}
                     </select>
                   </div>
@@ -421,7 +496,7 @@ const AdminRoster: React.FC = () => {
                   {formData.mode === 'Office' && (
                     <div>
                       <label className="form-label">Office Location</label>
-                      <input className="form-control" value={mockEmployees.find(e => e.id === assignModal.empId)?.office} disabled style={{ backgroundColor: 'var(--gray-100)' }} />
+                      <input className="form-control" value="Office" disabled style={{ backgroundColor: 'var(--gray-100)' }} />
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Employee's default assigned office.</div>
                     </div>
                   )}
@@ -466,7 +541,7 @@ const AdminRoster: React.FC = () => {
               <AlertTriangle size={20} color="var(--danger-600)" /> Schedule Conflict
             </h3>
             <p style={{ fontSize: '0.875rem', color: 'var(--gray-700)', marginBottom: '1.5rem' }}>
-              <strong>{mockEmployees.find(e => e.id === conflictModal.empId)?.name}</strong> has approved <strong>{conflictModal.type}</strong> on <strong>{conflictModal.date}</strong>.
+              <strong>Employee</strong> has approved <strong>{conflictModal.type}</strong> on <strong>{conflictModal.date}</strong>.
             </p>
             <div style={{ backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)', fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
               Assigning a shift will override the approved leave/holiday record in the roster visual. Are you sure you want to proceed?
@@ -598,7 +673,7 @@ const AdminRoster: React.FC = () => {
                 <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem' }}>
                   <div style={{ color: 'var(--text-secondary)', width: '60px' }}>Sep 23</div>
                   <div>
-                    <div style={{ fontWeight: 500 }}>Updated Shift: Arun Kumar → Night</div>
+                    <div style={{ fontWeight: 500 }}>Updated Shift: Employee A → Night</div>
                     <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>By HR Manager</div>
                   </div>
                 </div>

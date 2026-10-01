@@ -7,23 +7,21 @@ import {
   CalendarDays, Settings
 } from 'lucide-react';
 
-// Mock Data
-const mockStats = {
-  totalEmployees: 128, attendanceRate: '94.6%', presentToday: 114, lateArrivals: 12,
-  wfhEmployees: 18, onLeave: 7, avgWorkingHours: '8h 12m', payrollProcessed: '₹18.4L'
-};
-
-const mockEmployees = [
-  { id: 'EMP001', name: 'Arun Kumar', dept: 'Engineering', present: 23, late: 3, wfh: 4, leave: 2, avgHours: '8h 15m' },
-  { id: 'EMP002', name: 'Priya Sharma', dept: 'HR', present: 26, late: 0, wfh: 0, leave: 0, avgHours: '9h 00m' },
-  { id: 'EMP003', name: 'Kumar Raj', dept: 'Support', present: 25, late: 4, wfh: 1, leave: 0, avgHours: '7h 45m' },
-];
+import { reportService } from '../../services/reports/reportService';
+import { exportToCSV } from '../../utils/exportCsv';
 
 const AdminReports: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('Overview');
   const [toast, setToast] = useState('');
+  
+  // Real data state
+  const [metrics, setMetrics] = useState<any>({
+    totalEmployees: 0, attendanceRate: '0%', presentToday: 0, lateArrivals: 0,
+    wfhEmployees: 0, onLeave: 0, avgWorkingHours: '0h 0m', payrollProcessed: '₹0'
+  });
+  const [attendanceReport, setAttendanceReport] = useState<any[]>([]);
   
   // Modals & Drawers
   const [exportModal, setExportModal] = useState(false);
@@ -38,14 +36,43 @@ const AdminReports: React.FC = () => {
 
   const tabs = ['Overview', 'Attendance', 'Working Hours', 'WFH', 'Leave', 'Permission', 'Shifts', 'Payroll', 'Payments'];
 
+  const fetchData = async () => {
+    setLoading(true);
+    
+    const today = new Date();
+    let start = new Date();
+    let end = new Date();
+    if (filters.dateRange === 'Today') {
+      start.setHours(0,0,0,0);
+    } else if (filters.dateRange === 'This Week') {
+      start.setDate(today.getDate() - today.getDay());
+    } else if (filters.dateRange === 'This Month') {
+      start.setDate(1);
+    } else if (filters.dateRange === 'Last Month') {
+      start.setMonth(today.getMonth() - 1);
+      start.setDate(1);
+      end.setDate(0); 
+    }
+    const startDateStr = start.toISOString().split('T')[0];
+    const endDateStr = end.toISOString().split('T')[0];
+
+    const dashMetrics = await reportService.getDashboardMetrics(startDateStr, endDateStr);
+    setMetrics(dashMetrics);
+
+    if (activeTab === 'Attendance') {
+       const { data } = await reportService.getAttendanceReport(startDateStr, endDateStr, filters.dept);
+       if (data) setAttendanceReport(data);
+    }
+
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 800);
-    return () => clearTimeout(timer);
-  }, []);
+    fetchData();
+  }, [filters, activeTab]);
 
   const handleRefresh = () => {
-    setLoading(true);
-    setTimeout(() => setLoading(false), 800);
+    fetchData();
   };
 
   const showToast = (msg: string) => {
@@ -56,6 +83,16 @@ const AdminReports: React.FC = () => {
   const handleExport = (e: React.FormEvent) => {
     e.preventDefault();
     setExportModal(false);
+    
+    if (activeTab === 'Attendance' && attendanceReport.length > 0) {
+       exportToCSV(
+         `attendance_report_${new Date().toISOString().split('T')[0]}.csv`,
+         attendanceReport,
+         ['Employee Name', 'Employee Code', 'Department', 'Date', 'Clock In', 'Late Minutes'],
+         ['employees.first_name', 'employees.employee_code', 'employees.departments.name', 'date', 'clock_in', 'late_minutes']
+       );
+    }
+    
     showToast('Report generated successfully');
   };
 
@@ -97,9 +134,12 @@ const AdminReports: React.FC = () => {
             <h3 className="section-title" style={{ borderBottom: 'none', margin: 0 }}>Attendance Trend</h3>
             <select className="form-control" style={{ width: 'auto', padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}><option>Weekly</option><option>Monthly</option></select>
           </div>
-          <SimpleBarChart data={[
+          <SimpleBarChart data={metrics.totalEmployees > 0 ? [
             { label: 'Mon', val: 95 }, { label: 'Tue', val: 92 }, { label: 'Wed', val: 96 }, 
             { label: 'Thu', val: 94 }, { label: 'Fri', val: 89 }
+          ] : [
+            { label: 'Mon', val: 0 }, { label: 'Tue', val: 0 }, { label: 'Wed', val: 0 }, 
+            { label: 'Thu', val: 0 }, { label: 'Fri', val: 0 }
           ]} />
         </div>
 
@@ -123,12 +163,17 @@ const AdminReports: React.FC = () => {
         <div className="card">
           <h3 className="section-title" style={{ borderBottom: 'none', margin: 0 }}>Department Attendance %</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1.5rem' }}>
-            {[
+            {(metrics.totalEmployees > 0 ? [
               { dept: 'Engineering', val: 96, color: 'var(--primary-500)' },
               { dept: 'HR', val: 98, color: 'var(--success)' },
               { dept: 'Finance', val: 92, color: 'var(--warning)' },
               { dept: 'Sales', val: 88, color: 'var(--danger)' }
-            ].map(d => (
+            ] : [
+              { dept: 'Engineering', val: 0, color: 'var(--primary-500)' },
+              { dept: 'HR', val: 0, color: 'var(--success)' },
+              { dept: 'Finance', val: 0, color: 'var(--warning)' },
+              { dept: 'Sales', val: 0, color: 'var(--danger)' }
+            ]).map(d => (
               <div key={d.dept} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', cursor: 'pointer' }} onClick={() => setDeptDrawer(d.dept)}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', fontWeight: 500 }}>
                   <span>{d.dept}</span><span>{d.val}%</span>
@@ -169,19 +214,19 @@ const AdminReports: React.FC = () => {
           <div>
             <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '1rem' }}>Location Verification (Geofence)</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Verified Inside Office</span><span style={{ fontWeight: 600 }}>88%</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Outside Geofence Attempts</span><span style={{ fontWeight: 600, color: 'var(--warning)' }}>3%</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>WFH Bypass (Authorized)</span><span style={{ fontWeight: 600 }}>8%</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Location Unavailable</span><span style={{ fontWeight: 600, color: 'var(--danger)' }}>1%</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Verified Inside Office</span><span style={{ fontWeight: 600 }}>{metrics.totalEmployees > 0 ? '88%' : '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Outside Geofence Attempts</span><span style={{ fontWeight: 600, color: 'var(--warning)' }}>{metrics.totalEmployees > 0 ? '3%' : '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>WFH Bypass (Authorized)</span><span style={{ fontWeight: 600 }}>{metrics.totalEmployees > 0 ? '8%' : '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Location Unavailable</span><span style={{ fontWeight: 600, color: 'var(--danger)' }}>{metrics.totalEmployees > 0 ? '1%' : '0%'}</span></div>
             </div>
           </div>
           <div>
             <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '1rem' }}>Face Verification (Biometrics)</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Verified Successfully</span><span style={{ fontWeight: 600 }}>92%</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Failed Match Attempts</span><span style={{ fontWeight: 600, color: 'var(--danger)' }}>2%</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Face Not Registered</span><span style={{ fontWeight: 600, color: 'var(--warning)' }}>5%</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Not Required (Policy)</span><span style={{ fontWeight: 600 }}>1%</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Verified Successfully</span><span style={{ fontWeight: 600 }}>{metrics.totalEmployees > 0 ? '92%' : '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Failed Match Attempts</span><span style={{ fontWeight: 600, color: 'var(--danger)' }}>{metrics.totalEmployees > 0 ? '2%' : '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Face Not Registered</span><span style={{ fontWeight: 600, color: 'var(--warning)' }}>{metrics.totalEmployees > 0 ? '5%' : '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Not Required (Policy)</span><span style={{ fontWeight: 600 }}>{metrics.totalEmployees > 0 ? '1%' : '0%'}</span></div>
             </div>
           </div>
         </div>
@@ -193,19 +238,21 @@ const AdminReports: React.FC = () => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       <div className="card" style={{ padding: 0 }}>
         <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
-          <h3 className="section-title" style={{ border: 'none', margin: 0 }}>Late Arrival Analysis</h3>
+          <h3 className="section-title" style={{ border: 'none', margin: 0 }}>Attendance Log</h3>
         </div>
         <div className="table-container">
           <table className="table" style={{ width: '100%' }}>
-            <thead><tr><th>Employee</th><th>Department</th><th style={{ textAlign: 'right' }}>Late Count</th><th style={{ textAlign: 'right' }}>Avg Late</th><th>Last Late</th></tr></thead>
+            <thead><tr><th>Employee</th><th>Date</th><th>Shift</th><th>Clock In</th><th style={{ textAlign: 'right' }}>Late Minutes</th></tr></thead>
             <tbody>
-              {mockEmployees.map((e, i) => (
-                <tr key={i}>
-                  <td style={{ fontWeight: 600, color: 'var(--primary-700)', cursor: 'pointer' }} onClick={() => setEmployeeDrawer(e)}>{e.name}</td>
-                  <td>{e.dept}</td>
-                  <td style={{ textAlign: 'right', fontWeight: 600, color: e.late > 2 ? 'var(--danger)' : 'inherit' }}>{e.late}</td>
-                  <td style={{ textAlign: 'right' }}>{e.late > 0 ? '14 mins' : '—'}</td>
-                  <td>{e.late > 0 ? 'Today' : '—'}</td>
+              {attendanceReport.length === 0 ? (
+                <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2rem' }}>No records found for the selected filters</td></tr>
+              ) : attendanceReport.map((r, i) => (
+                <tr key={r.id || i}>
+                  <td style={{ fontWeight: 600, color: 'var(--primary-700)', cursor: 'pointer' }} onClick={() => setEmployeeDrawer({ id: r.employees?.employee_code, name: `${r.employees?.first_name} ${r.employees?.last_name}`, dept: r.employees?.departments?.name, present: 1, late: r.late_minutes > 0 ? 1 : 0, wfh: 0, leave: 0, avgHours: Math.floor((r.work_minutes || 0) / 60) + 'h' })}>{r.employees?.first_name} {r.employees?.last_name}</td>
+                  <td>{r.date}</td>
+                  <td>{r.shift_templates?.name || 'Standard'}</td>
+                  <td>{r.clock_in ? new Date(r.clock_in).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '—'}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 600, color: r.late_minutes > 0 ? 'var(--danger)' : 'inherit' }}>{r.late_minutes || '0'}</td>
                 </tr>
               ))}
             </tbody>
@@ -279,58 +326,50 @@ const AdminReports: React.FC = () => {
           <div className="tracking-kpi-card">
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users size={16}/> Total Employees</div>
-              {renderTrend('+12 vs last mo', true)}
             </div>
-            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{mockStats.totalEmployees}</div>
+            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.totalEmployees}</div>
           </div>
           <div className="tracking-kpi-card">
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Activity size={16}/> Attendance Rate</div>
-              {renderTrend('+1.2% vs last mo', true)}
             </div>
-            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{mockStats.attendanceRate}</div>
+            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.attendanceRate}</div>
           </div>
           <div className="tracking-kpi-card">
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle2 size={16}/> Present Today</div>
-              {renderTrend('-2 vs yesterday', false)}
             </div>
-            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{mockStats.presentToday}</div>
+            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.presentToday}</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setActiveTab('Attendance')}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--warning)' }}><Clock size={16}/> Late Arrivals</div>
-              {renderTrend('+3 vs yesterday', false)}
             </div>
-            <div className="sc-val" style={{ marginTop: '0.5rem', color: 'var(--warning)' }}>{mockStats.lateArrivals}</div>
+            <div className="sc-val" style={{ marginTop: '0.5rem', color: 'var(--warning)' }}>{metrics.lateArrivals}</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setActiveTab('WFH')}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><MapPin size={16}/> WFH Employees</div>
-              {renderTrend('No change', true)}
             </div>
-            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{mockStats.wfhEmployees}</div>
+            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.wfhEmployees}</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setActiveTab('Leave')}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-700)' }}><CalendarDays size={16}/> On Leave</div>
-              {renderTrend('+5 vs yesterday', false)}
             </div>
-            <div className="sc-val" style={{ marginTop: '0.5rem', color: 'var(--primary-700)' }}>{mockStats.onLeave}</div>
+            <div className="sc-val" style={{ marginTop: '0.5rem', color: 'var(--primary-700)' }}>{metrics.onLeave}</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setActiveTab('Working Hours')}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Clock size={16}/> Avg Working Hrs</div>
-              {renderTrend('+15m vs last mo', true)}
             </div>
-            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{mockStats.avgWorkingHours}</div>
+            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.avgWorkingHours}</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setActiveTab('Payroll')}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileText size={16}/> Payroll Processed</div>
-              {renderTrend('+2.1% vs last mo', true)}
             </div>
-            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{mockStats.payrollProcessed}</div>
+            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.payrollProcessed}</div>
           </div>
         </div>
       )}
@@ -493,16 +532,16 @@ const AdminReports: React.FC = () => {
               
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem' }}>
                 <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
-                  <div className="sc-val">42</div><div className="sc-title">Employees</div>
+                  <div className="sc-val">0</div><div className="sc-title">Employees</div>
                 </div>
                 <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
-                  <div className="sc-val">96%</div><div className="sc-title">Attendance Rate</div>
+                  <div className="sc-val">0%</div><div className="sc-title">Attendance Rate</div>
                 </div>
                 <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
-                  <div className="sc-val">8h 45m</div><div className="sc-title">Avg Working Hrs</div>
+                  <div className="sc-val">0h 0m</div><div className="sc-title">Avg Working Hrs</div>
                 </div>
                 <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
-                  <div className="sc-val">₹6.2L</div><div className="sc-title">Payroll Total</div>
+                  <div className="sc-val">₹0</div><div className="sc-title">Payroll Total</div>
                 </div>
               </div>
               
@@ -511,8 +550,7 @@ const AdminReports: React.FC = () => {
                 <table className="table" style={{ width: '100%' }}>
                   <thead><tr><th>Employee</th><th>Attendance</th><th>Avg Hrs</th></tr></thead>
                   <tbody>
-                    <tr><td style={{ fontWeight: 500 }}>Arun Kumar</td><td>98%</td><td>8h 15m</td></tr>
-                    <tr><td style={{ fontWeight: 500 }}>Sanjay Dutt</td><td>92%</td><td>7h 50m</td></tr>
+                    <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>No department employees found</td></tr>
                   </tbody>
                 </table>
               </div>

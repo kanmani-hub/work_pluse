@@ -14,12 +14,6 @@ const initialShifts = [
   { id: 's5', name: 'Part-Time Flex', code: 'PT-FLEX', start: '10:00', end: '14:00', reqHours: 4, breakMins: 0, grace: 10, overnight: false, employees: 8, status: 'Inactive', mode: 'Flexible' },
 ];
 
-const mockEmployees = [
-  { id: 'EMP001', name: 'Arun Kumar', dept: 'Development', mode: 'Office', nextDate: '25 Sep', status: 'Active' },
-  { id: 'EMP012', name: 'Neha Gupta', dept: 'HR', mode: 'WFH', nextDate: '25 Sep', status: 'Active' },
-  { id: 'EMP024', name: 'Sanjay Dutt', dept: 'Finance', mode: 'Office', nextDate: '26 Sep', status: 'On Leave' },
-];
-
 const AdminShifts: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -303,7 +297,7 @@ const AdminShifts: React.FC = () => {
           </p>
           <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
             <div style={{ backgroundColor: 'var(--bg-surface-elevated)', padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--primary-200)', fontFamily: 'monospace', fontSize: '0.75rem', color: 'var(--gray-700)' }}>
-              <div>Arun Kumar</div>
+              <div>Employee A</div>
               <div style={{ color: 'var(--primary-600)' }}>24 Sep → Morning</div>
               <div style={{ color: 'var(--primary-600)' }}>25 Sep → Evening</div>
               <div style={{ color: 'var(--purple-600)' }}>26 Sep → Night</div>
@@ -557,29 +551,9 @@ const AdminShifts: React.FC = () => {
                 
                 {showDetail.employees > 0 ? (
                   <div className="table-container" style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
-                    <table className="table" style={{ width: '100%' }}>
-                      <thead>
-                        <tr>
-                          <th>Employee</th>
-                          <th>Department</th>
-                          <th>Mode</th>
-                          <th>Next Date</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {mockEmployees.map(emp => (
-                          <tr key={emp.id} style={{ cursor: 'pointer' }} onClick={() => navigate('/admin/roster')}>
-                            <td>
-                              <div style={{ fontWeight: 500 }}>{emp.name}</div>
-                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.id}</div>
-                            </td>
-                            <td style={{ fontSize: '0.875rem' }}>{emp.dept}</td>
-                            <td><span className="badge badge-gray">{emp.mode}</span></td>
-                            <td style={{ fontSize: '0.875rem', color: 'var(--primary-700)', fontWeight: 500 }}>{emp.nextDate}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                      Employees view will be implemented using real data.
+                    </div>
                   </div>
                 ) : (
                   <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--gray-300)', borderRadius: 'var(--radius-md)' }}>

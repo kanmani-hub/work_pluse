@@ -1,29 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Building2, Search, Plus, Filter, MoreVertical, X, CheckCircle2, 
   AlertTriangle, Users, Eye, Edit, MapPin, ShieldAlert, Navigation, 
-  Map as MapIcon, Crosshair, Check, UserPlus
+  Map as MapIcon, Crosshair, Check, UserPlus, Loader2
 } from 'lucide-react';
-
-const initialOffices = [
-  { id: 'o1', name: 'Chennai Main Office', code: 'CHE-MAIN', address: 'Guindy Industrial Estate, Chennai, Tamil Nadu', lat: 13.011, lng: 80.205, employees: 72, radius: 200, geofence: true, status: 'Active' },
-  { id: 'o2', name: 'Chennai Branch', code: 'CHE-BR', address: 'OMR, Chennai, Tamil Nadu', lat: 12.951, lng: 80.241, employees: 20, radius: 150, geofence: true, status: 'Active' },
-  { id: 'o3', name: 'Bangalore Office', code: 'BLR-01', address: 'Whitefield, Bangalore, Karnataka', lat: 12.971, lng: 77.594, employees: 4, radius: 300, geofence: false, status: 'Inactive' },
-];
-
-const mockEmployees = [
-  { id: 'EMP001', name: 'Arun Kumar', dept: 'Development', shift: 'General', mode: 'Office', status: 'Active' },
-  { id: 'EMP012', name: 'Neha Gupta', dept: 'HR', shift: 'Morning', mode: 'Office', status: 'Active' },
-  { id: 'EMP024', name: 'Sanjay Dutt', dept: 'Finance', shift: 'Evening', mode: 'Office', status: 'Active' },
-];
+import { supabase } from '../../lib/supabase';
+import { locationAutocomplete, type LocationSuggestion } from '../../services/location/locationAutocomplete';
 
 const AdminOffices: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
   
-  const [offices, setOffices] = useState(initialOffices);
+  const [offices, setOffices] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterGeofence, setFilterGeofence] = useState('All');
@@ -31,7 +21,7 @@ const AdminOffices: React.FC = () => {
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
   // Drawers & Modals
-  const [showForm, setShowForm] = useState<string | boolean>(false); // false | true (add) | id (edit)
+  const [showForm, setShowForm] = useState<string | boolean>(false);
   const [showDetail, setShowDetail] = useState<any>(null);
   const [assignModal, setAssignModal] = useState<any>(null);
   const [testGeofenceModal, setTestGeofenceModal] = useState<any>(null);
@@ -42,9 +32,39 @@ const AdminOffices: React.FC = () => {
   const [formData, setFormData] = useState<any>({});
   const [formError, setFormError] = useState('');
 
+  // Location autocomplete state
+  const [locationQuery, setLocationQuery] = useState('');
+  const [locationSuggestions, setLocationSuggestions] = useState<LocationSuggestion[]>([]);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [locationError, setLocationError] = useState('');
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+
+  // Fetch offices from Supabase
+  const fetchOffices = async () => {
+    setLoading(true);
+    const { data, error } = await supabase.from('offices').select('*, employees(id)').order('name');
+    if (data) {
+      setOffices(data.map((o: any) => ({
+        id: o.id,
+        name: o.name,
+        code: o.name.replace(/\s+/g, '-').substring(0, 8).toUpperCase(),
+        address: o.address || '',
+        lat: o.latitude,
+        lng: o.longitude,
+        employees: o.employees ? o.employees.length : 0,
+        radius: o.geofence_radius || 200,
+        geofence: o.geofence_radius != null, // Assuming radius existence means enabled for now, or true if there's a flag
+        status: o.is_active ? 'Active' : 'Inactive'
+      })));
+    }
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 700);
-    return () => clearTimeout(timer);
+    fetchOffices();
   }, []);
 
   const showToast = (msg: string) => {
@@ -68,11 +88,15 @@ const AdminOffices: React.FC = () => {
     }
   };
 
-  const handleSaveForm = (e: React.FormEvent) => {
+  const handleSaveForm = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
-    if (!formData.name || !formData.code || !formData.address) return setFormError('Name, Code, and Address are required.');
+    if (!formData.name || !formData.address) return setFormError('Name and Address are required.');
     
+    if (formData.lat === undefined || formData.lat === '' || formData.lng === undefined || formData.lng === '') {
+      return setFormError('Please select a valid location from the suggestions or enter coordinates manually.');
+    }
+
     if (isNaN(parseFloat(formData.lat)) || formData.lat < -90 || formData.lat > 90) return setFormError('Enter a valid latitude between -90 and 90.');
     if (isNaN(parseFloat(formData.lng)) || formData.lng < -180 || formData.lng > 180) return setFormError('Enter a valid longitude between -180 and 180.');
     
@@ -81,31 +105,32 @@ const AdminOffices: React.FC = () => {
     }
 
     if (!showForm || typeof showForm === 'boolean') {
-      setOffices(prev => [{
-        id: `o${Date.now()}`,
+      // Create new office in Supabase
+      const { error } = await (supabase.from('offices') as any).insert({
         name: formData.name,
-        code: formData.code.toUpperCase(),
         address: formData.address,
-        lat: parseFloat(formData.lat),
-        lng: parseFloat(formData.lng),
-        employees: 0,
-        radius: parseInt(formData.radius) || 200,
-        geofence: formData.geofence === undefined ? true : formData.geofence,
-        status: formData.status || 'Active'
-      }, ...prev]);
+        latitude: parseFloat(formData.lat),
+        longitude: parseFloat(formData.lng),
+        geofence_radius: parseInt(formData.radius) || 200,
+        is_active: (formData.status || 'Active') === 'Active'
+      });
+      if (error) { setFormError('Failed to save: ' + error.message); return; }
       showToast('Office created successfully');
     } else {
-      setOffices(prev => prev.map(o => o.id === showForm ? { 
-        ...o, 
-        ...formData, 
-        code: formData.code.toUpperCase(),
-        lat: parseFloat(formData.lat),
-        lng: parseFloat(formData.lng),
-        radius: parseInt(formData.radius) 
-      } : o));
+      // Update existing office in Supabase
+      const { error } = await (supabase.from('offices') as any).update({
+        name: formData.name,
+        address: formData.address,
+        latitude: parseFloat(formData.lat),
+        longitude: parseFloat(formData.lng),
+        geofence_radius: parseInt(formData.radius) || 200,
+        is_active: (formData.status || 'Active') === 'Active'
+      }).eq('id', showForm);
+      if (error) { setFormError('Failed to update: ' + error.message); return; }
       showToast('Office updated successfully');
     }
     setShowForm(false);
+    fetchOffices();
   };
 
   const handleAssignSubmit = (e: React.FormEvent) => {
@@ -141,22 +166,22 @@ const AdminOffices: React.FC = () => {
         <div className="kpi-grid">
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon"><Building2 size={18} /></div></div>
-            <div className="sc-val">3</div>
+            <div className="sc-val">{offices.length}</div>
             <div className="sc-title">Total Offices</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-100)', color: 'var(--success)' }}><CheckCircle2 size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--success)' }}>3</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{offices.filter(o => o.status === 'Active').length}</div>
             <div className="sc-title">Active Offices</div>
           </div>
           <div className="tracking-kpi-card" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}><Users size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>96</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{offices.reduce((acc, o) => acc + o.employees, 0)}</div>
             <div className="sc-title">Employees Assigned</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-100)', color: 'var(--warning)' }}><MapPin size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>3</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>{offices.filter(o => o.geofence).length}</div>
             <div className="sc-title">Geofencing Enabled</div>
           </div>
         </div>
@@ -272,13 +297,128 @@ const AdminOffices: React.FC = () => {
               <section>
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, borderBottom: '1px solid var(--gray-200)', paddingBottom: '0.5rem', marginBottom: '1rem' }}>Office Information</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                  <div>
+                  <div style={{ gridColumn: '1 / -1' }}>
                     <label className="form-label">Office Name *</label>
                     <input required className="form-control" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="e.g. Chennai Main Office" />
                   </div>
-                  <div>
-                    <label className="form-label">Office Code *</label>
-                    <input required className="form-control" style={{ textTransform: 'uppercase' }} value={formData.code || ''} onChange={e => setFormData({...formData, code: e.target.value})} placeholder="e.g. CHE-MAIN" />
+                  <div style={{ gridColumn: '1 / -1', position: 'relative' }}>
+                    <label className="form-label">Search Location</label>
+                    <div style={{ position: 'relative' }}>
+                      <input 
+                        className="form-control" 
+                        value={locationQuery} 
+                        onChange={e => {
+                          const val = e.target.value;
+                          setLocationQuery(val);
+                          setShowSuggestions(true);
+                          setLocationError('');
+                          
+                          // Clear previous selection if admin starts typing again
+                          if (formData.lat || formData.lng) {
+                            setFormData({...formData, address: '', lat: '', lng: ''});
+                          }
+
+                          if (debounceRef.current) clearTimeout(debounceRef.current);
+                          if (abortControllerRef.current) {
+                            abortControllerRef.current.abort();
+                            abortControllerRef.current = null;
+                          }
+
+                          if (val.trim().length >= 3) {
+                            setLocationLoading(true);
+                            debounceRef.current = setTimeout(async () => {
+                              try {
+                                const controller = new AbortController();
+                                abortControllerRef.current = controller;
+                                const results = await locationAutocomplete.search(val.trim(), controller.signal);
+                                  setLocationSuggestions(results);
+                                  setLocationError('');
+                                  setLocationLoading(false);
+                                } catch (err: any) {
+                                  if (err.name !== 'AbortError' && err.message !== 'Aborted') {
+                                    setLocationError('Location search is unavailable. Please enter the address and coordinates manually.');
+                                    setLocationLoading(false);
+                                  }
+                                }
+                            }, 500);
+                          } else {
+                            setLocationSuggestions([]);
+                            setLocationLoading(false);
+                          }
+                        }}
+                        onFocus={() => locationSuggestions.length > 0 && setShowSuggestions(true)}
+                        placeholder="Search office location... (e.g. Guindy, Chennai)" 
+                        style={{ paddingLeft: '2.25rem' }}
+                      />
+                      <MapPin size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
+                      {locationLoading && <Loader2 size={16} className="spinner" style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--primary-500)' }} />}
+                    </div>
+                    
+                    {showSuggestions && (
+                      <div ref={suggestionsRef} style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, backgroundColor: 'var(--bg-surface-elevated)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', marginTop: '4px', maxHeight: '220px', overflowY: 'auto' }}>
+                        
+                        {locationQuery.trim().length < 3 && !locationLoading && (
+                          <div style={{ padding: '0.75rem', fontSize: '0.875rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                            Type at least 3 characters to search
+                          </div>
+                        )}
+
+                        {locationLoading && locationSuggestions.length === 0 && (
+                          <div style={{ padding: '0.75rem', fontSize: '0.875rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                            Searching locations...
+                          </div>
+                        )}
+
+                        {locationError && !locationLoading && (
+                          <div style={{ padding: '0.75rem', fontSize: '0.875rem', color: 'var(--danger-600)', textAlign: 'center' }}>
+                            {locationError}
+                          </div>
+                        )}
+
+                        {!locationLoading && !locationError && locationQuery.trim().length >= 3 && locationSuggestions.length === 0 && (
+                          <div style={{ padding: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                              <div style={{ fontWeight: 600, color: 'var(--gray-700)' }}>No matching location found.</div>
+                              <div>Try the business name with city/area, or enter the address and coordinates manually.</div>
+                            </div>
+                        )}
+
+                        {locationSuggestions.map(s => (
+                          <div 
+                            key={s.placeId} 
+                            onClick={async () => {
+                              setLocationQuery(s.primaryText);
+                              setShowSuggestions(false);
+                              
+                              if (s.latitude !== undefined && s.longitude !== undefined) {
+                                setFormData({...formData, address: s.displayName, lat: s.latitude, lng: s.longitude, place_id: s.placeId});
+                              } else if (locationAutocomplete.getDetails) {
+                                setLocationLoading(true);
+                                try {
+                                  const details = await locationAutocomplete.getDetails(s.placeId, s);
+                                  setFormData({
+                                    ...formData, 
+                                    address: details.formattedAddress || s.displayName, 
+                                    lat: details.latitude, 
+                                    lng: details.longitude,
+                                    place_id: s.placeId
+                                  });
+                                } catch (err) {
+                                  setLocationError('Failed to retrieve location details.');
+                                } finally {
+                                  setLocationLoading(false);
+                                }
+                              }
+                            }}
+                            style={{ padding: '0.625rem 0.75rem', cursor: 'pointer', borderBottom: '1px solid var(--gray-100)', fontSize: '0.875rem', transition: 'background 0.15s' }}
+                            onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--gray-50)')}
+                            onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+                          >
+                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{s.primaryText}</div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>{s.secondaryText}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div style={{ gridColumn: '1 / -1' }}>
                     <label className="form-label">Address *</label>
@@ -315,24 +455,28 @@ const AdminOffices: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Mock Map Preview */}
+                  {/* Location Preview */}
                   <div style={{ marginTop: '1rem', border: '1px solid var(--gray-300)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
                     <div style={{ padding: '0.5rem 1rem', backgroundColor: 'var(--gray-50)', borderBottom: '1px solid var(--gray-200)', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <MapIcon size={14} /> Location Preview (Prototype)
+                      <MapIcon size={14} /> Location Preview
                     </div>
-                    <div style={{ height: '200px', backgroundColor: 'var(--bg-surface-elevated)', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundImage: 'radial-gradient(#d1d5db 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
-                      
-                      {formData.geofence !== false && formData.radius > 0 && (
-                        <div style={{ position: 'absolute', width: '120px', height: '120px', borderRadius: '50%', backgroundColor: 'rgba(59, 130, 246, 0.2)', border: '2px dashed var(--primary-500)' }}></div>
-                      )}
-                      
-                      <div style={{ position: 'relative', zIndex: 2, color: 'var(--danger-600)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <MapPin size={32} strokeWidth={2.5} fill="white" />
-                        <div style={{ backgroundColor: 'var(--bg-surface-elevated)', padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600, boxShadow: 'var(--shadow-sm)', marginTop: '0.5rem' }}>
-                          {formData.name || 'Office Center'}
+                    <div style={{ backgroundColor: 'var(--bg-surface-elevated)', padding: '1.5rem', textAlign: 'center' }}>
+                      {(!formData.address && !formData.lat && !formData.lng) ? (
+                        <div style={{ color: 'var(--text-secondary)' }}>No location selected</div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'center' }}>
+                          <MapPin size={32} color="var(--primary-600)" style={{ marginBottom: '0.5rem' }} />
+                          <div style={{ fontWeight: 600 }}>{formData.address || 'Custom Address'}</div>
+                          <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                            Latitude: {formData.lat || 'Not selected'} | Longitude: {formData.lng || 'Not selected'}
+                          </div>
+                          {formData.geofence !== false && formData.radius > 0 && (
+                            <div style={{ fontSize: '0.875rem', color: 'var(--primary-600)', marginTop: '0.25rem' }}>
+                              Geofence Radius: {formData.radius}m
+                            </div>
+                          )}
                         </div>
-                      </div>
+                      )}
                     </div>
                   </div>
 
@@ -431,29 +575,9 @@ const AdminOffices: React.FC = () => {
                 
                 {showDetail.employees > 0 ? (
                   <div className="table-container" style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
-                    <table className="table" style={{ width: '100%' }}>
-                      <thead>
-                        <tr>
-                          <th>Employee</th>
-                          <th>Department</th>
-                          <th>Shift</th>
-                          <th>Work Mode</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {mockEmployees.map(emp => (
-                          <tr key={emp.id} style={{ cursor: 'pointer' }} onClick={() => navigate('/admin/employees')}>
-                            <td>
-                              <div style={{ fontWeight: 500 }}>{emp.name}</div>
-                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.id}</div>
-                            </td>
-                            <td style={{ fontSize: '0.875rem' }}>{emp.dept}</td>
-                            <td style={{ fontSize: '0.875rem' }}>{emp.shift}</td>
-                            <td><span className="badge badge-gray">{emp.mode}</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                      Employees view will be implemented using real data.
+                    </div>
                   </div>
                 ) : (
                   <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--gray-300)', borderRadius: 'var(--radius-md)' }}>

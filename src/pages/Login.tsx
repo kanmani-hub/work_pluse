@@ -1,17 +1,72 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Activity, Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
-  const [email, setEmail] = useState('EMP001');
-  const [password, setPassword] = useState('password123');
+  const location = useLocation();
+  const { user, role, isLoading: isAuthLoading } = useAuth();
+  
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [role, setRole] = useState<'employee' | 'hr' | 'admin'>('employee');
   const [error, setError] = useState('');
+  const [resetMessage, setResetMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  // Redirect if already logged in
+  useEffect(() => {
+    if (user && !isAuthLoading && role) {
+      if (user.user_metadata?.force_password_change) {
+        navigate('/change-password', { replace: true });
+        return;
+      }
+      const from = (location.state as any)?.from?.pathname;
+      if (from && from !== '/login') {
+        navigate(from, { replace: true });
+      } else if (role.toUpperCase() === 'ADMIN' || role.toUpperCase() === 'HR' || role === 'Admin' || role === 'HR/Staff') {
+        navigate('/admin/dashboard', { replace: true });
+      } else {
+        navigate('/employee/dashboard', { replace: true });
+      }
+    }
+  }, [user, role, isAuthLoading, navigate, location]);
+
+  const handleForgotPassword = async () => {
+    setError('');
+    setResetMessage('');
+    
+    if (!email) {
+      setError('Please enter your email address to reset your password.');
+      return;
+    }
+
+    if (!email.includes('@')) {
+      setError('Please enter a valid email address, not an Employee ID.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`
+      });
+
+      if (resetError) {
+        setError(resetError.message);
+      } else {
+        setResetMessage('If an account exists for this email, a password reset link has been sent.');
+      }
+    } catch (err: any) {
+      setError('An unexpected error occurred.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -20,22 +75,74 @@ const Login: React.FC = () => {
       return;
     }
 
-    if (email === 'error') {
-      setError('Invalid credentials. Please try again.');
-      return;
-    }
-
     setLoading(true);
 
-    // Simulate API call
-    setTimeout(() => {
-      setLoading(false);
-      if (role === 'employee') {
-        navigate('/employee/dashboard');
-      } else {
-        navigate('/admin/dashboard'); // HR and Admin go to main dashboard for now
+    try {
+      let loginEmail = email.trim();
+
+      // If it doesn't look like an email, assume it's an Employee Code
+      if (!loginEmail.includes('@')) {
+        const { data: resolvedEmail, error: rpcError } = await (supabase.rpc as any)('get_email_by_employee_code', { 
+          p_employee_code: loginEmail 
+        });
+        
+        if (rpcError || !resolvedEmail) {
+          setError('Invalid Employee ID or user not found.');
+          setLoading(false);
+          return;
+        }
+        
+        loginEmail = resolvedEmail;
       }
-    }, 1000);
+
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password,
+      });
+
+      if (signInError) {
+        setError(signInError.message);
+      } else if (signInData?.user?.email === 'admin@gmail.com') {
+        // Auto-restore admin profile if missing (Note: Requires RLS bypass or existing admin role)
+        try {
+          const userId = signInData.user.id;
+          
+          // First try to get the ADMIN role_id
+          const { data: roleData } = await supabase.from('roles').select('id').eq('name', 'ADMIN').single();
+          const roleId = (roleData as any)?.id;
+          if (roleId) {
+            await supabase.from('employees').upsert({
+              id: userId,
+              employee_code: 'ADMIN-001',
+              first_name: 'System',
+              last_name: 'Admin',
+              email: 'admin@gmail.com',
+              phone: '0000000000',
+              designation: 'System Administrator',
+              status: 'ACTIVE',
+              role_id: roleId
+            } as any, { onConflict: 'id' } as any);
+            
+            await supabase.from('profiles').upsert({
+              id: userId,
+              auth_user_id: userId,
+              employee_id: userId,
+              role_id: roleId,
+              is_active: true
+            } as any, { onConflict: 'id' } as any);
+          }
+        } catch (e) {
+          console.error('Failed to auto-restore admin profile from client (RLS likely blocks this). Please run the SQL migration.', e);
+        }
+      }
+      
+      // If successful, the AuthContext listener will detect SIGNED_IN and handle navigation
+    } catch (err) {
+      console.error(err);
+      setError('An unexpected network error occurred.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -53,26 +160,6 @@ const Login: React.FC = () => {
           </div>
         </div>
 
-        {/* Prototype Role Selector */}
-        <div style={{ padding: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-color)', display: 'flex', gap: '0.5rem' }}>
-            {(['employee', 'hr', 'admin'] as const).map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => setRole(r)}
-                className="btn"
-                style={{ 
-                  flex: 1, padding: '0.5rem 0', fontSize: '0.75rem', textTransform: 'capitalize', fontWeight: 600, border: 'none',
-                  background: role === r ? 'linear-gradient(135deg, var(--primary-600), var(--primary-500))' : 'transparent',
-                  color: role === r ? '#fff' : 'var(--text-secondary)',
-                  boxShadow: role === r ? '0 4px 15px rgba(124, 92, 255, 0.3)' : 'none'
-                }}
-              >
-                {r === 'hr' ? 'HR/Staff' : r}
-              </button>
-            ))}
-          </div>
-
         {/* Form */}
         <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           {error && (
@@ -82,13 +169,19 @@ const Login: React.FC = () => {
             </div>
           )}
 
+          {resetMessage && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem', backgroundColor: 'var(--success-50)', color: 'var(--success)', borderRadius: 'var(--radius-md)', fontSize: '0.875rem' }}>
+              {resetMessage}
+            </div>
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <label style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Email or Employee ID</label>
             <input 
               type="text" 
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="e.g. EMP001"
+              placeholder="Enter your email address"
               style={{ width: '100%', padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-surface-elevated)', color: 'var(--text-primary)', outline: 'none', fontSize: '0.875rem', transition: 'all var(--transition-fast)' }}
               onFocus={(e) => { e.target.style.borderColor = 'var(--primary-500)'; e.target.style.boxShadow = '0 0 0 3px rgba(124, 92, 255, 0.1)'; }}
               onBlur={(e) => { e.target.style.borderColor = 'var(--border-color)'; e.target.style.boxShadow = 'none'; }}
@@ -98,7 +191,14 @@ const Login: React.FC = () => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <label style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Password</label>
-              <button type="button" style={{ fontSize: '0.75rem', color: 'var(--primary-500)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer' }}>Forgot password?</button>
+              <button 
+                type="button" 
+                onClick={handleForgotPassword}
+                disabled={loading}
+                style={{ fontSize: '0.75rem', color: 'var(--primary-500)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', opacity: loading ? 0.7 : 1 }}
+              >
+                Forgot password?
+              </button>
             </div>
             <div style={{ position: 'relative' }}>
               <input 

@@ -3,22 +3,26 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Plus, Search, Filter, Download, Upload, MoreVertical, X, CheckCircle2, 
   AlertTriangle, Users, UserCheck, UserX, Home, Settings, MapPin, Briefcase, 
-  FileText, CalendarClock, Activity, Eye, Edit, CalendarOff, Clock, Wallet
+  FileText, CalendarClock, Activity, Eye, Edit, CalendarOff, Clock, Wallet, Trash2
 } from 'lucide-react';
 
-const initialEmployees = [
-  { id: 'EMP001', firstName: 'Arun', lastName: 'Kumar', dept: 'Development', desig: 'Software Developer', office: 'Chennai Main Office', shift: 'Evening Shift', mode: 'Office', status: 'Active', email: 'arun@example.com', mobile: '9876543210' },
-  { id: 'EMP002', firstName: 'Meena', lastName: 'Krishnan', dept: 'HR', desig: 'HR Executive', office: 'Chennai Main Office', shift: 'General Shift', mode: 'WFH', status: 'Active', email: 'meena@example.com', mobile: '9876543211' },
-  { id: 'EMP003', firstName: 'Rahul', lastName: 'Sharma', dept: 'Marketing', desig: 'Marketing Lead', office: 'Chennai Branch', shift: 'Morning Shift', mode: 'Hybrid', status: 'On Leave', email: 'rahul@example.com', mobile: '9876543212' },
-  { id: 'EMP004', firstName: 'Priya', lastName: 'Singh', dept: 'Sales', desig: 'Sales Exec', office: 'Remote', shift: 'General Shift', mode: 'WFH', status: 'Inactive', email: 'priya@example.com', mobile: '9876543213' }
-];
+import { employeeService } from '../../services/employees/employeeService';
+import type { EmployeeWithRelations } from '../../services/employees/employeeService';
+import { salaryService } from '../../services/payroll/salaryService';
+import { payrollService } from '../../services/payroll/payrollService';
+import SalaryEditor from '../../components/SalaryEditor';
 
 const AdminEmployees: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
   
-  const [employees, setEmployees] = useState(initialEmployees);
+  const [employees, setEmployees] = useState<EmployeeWithRelations[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [offices, setOffices] = useState<any[]>([]);
+  const [roles, setRoles] = useState<any[]>([]);
+  const [shifts, setShifts] = useState<any[]>([]);
+  
   const [search, setSearch] = useState('');
   const [filterDept, setFilterDept] = useState('All');
   const [filterStatus, setFilterStatus] = useState('All');
@@ -38,13 +42,35 @@ const AdminEmployees: React.FC = () => {
   const [assignOfficeModal, setAssignOfficeModal] = useState<any>(null);
   const [importModal, setImportModal] = useState(false);
   const [importState, setImportState] = useState<'idle' | 'uploading' | 'done'>('idle');
+  const [deleteModal, setDeleteModal] = useState<any>(null);
 
   // Form State
   const [formData, setFormData] = useState<any>({});
 
+  const loadData = async () => {
+    setLoading(true);
+    const [empRes, deptRes, offRes, roleRes, shiftRes] = await Promise.all([
+      employeeService.getEmployees(),
+      employeeService.getDepartments(),
+      employeeService.getOffices(),
+      employeeService.getRoles(),
+      employeeService.getShifts()
+    ]);
+    
+    if (empRes.error) {
+      alert("Failed to load employees: " + empRes.error.message);
+    } else if (empRes.data) {
+      setEmployees(empRes.data);
+    }
+    if (deptRes.data) setDepartments(deptRes.data);
+    if (offRes.data) setOffices(offRes.data);
+    if (roleRes.data) setRoles(roleRes.data);
+    if (shiftRes.data) setShifts(shiftRes.data);
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 800);
-    return () => clearTimeout(timer);
+    loadData();
   }, []);
 
   const showToast = (msg: string) => {
@@ -54,8 +80,9 @@ const AdminEmployees: React.FC = () => {
 
   // Filter Logic
   const filteredEmployees = employees.filter(emp => {
-    const matchesSearch = (emp.firstName + ' ' + emp.lastName).toLowerCase().includes(search.toLowerCase()) || emp.id.toLowerCase().includes(search.toLowerCase());
-    const matchesDept = filterDept === 'All' || emp.dept === filterDept;
+    const searchString = `${emp.first_name} ${emp.last_name} ${emp.employee_code} ${emp.email}`.toLowerCase();
+    const matchesSearch = searchString.includes(search.toLowerCase());
+    const matchesDept = filterDept === 'All' || emp.department_id === filterDept;
     const matchesStatus = filterStatus === 'All' || emp.status === filterStatus;
     return matchesSearch && matchesDept && matchesStatus;
   });
@@ -71,8 +98,19 @@ const AdminEmployees: React.FC = () => {
   const handleActionClick = (action: string, emp: any) => {
     setActiveMenu(null);
     switch(action) {
-      case 'profile': setShowProfile(emp); break;
-      case 'edit': setFormData(emp); setShowEditForm(emp.id); break;
+      case 'profile': 
+        setShowProfile(emp); 
+        break;
+      case 'edit': 
+        setFormData(emp); 
+        setShowEditForm(emp.id); 
+        salaryService.getEmployeeSalaryStructure(emp.id).then(res => {
+          if (res.data) {
+            const salaryData: any = res.data;
+            setFormData((prev: any) => ({...prev, gross_salary: salaryData.basic_salary}));
+          }
+        });
+        break;
       case 'deactivate': setDeactivateModal(emp); break;
       case 'reactivate': setReactivateModal(emp); break;
       case 'shift': setAssignShiftModal(emp); break;
@@ -81,48 +119,123 @@ const AdminEmployees: React.FC = () => {
       case 'leave': navigate('/admin/leave'); break;
       case 'wfh': navigate('/admin/wfh'); break;
       case 'payroll': navigate('/admin/payroll'); break;
+      case 'delete': setDeleteModal(emp); break;
     }
   };
 
-  const handleSaveForm = (e: React.FormEvent) => {
+
+
+  const handleSaveForm = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.firstName || !formData.id) return alert('First Name and ID required.');
+    if (!formData.first_name || !formData.joining_date) {
+      return alert('Required fields are missing.');
+    }
     
+    if (!showEditForm) {
+      if (!formData.password || formData.password.length < 8) {
+        return alert('Password must be at least 8 characters long.');
+      }
+      if (formData.password !== formData.confirm_password) {
+        return alert('Passwords do not match.');
+      }
+    }
+    
+    setLoading(true);
     if (showEditForm) {
-      setEmployees(prev => prev.map(emp => emp.id === showEditForm ? { ...emp, ...formData } : emp));
-      showToast('Employee updated successfully');
-      setShowEditForm(null);
+      const { gross_salary, ...empData } = formData;
+      const { error } = await employeeService.updateEmployee(showEditForm, empData);
+      if (error) {
+        alert(error.message);
+      } else {
+        if (gross_salary !== undefined) {
+          await salaryService.updateSalaryStructure(showEditForm, { basic_salary: Number(gross_salary) });
+        }
+        showToast('Employee updated successfully');
+        setShowEditForm(null);
+        loadData();
+      }
     } else {
-      setEmployees(prev => [{ ...formData, status: formData.status || 'Active' }, ...prev]);
-      showToast('Employee added successfully');
-      setShowAddForm(false);
+      const { gross_salary, ...empData } = formData;
+      const { data, error } = await employeeService.createEmployee(empData);
+      if (error) {
+        alert(error.message);
+      } else {
+        if (data?.id && gross_salary !== undefined) {
+          await salaryService.updateSalaryStructure(data.id, { basic_salary: Number(gross_salary) });
+        }
+        showToast('Employee added successfully');
+        setShowAddForm(false);
+        loadData();
+      }
+    }
+    setLoading(false);
+  };
+
+  const handleDelete = async () => {
+    setLoading(true);
+    const { error } = await employeeService.deleteEmployee(deleteModal.id);
+    if (error) {
+      alert(error.message);
+    } else {
+      showToast('Employee deleted successfully');
+      setDeleteModal(null);
+      loadData();
+    }
+    setLoading(false);
+  };
+
+  const handleDeactivate = async () => {
+    setLoading(true);
+    const { error } = await employeeService.deactivateEmployee(deactivateModal.id);
+    if (!error) {
+      setDeactivateModal(null);
+      showToast('Employee deactivated successfully');
+      loadData();
+    } else {
+      alert(error.message);
+      setLoading(false);
     }
   };
 
-  const handleDeactivate = () => {
-    setEmployees(prev => prev.map(e => e.id === deactivateModal.id ? { ...e, status: 'Inactive' } : e));
-    setDeactivateModal(null);
-    showToast('Employee deactivated successfully');
+  const handleReactivate = async () => {
+    setLoading(true);
+    const { error } = await employeeService.updateEmployee(reactivateModal.id, { status: 'ACTIVE' });
+    if (!error) {
+      setReactivateModal(null);
+      showToast('Employee reactivated successfully');
+      loadData();
+    } else {
+      alert(error.message);
+      setLoading(false);
+    }
   };
 
-  const handleReactivate = () => {
-    setEmployees(prev => prev.map(e => e.id === reactivateModal.id ? { ...e, status: 'Active' } : e));
-    setReactivateModal(null);
-    showToast('Employee reactivated successfully');
-  };
-
-  const handleAssignShift = (e: React.FormEvent) => {
+  const handleAssignShift = async (e: React.FormEvent) => {
     e.preventDefault();
-    setEmployees(prev => prev.map(emp => emp.id === assignShiftModal.id ? { ...emp, shift: formData.shift || emp.shift, mode: formData.mode || emp.mode } : emp));
-    setAssignShiftModal(null);
-    showToast('Shift assigned successfully');
+    setLoading(true);
+    const { error } = await employeeService.assignShift(assignShiftModal.id, formData.shift_id, formData.effective_date);
+    if (!error) {
+      setAssignShiftModal(null);
+      showToast('Shift assigned successfully');
+      loadData();
+    } else {
+      alert(error.message || 'Failed to assign shift');
+      setLoading(false);
+    }
   };
 
-  const handleAssignOffice = (e: React.FormEvent) => {
+  const handleAssignOffice = async (e: React.FormEvent) => {
     e.preventDefault();
-    setEmployees(prev => prev.map(emp => emp.id === assignOfficeModal.id ? { ...emp, office: formData.office || emp.office } : emp));
-    setAssignOfficeModal(null);
-    showToast('Office assignment updated successfully');
+    setLoading(true);
+    const { error } = await employeeService.updateEmployee(assignOfficeModal.id, { office_id: formData.office_id });
+    if (!error) {
+      setAssignOfficeModal(null);
+      showToast('Office assignment updated successfully');
+      loadData();
+    } else {
+      alert(error.message);
+      setLoading(false);
+    }
   };
 
   const simulateImport = () => {
@@ -161,27 +274,27 @@ const AdminEmployees: React.FC = () => {
         <div className="kpi-grid">
           <div className="tracking-kpi-card" onClick={() => setFilterStatus('All')} style={{ cursor: 'pointer', borderColor: filterStatus==='All' ? 'var(--primary-300)' : '' }}>
             <div className="sc-header"><div className="sc-icon"><Users size={18} /></div></div>
-            <div className="sc-val">128</div>
+            <div className="sc-val">{employees.length}</div>
             <div className="sc-title">Total Employees</div>
           </div>
-          <div className="tracking-kpi-card" onClick={() => setFilterStatus('Active')} style={{ cursor: 'pointer', borderColor: filterStatus==='Active' ? 'var(--success-300)' : '' }}>
+          <div className="tracking-kpi-card" onClick={() => setFilterStatus('ACTIVE')} style={{ cursor: 'pointer', borderColor: filterStatus==='ACTIVE' ? 'var(--success-300)' : '' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-100)', color: 'var(--success)' }}><UserCheck size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--success)' }}>118</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{employees.filter(e => e.status === 'ACTIVE').length}</div>
             <div className="sc-title">Active</div>
           </div>
-          <div className="tracking-kpi-card" onClick={() => setFilterStatus('Inactive')} style={{ cursor: 'pointer', borderColor: filterStatus==='Inactive' ? 'var(--gray-300)' : '' }}>
+          <div className="tracking-kpi-card" onClick={() => setFilterStatus('INACTIVE')} style={{ cursor: 'pointer', borderColor: filterStatus==='INACTIVE' ? 'var(--gray-300)' : '' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--gray-200)', color: 'var(--gray-700)' }}><UserX size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--gray-700)' }}>6</div>
+            <div className="sc-val" style={{ color: 'var(--gray-700)' }}>{employees.filter(e => e.status === 'INACTIVE').length}</div>
             <div className="sc-title">Inactive</div>
           </div>
           <div className="tracking-kpi-card" onClick={() => setFilterStatus('On Leave')} style={{ cursor: 'pointer', borderColor: filterStatus==='On Leave' ? 'var(--warning-300)' : '' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-100)', color: 'var(--warning)' }}><CalendarOff size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>4</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>0</div>
             <div className="sc-title">On Leave</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}><Home size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>18</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>0</div>
             <div className="sc-title">WFH Today</div>
           </div>
         </div>
@@ -208,8 +321,8 @@ const AdminEmployees: React.FC = () => {
             
             <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto' }}>
               <option value="All">All Statuses</option>
-              <option>Active</option>
-              <option>Inactive</option>
+              <option value='ACTIVE'>Active</option>
+              <option value='INACTIVE'>Inactive</option>
               <option>On Leave</option>
             </select>
             
@@ -262,24 +375,40 @@ const AdminEmployees: React.FC = () => {
                     <td><input type="checkbox" checked={selectedIds.includes(emp.id)} onChange={() => toggleSelection(emp.id)} /></td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div className="avatar" style={{ backgroundColor: emp.status === 'Inactive' ? 'var(--gray-300)' : 'var(--primary-100)', color: emp.status === 'Inactive' ? 'var(--gray-700)' : 'var(--primary-700)' }}>
-                          {emp.firstName[0]}{emp.lastName[0]}
+                        <div className="avatar" style={{ backgroundColor: emp.status === 'INACTIVE' ? 'var(--gray-300)' : 'var(--primary-100)', color: emp.status === 'INACTIVE' ? 'var(--gray-700)' : 'var(--primary-700)' }}>
+                          {emp.first_name?.[0] || ''}{emp.last_name?.[0] || ''}
                         </div>
                         <div>
-                          <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{emp.firstName} {emp.lastName}</div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>{emp.id} • {emp.dept}</div>
+                          <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{emp.first_name} {emp.last_name}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>{emp.employee_code} • {emp.department?.name || 'Unassigned'}</div>
                         </div>
                       </div>
                     </td>
-                    <td style={{ fontSize: '0.875rem' }}>{emp.id}</td>
-                    <td style={{ fontSize: '0.875rem' }}>{emp.dept}</td>
-                    <td style={{ fontSize: '0.875rem' }}>{emp.office}</td>
+                    <td style={{ fontSize: '0.875rem' }}>{emp.employee_code}</td>
+                    <td style={{ fontSize: '0.875rem' }}>{emp.department?.name || 'Unassigned'}</td>
+                    <td style={{ fontSize: '0.875rem' }}>{emp.office?.name || 'Unassigned'}</td>
                     <td style={{ fontSize: '0.875rem' }}>
-                      <div>{emp.shift}</div>
-                      <span className="badge badge-gray" style={{ fontSize: '0.75rem' }}>{emp.mode}</span>
+                      {(() => {
+                        let currentShift = null;
+                        if (emp.shift_assignments && emp.shift_assignments.length > 0) {
+                          const sortedAssignments = [...emp.shift_assignments].sort((a: any, b: any) => new Date(b.effective_date).getTime() - new Date(a.effective_date).getTime());
+                          const mostRecent = sortedAssignments.find((sa: any) => new Date(sa.effective_date) <= new Date()) || sortedAssignments[0];
+                          if (mostRecent && mostRecent.shift_templates) {
+                            currentShift = mostRecent.shift_templates;
+                          }
+                        }
+                        return (
+                          <>
+                            <div style={{ fontWeight: 500 }}>{currentShift ? currentShift.name : 'No Shift'}</div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                              {currentShift ? `${currentShift.start_time?.slice(0,5)} - ${currentShift.end_time?.slice(0,5)}` : '-'}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </td>
                     <td>
-                      <span className={`badge ${emp.status === 'Active' ? 'badge-success' : emp.status === 'Inactive' ? 'badge-gray' : 'badge-warning'}`}>
+                      <span className={`badge ${emp.status === 'ACTIVE' ? 'badge-success' : emp.status === 'INACTIVE' ? 'badge-gray' : 'badge-warning'}`}>
                         {emp.status}
                       </span>
                     </td>
@@ -290,7 +419,7 @@ const AdminEmployees: React.FC = () => {
                         <div className="dropdown-menu" style={{ position: 'absolute', right: '30px', top: '12px', zIndex: 10 }}>
                           <button onClick={() => handleActionClick('profile', emp)} className="dropdown-item"><Eye size={14}/> View Profile</button>
                           <button onClick={() => handleActionClick('edit', emp)} className="dropdown-item"><Edit size={14}/> Edit Employee</button>
-                          {emp.status !== 'Inactive' && (
+                          {emp.status !== 'INACTIVE' && (
                             <>
                               <button onClick={() => handleActionClick('shift', emp)} className="dropdown-item"><Clock size={14}/> Assign Shift</button>
                               <button onClick={() => handleActionClick('office', emp)} className="dropdown-item"><MapPin size={14}/> Assign Office</button>
@@ -302,7 +431,9 @@ const AdminEmployees: React.FC = () => {
                               <button onClick={() => handleActionClick('deactivate', emp)} className="dropdown-item danger"><UserX size={14}/> Deactivate</button>
                             </>
                           )}
-                          {emp.status === 'Inactive' && (
+                          <div className="dropdown-divider"></div>
+                          <button onClick={() => handleActionClick('delete', emp)} className="dropdown-item danger"><Trash2 size={14}/> Delete</button>
+                          {emp.status === 'INACTIVE' && (
                             <>
                               <div className="dropdown-divider"></div>
                               <button onClick={() => handleActionClick('reactivate', emp)} className="dropdown-item"><UserCheck size={14}/> Reactivate</button>
@@ -335,19 +466,19 @@ const AdminEmployees: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
                     <label className="form-label">First Name *</label>
-                    <input required className="form-control" value={formData.firstName || ''} onChange={e => setFormData({...formData, firstName: e.target.value})} placeholder="e.g. Arun" />
+                    <input required className="form-control" value={formData.first_name || ''} onChange={e => setFormData({...formData, first_name: e.target.value})} placeholder="e.g. Arun" />
                   </div>
                   <div>
                     <label className="form-label">Last Name</label>
-                    <input className="form-control" value={formData.lastName || ''} onChange={e => setFormData({...formData, lastName: e.target.value})} placeholder="e.g. Kumar" />
+                    <input className="form-control" value={formData.last_name || ''} onChange={e => setFormData({...formData, last_name: e.target.value})} placeholder="e.g. Kumar" />
                   </div>
                   <div>
                     <label className="form-label">Email *</label>
                     <input required type="email" className="form-control" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} placeholder="arun@example.com" />
                   </div>
                   <div>
-                    <label className="form-label">Mobile Number *</label>
-                    <input required className="form-control" value={formData.mobile || ''} onChange={e => setFormData({...formData, mobile: e.target.value})} placeholder="9876543210" />
+                    <label className="form-label">Mobile Number</label>
+                    <input className="form-control" value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} placeholder="9876543210" />
                   </div>
                 </div>
               </section>
@@ -356,30 +487,27 @@ const AdminEmployees: React.FC = () => {
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, borderBottom: '1px solid var(--gray-200)', paddingBottom: '0.5rem', marginBottom: '1rem' }}>Employment Information</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
-                    <label className="form-label">Employee ID *</label>
-                    <input required className="form-control" value={formData.id || ''} onChange={e => setFormData({...formData, id: e.target.value})} disabled={!!showEditForm} placeholder="e.g. EMP005" />
+                    <label className="form-label">Employee Code</label>
+                    <input className="form-control" value={formData.employee_code || ''} onChange={e => setFormData({...formData, employee_code: e.target.value})} disabled={true} placeholder={showEditForm ? "" : "Auto-generated"} />
                   </div>
                   <div>
                     <label className="form-label">Date of Joining *</label>
-                    <input required type="date" className="form-control" value={formData.doj || ''} onChange={e => setFormData({...formData, doj: e.target.value})} />
+                    <input required type="date" className="form-control" value={formData.joining_date || ''} onChange={e => setFormData({...formData, joining_date: e.target.value})} />
                   </div>
                   <div>
-                    <label className="form-label">Department *</label>
-                    <select required className="form-control" value={formData.dept || ''} onChange={e => setFormData({...formData, dept: e.target.value})}>
+                    <label className="form-label">Department</label>
+                    <select className="form-control" value={formData.department_id || ''} onChange={e => setFormData({...formData, department_id: e.target.value})}>
                       <option value="">Select Dept</option>
-                      <option>Development</option>
-                      <option>HR</option>
-                      <option>Sales</option>
-                      <option>Marketing</option>
+                      {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="form-label">Designation *</label>
-                    <input required className="form-control" value={formData.desig || ''} onChange={e => setFormData({...formData, desig: e.target.value})} placeholder="e.g. Software Developer" />
+                    <label className="form-label">Designation</label>
+                    <input className="form-control" value={formData.designation || ''} onChange={e => setFormData({...formData, designation: e.target.value})} placeholder="e.g. Software Developer" />
                   </div>
                   <div>
                     <label className="form-label">Employment Type</label>
-                    <select className="form-control" value={formData.type || ''} onChange={e => setFormData({...formData, type: e.target.value})}>
+                    <select className="form-control" value={formData.employment_type || ''} onChange={e => setFormData({...formData, employment_type: e.target.value})}>
                       <option>Full Time</option>
                       <option>Part Time</option>
                       <option>Contract</option>
@@ -388,8 +516,8 @@ const AdminEmployees: React.FC = () => {
                   <div>
                     <label className="form-label">Employment Status</label>
                     <select className="form-control" value={formData.status || 'Active'} onChange={e => setFormData({...formData, status: e.target.value})}>
-                      <option>Active</option>
-                      <option>Inactive</option>
+                      <option value='ACTIVE'>Active</option>
+                      <option value='INACTIVE'>Inactive</option>
                     </select>
                   </div>
                 </div>
@@ -400,46 +528,56 @@ const AdminEmployees: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
                     <label className="form-label">Office</label>
-                    <select className="form-control" value={formData.office || ''} onChange={e => setFormData({...formData, office: e.target.value})}>
-                      <option>Chennai Main Office</option>
-                      <option>Chennai Branch</option>
-                      <option>Remote</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="form-label">Default Work Mode</label>
-                    <select className="form-control" value={formData.mode || ''} onChange={e => setFormData({...formData, mode: e.target.value})}>
-                      <option>Office</option>
-                      <option>WFH</option>
-                      <option>Hybrid</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="form-label">Default Shift</label>
-                    <select className="form-control" value={formData.shift || ''} onChange={e => setFormData({...formData, shift: e.target.value})}>
-                      <option>General Shift</option>
-                      <option>Morning Shift</option>
-                      <option>Evening Shift</option>
+                    <select className="form-control" value={formData.office_id || ''} onChange={e => setFormData({...formData, office_id: e.target.value})}>
+                      <option value="">Select Office</option>
+                      {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                     </select>
                   </div>
                 </div>
               </section>
 
               <section>
+                <h3 style={{ fontSize: '1rem', fontWeight: 600, borderBottom: '1px solid var(--gray-200)', paddingBottom: '0.5rem', marginBottom: '1rem' }}>Salary Information</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                  <div>
+                    <label className="form-label">Gross Salary *</label>
+                    <input required type="number" min="0" className="form-control" value={formData.gross_salary || ''} onChange={e => setFormData({...formData, gross_salary: e.target.value})} placeholder="e.g. 50000" />
+                  </div>
+                </div>
+              </section>
+
+              <section>
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, borderBottom: '1px solid var(--gray-200)', paddingBottom: '0.5rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  Account Information <span className="badge badge-gray" style={{ fontSize: '0.75rem' }}>Prototype Only</span>
+                  Account Role
                 </h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
-                    <label className="form-label">App Role</label>
-                    <select className="form-control" value={formData.role || 'Employee'} onChange={e => setFormData({...formData, role: e.target.value})}>
-                      <option>Employee</option>
-                      <option>HR / Staff</option>
-                      <option>Admin</option>
+                    <label className="form-label">System Role</label>
+                    <select className="form-control" value={formData.role_id || ''} onChange={e => setFormData({...formData, role_id: e.target.value})}>
+                      <option value="">Select Role</option>
+                      {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                     </select>
                   </div>
                 </div>
               </section>
+
+              {!showEditForm && (
+                <section>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 600, borderBottom: '1px solid var(--gray-200)', paddingBottom: '0.5rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    Authentication
+                  </h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <div>
+                      <label className="form-label">Temporary Password *</label>
+                      <input required type="password" minLength={8} className="form-control" value={formData.password || ''} onChange={e => setFormData({...formData, password: e.target.value})} placeholder="At least 8 characters" />
+                    </div>
+                    <div>
+                      <label className="form-label">Confirm Password *</label>
+                      <input required type="password" minLength={8} className="form-control" value={formData.confirm_password || ''} onChange={e => setFormData({...formData, confirm_password: e.target.value})} placeholder="Confirm password" />
+                    </div>
+                  </div>
+                </section>
+              )}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '2rem', borderTop: '1px solid var(--gray-200)', paddingTop: '1.5rem' }}>
                 <button type="button" onClick={() => { setShowAddForm(false); setShowEditForm(null); }} className="btn btn-outline">Cancel</button>
@@ -457,18 +595,18 @@ const AdminEmployees: React.FC = () => {
             <div className="drawer-header" style={{ borderBottom: 'none', paddingBottom: 0 }}>
               <button className="icon-button" onClick={() => setShowProfile(null)} style={{ position: 'absolute', right: '1.5rem', top: '1.5rem' }}><X size={20} /></button>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '1.5rem' }}>
-                <div className="avatar" style={{ width: '80px', height: '80px', fontSize: '2rem', backgroundColor: showProfile.status === 'Inactive' ? 'var(--gray-200)' : 'var(--primary-100)', color: showProfile.status === 'Inactive' ? 'var(--gray-500)' : 'var(--primary-700)' }}>
-                  {showProfile.firstName[0]}{showProfile.lastName[0]}
+                <div className="avatar" style={{ width: '80px', height: '80px', fontSize: '2rem', backgroundColor: showProfile.status === 'INACTIVE' ? 'var(--gray-200)' : 'var(--primary-100)', color: showProfile.status === 'INACTIVE' ? 'var(--gray-500)' : 'var(--primary-700)' }}>
+                  {showProfile.first_name?.[0]}{showProfile.last_name?.[0]}
                 </div>
                 <div>
-                  <h2 style={{ fontSize: '1.75rem', fontWeight: 700, marginBottom: '0.25rem' }}>{showProfile.firstName} {showProfile.lastName}</h2>
+                  <h2 style={{ fontSize: '1.75rem', fontWeight: 700, marginBottom: '0.25rem' }}>{showProfile.first_name} {showProfile.last_name}</h2>
                   <div style={{ display: 'flex', gap: '1rem', color: 'var(--text-secondary)', fontSize: '0.875rem', flexWrap: 'wrap' }}>
-                    <span>{showProfile.id}</span>
+                    <span>{showProfile.employee_code}</span>
                     <span>•</span>
-                    <span>{showProfile.dept}</span>
+                    <span>{showProfile.department?.name || 'Unassigned'}</span>
                     <span>•</span>
-                    <span>{showProfile.desig}</span>
-                    <span className={`badge ${showProfile.status === 'Active' ? 'badge-success' : showProfile.status === 'Inactive' ? 'badge-gray' : 'badge-warning'}`}>{showProfile.status}</span>
+                    <span>{showProfile.designation || 'No Designation'}</span>
+                    <span className={`badge ${showProfile.status === 'ACTIVE' ? 'badge-success' : showProfile.status === 'INACTIVE' ? 'badge-gray' : 'badge-warning'}`}>{showProfile.status}</span>
                   </div>
                 </div>
               </div>
@@ -492,26 +630,26 @@ const AdminEmployees: React.FC = () => {
                   <div className="card">
                     <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>Employment Details</h3>
                     <div className="detail-grid">
-                      <div className="detail-item"><span className="detail-label">Employee ID</span><span className="detail-value">{showProfile.id}</span></div>
-                      <div className="detail-item"><span className="detail-label">Department</span><span className="detail-value">{showProfile.dept}</span></div>
-                      <div className="detail-item"><span className="detail-label">Designation</span><span className="detail-value">{showProfile.desig}</span></div>
-                      <div className="detail-item"><span className="detail-label">Date of Joining</span><span className="detail-value">01 Feb 2026</span></div>
-                      <div className="detail-item"><span className="detail-label">Employment Type</span><span className="detail-value">Full Time</span></div>
+                      <div className="detail-item"><span className="detail-label">Employee ID</span><span className="detail-value">{showProfile.employee_code}</span></div>
+                      <div className="detail-item"><span className="detail-label">Department</span><span className="detail-value">{showProfile.department?.name || 'Unassigned'}</span></div>
+                      <div className="detail-item"><span className="detail-label">Designation</span><span className="detail-value">{showProfile.designation || '-'}</span></div>
+                      <div className="detail-item"><span className="detail-label">Date of Joining</span><span className="detail-value">{showProfile.joining_date}</span></div>
+                      <div className="detail-item"><span className="detail-label">Employment Type</span><span className="detail-value">{showProfile.employment_type || '-'}</span></div>
                     </div>
                   </div>
                   <div className="card">
                     <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>Work Settings</h3>
                     <div className="detail-grid">
-                      <div className="detail-item"><span className="detail-label">Base Office</span><span className="detail-value">{showProfile.office}</span></div>
-                      <div className="detail-item"><span className="detail-label">Work Mode</span><span className="detail-value">{showProfile.mode}</span></div>
-                      <div className="detail-item"><span className="detail-label">Current Shift</span><span className="detail-value">{showProfile.shift}</span></div>
+                      <div className="detail-item"><span className="detail-label">Base Office</span><span className="detail-value">{showProfile.office?.name || 'Unassigned'}</span></div>
+                      <div className="detail-item"><span className="detail-label">Work Mode</span><span className="detail-value">{/*showProfile.mode*/ 'Office'}</span></div>
+                      <div className="detail-item"><span className="detail-label">Current Shift</span><span className="detail-value">{/*showProfile.shift*/ 'General'}</span></div>
                     </div>
                   </div>
                   <div className="card">
                     <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>Contact Info</h3>
                     <div className="detail-grid">
                       <div className="detail-item"><span className="detail-label">Email</span><span className="detail-value">{showProfile.email}</span></div>
-                      <div className="detail-item"><span className="detail-label">Mobile</span><span className="detail-value">+91 {showProfile.mobile}</span></div>
+                      <div className="detail-item"><span className="detail-label">Mobile</span><span className="detail-value">{showProfile.phone ? `+91 ${showProfile.phone}` : '-'}</span></div>
                     </div>
                   </div>
                 </div>
@@ -528,11 +666,7 @@ const AdminEmployees: React.FC = () => {
               )}
               {profileTab === 'Payroll' && (
                 <div className="card">
-                  <div style={{ backgroundColor: 'var(--gray-100)', padding: '1.5rem', borderRadius: 'var(--radius-md)', textAlign: 'center', marginBottom: '1.5rem' }}>
-                    <LockIcon size={24} style={{ margin: '0 auto 0.5rem auto', color: 'var(--text-secondary)' }} />
-                    <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Detailed payroll breakdown requires Payroll Admin privileges.</p>
-                  </div>
-                  <button onClick={() => { setShowProfile(null); navigate('/admin/payroll'); }} className="btn btn-outline" style={{ width: '100%' }}>Go to Payroll Module</button>
+                  <SalaryEditor employeeId={showProfile.id} />
                 </div>
               )}
               {/* Other tabs are mocked conceptually */}
@@ -546,24 +680,51 @@ const AdminEmployees: React.FC = () => {
         </div>
       )}
 
+      {/* Delete Modal */}
+      {deleteModal && (
+        <div className="modal-overlay" onClick={() => setDeleteModal(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Delete Employee?</h2>
+              <button className="icon-button" onClick={() => setDeleteModal(null)}><X size={20} /></button>
+            </div>
+            <div className="modal-body">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', padding: '1rem', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)', color: 'var(--danger)' }}>
+                <AlertTriangle size={24} />
+                <p style={{ fontSize: '0.875rem', fontWeight: 500 }}>Are you sure you want to delete this employee? This action cannot be undone.</p>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
+                <p><strong>Employee:</strong> {deleteModal.first_name} {deleteModal.last_name}</p>
+                <p><strong>Employee Code:</strong> {deleteModal.employee_code}</p>
+                <p><strong>Email:</strong> {deleteModal.email}</p>
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+              <button className="btn-secondary" onClick={() => setDeleteModal(null)}>Cancel</button>
+              <button className="btn-danger" onClick={handleDelete}>Delete Employee</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Assign Modals */}
       {assignShiftModal && (
         <div className="drawer-overlay" style={{ alignItems: 'center' }}>
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '400px', animation: 'slideUp 0.3s' }}>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem' }}>Assign Shift</h3>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Employee: <strong>{assignShiftModal.firstName} {assignShiftModal.lastName}</strong></p>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Employee: <strong>{assignShiftModal.first_name} {assignShiftModal.last_name}</strong></p>
             <form onSubmit={handleAssignShift} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="form-label">Effective Date</label>
-                <input type="date" required className="form-control" defaultValue="2026-09-25" />
+                <input type="date" required className="form-control" value={formData.effective_date || new Date().toISOString().split('T')[0]} onChange={e => setFormData({...formData, effective_date: e.target.value})} />
               </div>
               <div>
                 <label className="form-label">Shift</label>
-                <select className="form-control" value={formData.shift || assignShiftModal.shift} onChange={e => setFormData({...formData, shift: e.target.value})}>
-                  <option>General Shift</option>
-                  <option>Morning Shift</option>
-                  <option>Evening Shift</option>
-                  <option>Night Shift</option>
+                <select className="form-control" required value={formData.shift_id || ''} onChange={e => setFormData({...formData, shift_id: e.target.value})}>
+                  <option value="">Select a shift...</option>
+                  {shifts.map(s => (
+                    <option key={s.id} value={s.id}>{s.name} ({s.start_time} - {s.end_time})</option>
+                  ))}
                 </select>
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
@@ -603,7 +764,7 @@ const AdminEmployees: React.FC = () => {
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '400px', animation: 'slideUp 0.3s', borderTop: '4px solid var(--danger-600)' }}>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem' }}>Deactivate Employee?</h3>
             <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-              Deactivating <strong>{deactivateModal.firstName} {deactivateModal.lastName} ({deactivateModal.id})</strong> will change their employment status to Inactive and revoke system access. Historical records will be preserved.
+              Deactivating <strong>{deactivateModal.first_name} {deactivateModal.last_name} ({deactivateModal.employee_code})</strong> will change their employment status to Inactive and revoke system access. Historical records will be preserved.
             </p>
             <div style={{ display: 'flex', gap: '1rem' }}>
               <button type="button" onClick={() => setDeactivateModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
@@ -617,7 +778,7 @@ const AdminEmployees: React.FC = () => {
         <div className="drawer-overlay" style={{ alignItems: 'center' }}>
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '400px', animation: 'slideUp 0.3s' }}>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem' }}>Reactivate Employee</h3>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Do you want to reactivate {reactivateModal.firstName} {reactivateModal.lastName}?</p>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Do you want to reactivate {reactivateModal.first_name} {reactivateModal.last_name}?</p>
             <div style={{ display: 'flex', gap: '1rem' }}>
               <button type="button" onClick={() => setReactivateModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
               <button onClick={handleReactivate} className="btn btn-primary" style={{ flex: 1 }}>Reactivate</button>
@@ -661,9 +822,9 @@ const AdminEmployees: React.FC = () => {
                 <CheckCircle2 size={48} color="var(--success)" style={{ margin: '0 auto 1rem auto' }} />
                 <h4 style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Import Successful</h4>
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', fontSize: '0.875rem', marginBottom: '1.5rem', backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}><span style={{ fontSize: '1.25rem', fontWeight: 600 }}>128</span><span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Found</span></div>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}><span style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--success-600)' }}>120</span><span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Valid</span></div>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}><span style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--danger-600)' }}>8</span><span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Invalid</span></div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}><span style={{ fontSize: '1.25rem', fontWeight: 600 }}>0</span><span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Found</span></div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}><span style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--success-600)' }}>0</span><span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Valid</span></div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}><span style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--danger-600)' }}>0</span><span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Invalid</span></div>
                 </div>
                 <button onClick={() => { setImportModal(false); setImportState('idle'); showToast('120 employees imported'); }} className="btn btn-primary" style={{ width: '100%' }}>Done</button>
               </div>

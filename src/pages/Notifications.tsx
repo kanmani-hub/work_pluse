@@ -6,26 +6,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-const mockNotifications = [
-  // Attendance
-  { id: 1, title: 'Late Login Detected', message: 'You logged in 18 minutes after your scheduled shift start.', category: 'Attendance', priority: 'Normal', read: false, date: 'Today', time: '10:18 AM', fullDate: '28 Sep 2026', relatedModule: 'Attendance', actionRoute: '/employee/attendance' },
-  { id: 2, title: 'Missing Attendance Punch', message: 'Your attendance record is missing a logout entry.', category: 'Attendance', priority: 'High', read: false, date: 'Today', time: '09:00 AM', fullDate: '28 Sep 2026', relatedModule: 'Attendance', actionRoute: '/employee/attendance' },
-  // Leave
-  { id: 3, title: 'Leave Request Approved', message: 'Your leave request for 29 Sep has been approved.', category: 'Leave', priority: 'Normal', read: false, date: 'Today', time: '08:30 AM', fullDate: '28 Sep 2026', relatedModule: 'Leave', actionRoute: '/employee/leave' },
-  { id: 4, title: 'Leave Request Rejected', message: 'Your leave request for 05 Oct was rejected due to staff shortage.', category: 'Leave', priority: 'High', read: true, date: 'Yesterday', time: '14:20 PM', fullDate: '27 Sep 2026', relatedModule: 'Leave', actionRoute: '/employee/leave' },
-  // WFH
-  { id: 5, title: 'WFH Request Approved', message: 'Your WFH request for this Friday has been approved.', category: 'WFH', priority: 'Normal', read: true, date: 'Yesterday', time: '11:15 AM', fullDate: '27 Sep 2026', relatedModule: 'WFH', actionRoute: '/employee/wfh' },
-  // Permission
-  { id: 6, title: 'Permission Approved', message: '2 hours permission approved for tomorrow morning.', category: 'Permission', priority: 'Normal', read: true, date: 'Earlier This Week', time: '16:00 PM', fullDate: '25 Sep 2026', relatedModule: 'Permission', actionRoute: '/employee/permission' },
-  // Payroll
-  { id: 7, title: 'Payslip Available', message: 'Your September 2026 payslip is now available for download.', category: 'Payroll', priority: 'Normal', read: true, date: 'Earlier This Week', time: '09:00 AM', fullDate: '25 Sep 2026', relatedModule: 'Payroll', actionRoute: '/employee/payslip' },
-  { id: 8, title: 'Salary Paid', message: 'Your salary has been successfully paid.', category: 'Payroll', priority: 'Normal', read: true, date: 'Earlier This Week', time: '08:45 AM', fullDate: '25 Sep 2026', relatedModule: 'Payroll', actionRoute: '/employee/payroll' },
-  // Security
-  { id: 9, title: 'Clock-In Blocked', message: 'You are outside your assigned office geofence.', category: 'Security', priority: 'High', read: false, date: 'Earlier This Week', time: '09:10 AM', fullDate: '24 Sep 2026', relatedModule: 'Security', actionRoute: '#' },
-  { id: 10, title: 'Multiple Verification Failures', message: 'Multiple unsuccessful face verification attempts were detected.', category: 'Security', priority: 'Critical', read: false, date: 'Earlier', time: '08:50 AM', fullDate: '20 Sep 2026', relatedModule: 'Security', actionRoute: '#' },
-  // Shift
-  { id: 11, title: 'Roster Published', message: 'Your shift roster for next week has been published.', category: 'Shift', priority: 'Normal', read: true, date: 'Earlier', time: '18:00 PM', fullDate: '19 Sep 2026', relatedModule: 'Shift', actionRoute: '#' },
-];
+const mockNotifications: any[] = [];
 
 const Notifications: React.FC = () => {
   const navigate = useNavigate();

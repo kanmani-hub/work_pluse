@@ -4,31 +4,61 @@ import {
   ArrowRight, Upload, ShieldAlert
 } from 'lucide-react';
 
-const mockLeaveHistory = [
-  { id: 'LV-2026-004', type: 'Casual Leave', from: '28 Sep 2026', to: '29 Sep 2026', rawFrom: '2026-09-28', rawTo: '2026-09-29', days: '2 Days', reason: 'Personal work', status: 'Approved', requestedOn: '20 Sep 2026', approvedBy: 'HR Admin' },
-  { id: 'LV-2026-003', type: 'Sick Leave', from: '15 Sep 2026', to: '16 Sep 2026', rawFrom: '2026-09-15', rawTo: '2026-09-16', days: '2 Days', reason: 'Viral fever', status: 'Approved', requestedOn: '14 Sep 2026', approvedBy: 'Manager' },
-  { id: 'LV-2026-002', type: 'Earned Leave', from: '05 Sep 2026', to: '05 Sep 2026', rawFrom: '2026-09-05', rawTo: '2026-09-05', days: '1 Day', reason: 'Attending family function', status: 'Pending', requestedOn: '01 Sep 2026', approvedBy: '-' },
-  { id: 'LV-2026-001', type: 'Casual Leave', from: '20 Aug 2026', to: '21 Aug 2026', rawFrom: '2026-08-20', rawTo: '2026-08-21', days: '2 Days', reason: 'Trip out of town', status: 'Rejected', requestedOn: '15 Aug 2026', rejectReason: 'Team capacity is low during this period.' }
-];
+import { leaveService } from '../../services/leave/leaveService';
 
 const EmployeeLeave: React.FC = () => {
   const [loading, setLoading] = useState(true);
-  const [history, setHistory] = useState(mockLeaveHistory);
+  const [history, setHistory] = useState<any[]>([]);
+  const [balances, setBalances] = useState<any[]>([]);
+  const [leaveTypes, setLeaveTypes] = useState<any[]>([]);
   const [selectedDetail, setSelectedDetail] = useState<any>(null);
   const [toastMessage, setToastMessage] = useState('');
   
   // Request Modal State
   const [showRequestModal, setShowRequestModal] = useState(false);
-  const [reqType, setReqType] = useState('Casual Leave');
+  const [reqTypeId, setReqTypeId] = useState('');
   const [reqFrom, setReqFrom] = useState('');
   const [reqTo, setReqTo] = useState('');
   const [reqHalf, setReqHalf] = useState('');
   const [reqReason, setReqReason] = useState('');
   const [reqError, setReqError] = useState('');
 
+  const fetchData = async () => {
+    setLoading(true);
+    const [typesRes, balRes, histRes] = await Promise.all([
+      leaveService.getLeaveTypes(),
+      leaveService.getMyLeaveBalances(),
+      leaveService.getMyLeaveRequests()
+    ]);
+
+    if (typesRes.data) {
+      setLeaveTypes(typesRes.data);
+      if (typesRes.data.length > 0) setReqTypeId((typesRes.data as any[])[0].id);
+    }
+    if (balRes.data) {
+      setBalances(balRes.data);
+    }
+    if (histRes.data) {
+      setHistory(histRes.data.map((h: any) => ({
+        id: h.id,
+        type: h.leave_types?.name,
+        from: new Date(h.start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        to: new Date(h.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        rawFrom: h.start_date,
+        rawTo: h.end_date,
+        days: `${h.total_days} Day(s)`,
+        reason: h.reason,
+        status: h.status.charAt(0).toUpperCase() + h.status.slice(1).toLowerCase(),
+        requestedOn: new Date(h.requested_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        approvedBy: h.reviewed_by ? 'Reviewer' : '-',
+        rejectReason: h.reviewer_remarks
+      })));
+    }
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(timer);
+    fetchData();
   }, []);
 
   // Calculate Duration
@@ -51,45 +81,45 @@ const EmployeeLeave: React.FC = () => {
     }
   }
 
-  const handleRequestSubmit = (e: React.FormEvent) => {
+  const handleRequestSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setReqError('');
     if (!reqFrom || !reqTo) { setReqError('Please select From and To dates.'); return; }
     if (new Date(reqTo) < new Date(reqFrom)) { setReqError('To date cannot be before From date.'); return; }
     if (!reqReason) { setReqError('Please provide a reason.'); return; }
     
-    // Mock Balance Validation
-    if (reqType === 'Casual Leave' && parseInt(durationText) > 8) {
-      setReqError('You have only 8 Casual Leave days remaining.'); return;
+    const { error } = await leaveService.createLeaveRequest({
+      leave_type_id: reqTypeId,
+      start_date: reqFrom,
+      end_date: reqTo,
+      is_half_day: !!reqHalf,
+      half_day_type: reqHalf as any,
+      reason: reqReason
+    });
+
+    if (error) {
+      setReqError(error.message);
+      return;
     }
 
-    const newReq = {
-      id: `LV-2026-00${history.length + 5}`,
-      type: reqType,
-      from: new Date(reqFrom).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      to: new Date(reqTo).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      rawFrom: reqFrom,
-      rawTo: reqTo,
-      days: durationText,
-      reason: reqReason,
-      requestedOn: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      status: 'Pending',
-      approvedBy: '-'
-    };
-    
-    setHistory([newReq, ...history]);
     setShowRequestModal(false);
     showToast('Leave request submitted successfully');
     
     // Reset
-    setReqFrom(''); setReqTo(''); setReqReason(''); setReqType('Casual Leave'); setReqHalf('');
+    setReqFrom(''); setReqTo(''); setReqReason(''); setReqHalf('');
+    fetchData();
   };
 
-  const handleCancelRequest = (id: string) => {
+  const handleCancelRequest = async (id: string) => {
     if (confirm('Are you sure you want to cancel this leave request?')) {
-      setHistory(history.map(h => h.id === id ? { ...h, status: 'Cancelled' } : h));
+      const { error } = await leaveService.cancelLeaveRequest(id);
+      if (error) {
+        alert(error.message);
+        return;
+      }
       setSelectedDetail(null);
       showToast('Leave request cancelled');
+      fetchData();
     }
   };
 
@@ -138,22 +168,17 @@ const EmployeeLeave: React.FC = () => {
       ) : (
         <>
           <div className="tracking-kpi-grid">
-            <div className="tracking-kpi-card">
-              <div className="sc-title">Casual Leave</div>
-              <div className="sc-val" style={{ color: 'var(--primary-700)' }}>8 Days <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)' }}>Available</span></div>
-            </div>
-            <div className="tracking-kpi-card">
-              <div className="sc-title">Sick Leave</div>
-              <div className="sc-val" style={{ color: 'var(--warning)' }}>6 Days <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)' }}>Available</span></div>
-            </div>
-            <div className="tracking-kpi-card">
-              <div className="sc-title">Earned Leave</div>
-              <div className="sc-val" style={{ color: 'var(--success)' }}>10 Days <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)' }}>Available</span></div>
-            </div>
-            <div className="tracking-kpi-card">
-              <div className="sc-title">Unpaid Leave</div>
-              <div className="sc-val" style={{ color: 'var(--gray-700)' }}>Policy based</div>
-            </div>
+            {balances.length > 0 ? balances.map(b => (
+              <div key={b.id} className="tracking-kpi-card">
+                <div className="sc-title">{b.leave_types?.name}</div>
+                <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{b.remaining_days} Days <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)' }}>Available</span></div>
+              </div>
+            )) : (
+              <div className="tracking-kpi-card">
+                <div className="sc-title">No Leave Balances Found</div>
+                <div className="sc-val" style={{ color: 'var(--gray-500)' }}>-</div>
+              </div>
+            )}
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '-1rem' }}>
             * Leave balances and leave rules are configured by the company.
@@ -300,11 +325,10 @@ const EmployeeLeave: React.FC = () => {
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Leave Type *</label>
-                <select value={reqType} onChange={e => setReqType(e.target.value)} className="form-control">
-                  <option>Casual Leave</option>
-                  <option>Sick Leave</option>
-                  <option>Earned Leave</option>
-                  <option>Unpaid Leave</option>
+                <select value={reqTypeId} onChange={e => setReqTypeId(e.target.value)} className="form-control">
+                  {leaveTypes.map(lt => (
+                    <option key={lt.id} value={lt.id}>{lt.name}</option>
+                  ))}
                 </select>
               </div>
 

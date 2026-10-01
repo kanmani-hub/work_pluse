@@ -3,19 +3,16 @@ import {
   Home, Plus, Info, Calendar, X, AlertCircle, CheckCircle2, ChevronDown, 
   MapPin, LogOut, Coffee, ArrowRight, ShieldAlert
 } from 'lucide-react';
-
-const mockWfhHistory = [
-  { id: 'WFH-2026-004', date: '26 Sep 2026', rawDate: '2026-09-26', type: 'Full Day', shift: 'General Shift', hours: '9:00 AM — 6:00 PM', reason: 'Personal work', requestedOn: '24 Sep 2026', status: 'Approved', approvedBy: 'HR Admin' },
-  { id: 'WFH-2026-003', date: '25 Sep 2026', rawDate: '2026-09-25', type: 'Full Day', shift: 'General Shift', hours: '9:00 AM — 6:00 PM', reason: 'Doctor appointment nearby', requestedOn: '23 Sep 2026', status: 'Pending', approvedBy: '-' },
-  { id: 'WFH-2026-002', date: '18 Sep 2026', rawDate: '2026-09-18', type: 'Half Day (First Half)', shift: 'Evening Shift', hours: '2:00 PM — 11:00 PM', reason: 'Waiting for delivery', requestedOn: '16 Sep 2026', status: 'Approved', approvedBy: 'Manager' },
-  { id: 'WFH-2026-001', date: '10 Sep 2026', rawDate: '2026-09-10', type: 'Full Day', shift: 'Morning Shift', hours: '9:00 AM — 6:00 PM', reason: 'Family Work', requestedOn: '08 Sep 2026', status: 'Rejected', rejectReason: 'WFH quota exceeded for this month.' }
-];
+import { wfhService } from '../../services/wfh/wfhService';
+import { useAuth } from '../../context/AuthContext';
 
 const EmployeeWfh: React.FC = () => {
+  const { employee } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [history, setHistory] = useState(mockWfhHistory);
+  const [history, setHistory] = useState<any[]>([]);
   const [selectedDetail, setSelectedDetail] = useState<any>(null);
   const [toastMessage, setToastMessage] = useState('');
+  const [appSettings, setAppSettings] = useState<any>(null);
   
   // WFH Request Form State
   const [showRequestModal, setShowRequestModal] = useState(false);
@@ -31,9 +28,33 @@ const EmployeeWfh: React.FC = () => {
   const [showWfhClockModal, setShowWfhClockModal] = useState(false);
   const [workTime, setWorkTime] = useState(0);
 
+  const fetchWfh = async () => {
+    if (!employee?.id) return;
+    setLoading(true);
+    const { data, error } = await wfhService.getMyWFHRequests(employee.id);
+    if (data) {
+      setHistory(data.map((h: any) => ({
+        id: h.id,
+        date: new Date(h.request_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        rawDate: h.request_date,
+        type: 'Full Day', // Assuming Full day for now as schema doesn't specify half day WFH
+        shift: '-',
+        hours: '-',
+        reason: h.reason,
+        requestedOn: new Date(h.requested_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        status: h.status.charAt(0).toUpperCase() + h.status.slice(1).toLowerCase(),
+        approvedBy: h.reviewed_by ? 'Reviewer' : '-',
+        rejectReason: h.reviewer_remarks
+      })));
+    }
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(timer);
+    fetchWfh();
+    import('../../services/settings/appSettingsService').then(({ appSettingsService }) => {
+      setAppSettings(appSettingsService.getSettings());
+    });
   }, []);
 
   useEffect(() => {
@@ -61,44 +82,60 @@ const EmployeeWfh: React.FC = () => {
     }
   };
 
-  const handleRequestSubmit = (e: React.FormEvent) => {
+  const handleRequestSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setReqError('');
     if (!reqDate) { setReqError('Please select a date.'); return; }
     if (!reqReason) { setReqError('Please provide a reason.'); return; }
+    if (!employee?.id) { setReqError('Unauthorized session.'); return; }
     
-    // Mock date conflict check
-    if (history.some(h => h.rawDate === reqDate && h.status !== 'Rejected' && h.status !== 'Cancelled')) {
-      setReqError('This date already has an attendance or leave record.');
+    // Disable submit implicitly by showing loading / closing modal later
+    const { error } = await wfhService.createWFHRequest({
+      employee_id: employee.id,
+      request_date: reqDate,
+      reason: reqReason
+    });
+
+    if (error) {
+      // DEV: Log and display structured Supabase error for debugging
+      if (import.meta.env.DEV) {
+        const structured = {
+          message: error.message,
+          code: (error as any).code,
+          details: (error as any).details,
+          hint: (error as any).hint,
+        };
+        console.error('%c[WFH Submit Error]', 'color: #e74c3c; font-weight: bold;', structured);
+        setReqError(
+          `${error.message}` +
+          ((error as any).code ? ` [code: ${(error as any).code}]` : '') +
+          ((error as any).hint ? ` — hint: ${(error as any).hint}` : '')
+        );
+      } else {
+        setReqError(error.message);
+      }
       return;
     }
 
-    const newReq = {
-      id: `WFH-2026-00${history.length + 5}`,
-      date: new Date(reqDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      rawDate: reqDate,
-      type: reqType === 'Half Day' ? `Half Day (${reqHalf})` : 'Full Day',
-      shift: 'General Shift',
-      hours: '9:00 AM — 6:00 PM',
-      reason: reqReason,
-      requestedOn: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      status: 'Pending',
-      approvedBy: '-'
-    };
-    
-    setHistory([newReq, ...history]);
     setShowRequestModal(false);
     showToast('WFH request submitted successfully');
     
     // Reset
     setReqDate(''); setReqReason(''); setReqType('Full Day');
+    fetchWfh();
   };
 
-  const handleCancelRequest = (id: string) => {
+  const handleCancelRequest = async (id: string) => {
+    if (!employee?.id) return;
     if (confirm('Are you sure you want to cancel this WFH request?')) {
-      setHistory(history.map(h => h.id === id ? { ...h, status: 'Cancelled' } : h));
+      const { error } = await wfhService.cancelWFHRequest(id, employee.id);
+      if (error) {
+        alert(error.message);
+        return;
+      }
       setSelectedDetail(null);
       showToast('WFH request cancelled');
+      fetchWfh();
     }
   };
 
@@ -258,7 +295,7 @@ const EmployeeWfh: React.FC = () => {
               WFH Policy <span className="badge badge-gray" style={{ fontSize: '0.75rem' }}>COMPANY-CONFIGURED</span>
             </h3>
             <ul style={{ fontSize: '0.875rem', color: 'var(--gray-700)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Maximum WFH:</span> <strong>10 days/month</strong></li>
+              <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Maximum WFH:</span> <strong>{appSettings?.wfhMaxDaysPerMonth || 10} days/month</strong></li>
               <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Maximum Consecutive:</span> <strong>3 days</strong></li>
               <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Half-Day WFH:</span> <strong>Allowed</strong></li>
               <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Approval:</span> <strong>Required</strong></li>

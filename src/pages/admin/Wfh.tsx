@@ -6,18 +6,12 @@ import {
   X, Eye, ArrowRight, FileText, ShieldAlert, Home
 } from 'lucide-react';
 
-const mockKPIs = {
-  totalRequests: 24, pending: 4, approvedToday: 8, activeWfhToday: 12, alerts: 2, rejected: 1
-};
-
-const mockWfhRequests = [
-  { id: 'WFH001', employee: 'Arun Kumar', employeeId: 'EMP001', department: 'Engineering', date: '24 Sep 2026', type: 'Full Day', duration: '1 Day', reason: 'Personal work', status: 'PENDING', submittedAt: '23 Sep 2026', office: 'Chennai', shift: 'General Shift', workMode: 'WFH', approvedBy: '-', halfDay: false, conflicts: ['Shift Scheduled'] },
-  { id: 'WFH002', employee: 'Priya Sharma', employeeId: 'EMP002', department: 'HR', date: '24 Sep 2026', type: 'Full Day', duration: '1 Day', reason: 'Doctor appointment nearby', status: 'APPROVED', submittedAt: '23 Sep 2026', office: 'Chennai', shift: 'General Shift', workMode: 'WFH', approvedBy: 'Manager', halfDay: false, conflicts: [] as string[] },
-  { id: 'WFH003', employee: 'Kumar Raj', employeeId: 'EMP003', department: 'Support', date: '26 Sep 2026', type: 'Half Day (First Half)', duration: '0.5 Days', reason: 'Waiting for delivery', status: 'PENDING', submittedAt: '23 Sep 2026', office: 'Bangalore', shift: 'Morning Shift', workMode: 'WFH', approvedBy: '-', halfDay: true, conflicts: [] as string[] },
-  { id: 'WFH004', employee: 'Anitha S', employeeId: 'EMP004', department: 'Finance', date: '20 Sep 2026', type: 'Full Day', duration: '1 Day', reason: 'Family work', status: 'REJECTED', submittedAt: '15 Sep 2026', office: 'Remote', shift: 'General Shift', workMode: 'WFH', approvedBy: 'HR Admin', halfDay: false, rejectReason: 'WFH quota exceeded for this month.', conflicts: [] as string[] },
-];
+import { wfhService } from '../../services/wfh/wfhService';
+import { realtimeService } from '../../services/realtime/realtimeService';
+import { useAuth } from '../../context/AuthContext';
 
 const AdminWfh: React.FC = () => {
+  const { employee } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
@@ -39,11 +33,48 @@ const AdminWfh: React.FC = () => {
   // Forms
   const [reasonForm, setReasonForm] = useState('');
   
-  const [requests, setRequests] = useState(mockWfhRequests);
+  const [requests, setRequests] = useState<any[]>([]);
+
+  const fetchRequests = async () => {
+    setLoading(true);
+    const { data } = await wfhService.getWFHRequests();
+    if (data) {
+      setRequests(data.map((r: any) => ({
+        id: r.id,
+        employee: r.employees ? `${r.employees.first_name} ${r.employees.last_name}` : 'Unknown',
+        employeeId: r.employees?.employee_code || '-',
+        department: r.employees?.departments?.name || '-',
+        date: new Date(r.request_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        type: 'Full Day',
+        duration: '1 Day',
+        reason: r.reason,
+        status: r.status,
+        submittedAt: new Date(r.requested_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        office: '-',
+        shift: '-',
+        workMode: 'WFH',
+        approvedBy: r.reviewed_by ? 'Admin' : '-',
+        halfDay: false,
+        conflicts: [],
+        rejectReason: r.reviewer_remarks
+      })));
+    }
+    setLoading(false);
+  };
 
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(timer);
+    fetchRequests();
+    
+    // Subscribe to realtime changes
+    const channel = realtimeService.subscribeToAdminWFH((payload) => {
+      // Re-fetch when there's an INSERT/UPDATE/DELETE
+      fetchRequests();
+    });
+
+    // Cleanup subscription
+    return () => {
+      realtimeService.unsubscribe(channel);
+    };
   }, []);
 
   const showToast = (msg: string) => {
@@ -72,32 +103,50 @@ const AdminWfh: React.FC = () => {
     }
   };
 
-  const handleApprove = (e: React.FormEvent) => {
+  const handleApprove = async (e: React.FormEvent) => {
     e.preventDefault();
-    setRequests(prev => prev.map(r => r.id === approveModal ? { ...r, status: 'APPROVED', approvedBy: 'HR Admin' } : r));
-    if (detailDrawer?.id === approveModal) setDetailDrawer({ ...detailDrawer, status: 'APPROVED', approvedBy: 'HR Admin' });
+    if (!approveModal || !employee?.id) return;
+    const { error } = await wfhService.reviewWFHRequest(approveModal, 'APPROVED', employee.id, reasonForm);
+    if (error) {
+      alert(error.message);
+      return;
+    }
     setApproveModal(null);
+    setReasonForm('');
     showToast('WFH approved successfully.');
+    fetchRequests();
+    setDetailDrawer(null);
   };
 
-  const handleReject = (e: React.FormEvent) => {
+  const handleReject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reasonForm) return;
-    setRequests(prev => prev.map(r => r.id === rejectModal ? { ...r, status: 'REJECTED', rejectReason: reasonForm } : r));
-    if (detailDrawer?.id === rejectModal) setDetailDrawer({ ...detailDrawer, status: 'REJECTED', rejectReason: reasonForm });
+    if (!reasonForm || !rejectModal || !employee?.id) return;
+    const { error } = await wfhService.reviewWFHRequest(rejectModal, 'REJECTED', employee.id, reasonForm);
+    if (error) {
+      alert(error.message);
+      return;
+    }
     setRejectModal(null);
     setReasonForm('');
     showToast('WFH request rejected.');
+    fetchRequests();
+    setDetailDrawer(null);
   };
 
-  const handleRevoke = (e: React.FormEvent) => {
+  const handleRevoke = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reasonForm) return;
-    setRequests(prev => prev.map(r => r.id === revokeModal ? { ...r, status: 'REVOKED' } : r));
-    if (detailDrawer?.id === revokeModal) setDetailDrawer({ ...detailDrawer, status: 'REVOKED' });
+    if (!reasonForm || !revokeModal || !employee?.id) return;
+    // We repurpose "revoke" as a reject or cancel for simplicity in API
+    const { error } = await wfhService.reviewWFHRequest(revokeModal, 'CANCELLED', employee.id, reasonForm);
+    if (error) {
+      alert(error.message);
+      return;
+    }
     setRevokeModal(null);
     setReasonForm('');
     showToast('WFH revoked successfully.');
+    fetchRequests();
+    setDetailDrawer(null);
   };
 
   return (
@@ -125,34 +174,44 @@ const AdminWfh: React.FC = () => {
         <div className="skeleton-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '1rem' }}>
           {[...Array(6)].map((_, i) => <div key={i} className="skeleton" style={{ height: '70px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
-      ) : (
+      ) : (() => {
+        const kpis = {
+          totalRequests: requests.length,
+          pending: pendingRequests.length,
+          approvedToday: requests.filter(r => r.status === 'APPROVED' && r.date === new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })).length,
+          activeWfhToday: requests.filter(r => r.status === 'APPROVED' && r.date === new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })).length,
+          alerts: requests.filter(r => r.conflicts?.length > 0).length,
+          rejected: requests.filter(r => r.status === 'REJECTED').length
+        };
+        return (
         <div className="kpi-grid">
           <div className="tracking-kpi-card">
-            <div className="sc-val">{mockKPIs.totalRequests}</div>
+            <div className="sc-val">{kpis.totalRequests}</div>
             <div className="sc-title">Total Requests</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => { setView('Requests'); setFilterStatus('PENDING'); }}>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>{mockKPIs.pending}</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.pending}</div>
             <div className="sc-title">Pending Requests</div>
           </div>
           <div className="tracking-kpi-card">
-            <div className="sc-val" style={{ color: 'var(--success)' }}>{mockKPIs.approvedToday}</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.approvedToday}</div>
             <div className="sc-title">Approved Today</div>
           </div>
           <div className="tracking-kpi-card">
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{mockKPIs.activeWfhToday}</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.activeWfhToday}</div>
             <div className="sc-title">Active WFH Today</div>
           </div>
           <div className="tracking-kpi-card">
-            <div className="sc-val" style={{ color: 'var(--danger)' }}>{mockKPIs.alerts}</div>
+            <div className="sc-val" style={{ color: 'var(--danger)' }}>{kpis.alerts}</div>
             <div className="sc-title">Policy Alerts</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => { setView('Requests'); setFilterStatus('REJECTED'); }}>
-            <div className="sc-val" style={{ color: 'var(--text-secondary)' }}>{mockKPIs.rejected}</div>
+            <div className="sc-val" style={{ color: 'var(--text-secondary)' }}>{kpis.rejected}</div>
             <div className="sc-title">Rejected</div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* View Tabs */}
       <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--gray-200)' }}>
@@ -324,9 +383,9 @@ const AdminWfh: React.FC = () => {
           <p style={{ marginTop: '0.5rem' }}>Mock visualization of approved, pending, and half-day WFH plotted on a calendar grid.</p>
           <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'center', fontFamily: 'monospace', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
 {`        Mon  Tue  Wed  Thu  Fri
-Arun     —   WFH  WFH  —    —
-Priya    —   WFH  —    —   WFH
-Kumar    WFH WFH  —    —    —`}
+EmpA     —   WFH  WFH  —    —
+EmpB     —   WFH  —    —   WFH
+EmpC     WFH WFH  —    —    —`}
           </div>
         </div>
       )}

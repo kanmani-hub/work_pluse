@@ -4,18 +4,14 @@ import {
   ArrowRight, Clock, Calendar as CalendarIcon, ShieldAlert
 } from 'lucide-react';
 
-const mockPermissionHistory = [
-  { id: 'PER-2026-004', date: '26 Sep 2026', rawDate: '2026-09-26', type: 'Late Arrival', start: '09:00 AM', end: '10:30 AM', duration: '1h 30m', reason: 'Heavy traffic due to rain', status: 'Approved', requestedOn: '25 Sep 2026', approvedBy: 'Manager' },
-  { id: 'PER-2026-003', date: '22 Sep 2026', rawDate: '2026-09-22', type: 'Personal Work', start: '03:00 PM', end: '04:30 PM', duration: '1h 30m', reason: 'Bank work', status: 'Pending', requestedOn: '21 Sep 2026', approvedBy: '-' },
-  { id: 'PER-2026-002', date: '15 Sep 2026', rawDate: '2026-09-15', type: 'Early Departure', start: '04:30 PM', end: '06:00 PM', duration: '1h 30m', reason: 'Doctor appointment', status: 'Approved', requestedOn: '13 Sep 2026', approvedBy: 'HR Admin' },
-  { id: 'PER-2026-001', date: '05 Sep 2026', rawDate: '2026-09-05', type: 'Short Permission', start: '11:00 AM', end: '01:00 PM', duration: '2h 00m', reason: 'Personal work', status: 'Rejected', requestedOn: '04 Sep 2026', rejectReason: 'Permission duration exceeds the configured limit for a single day.' }
-];
+import { permissionService } from '../../services/permission/permissionService';
 
 const EmployeePermission: React.FC = () => {
   const [loading, setLoading] = useState(true);
-  const [history, setHistory] = useState(mockPermissionHistory);
+  const [history, setHistory] = useState<any[]>([]);
   const [selectedDetail, setSelectedDetail] = useState<any>(null);
   const [toastMessage, setToastMessage] = useState('');
+  const [appSettings, setAppSettings] = useState<any>(null);
   
   // Request Modal State
   const [showRequestModal, setShowRequestModal] = useState(false);
@@ -26,9 +22,48 @@ const EmployeePermission: React.FC = () => {
   const [reqReason, setReqReason] = useState('');
   const [reqError, setReqError] = useState('');
 
+  const fetchPermissions = async () => {
+    setLoading(true);
+    const { data, error } = await permissionService.getMyPermissionRequests();
+    if (data) {
+      setHistory(data.map((h: any) => {
+        const hDur = Math.floor(h.duration_minutes / 60);
+        const mDur = h.duration_minutes % 60;
+        
+        // format AM/PM natively
+        const formatTime = (t: string) => {
+          if(!t) return '';
+          const [hh, mm] = t.split(':');
+          let hours = parseInt(hh, 10);
+          const ampm = hours >= 12 ? 'PM' : 'AM';
+          hours = hours % 12 || 12;
+          return `${hours.toString().padStart(2, '0')}:${mm} ${ampm}`;
+        };
+
+        return {
+          id: h.id,
+          date: new Date(h.permission_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+          rawDate: h.permission_date,
+          type: 'Permission', // Fixed for now
+          start: formatTime(h.start_time),
+          end: formatTime(h.end_time),
+          duration: `${hDur}h ${mDur}m`,
+          reason: h.reason,
+          status: h.status.charAt(0).toUpperCase() + h.status.slice(1).toLowerCase(),
+          requestedOn: new Date(h.requested_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+          approvedBy: h.reviewed_by ? 'Reviewer' : '-',
+          rejectReason: h.reviewer_remarks
+        };
+      }));
+    }
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(timer);
+    fetchPermissions();
+    import('../../services/settings/appSettingsService').then(({ appSettingsService }) => {
+      setAppSettings(appSettingsService.getSettings());
+    });
   }, []);
 
   // Calculate Duration
@@ -57,7 +92,7 @@ const EmployeePermission: React.FC = () => {
     return `${hours.toString().padStart(2, '0')}:${m} ${ampm}`;
   };
 
-  const handleRequestSubmit = (e: React.FormEvent) => {
+  const handleRequestSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setReqError('');
     if (!reqDate) { setReqError('Please select a date.'); return; }
@@ -65,39 +100,36 @@ const EmployeePermission: React.FC = () => {
     if (durationText === 'Invalid Time' || durationText === '0h 0m') { setReqError('End time must be after start time.'); return; }
     if (!reqReason) { setReqError('Please provide a reason.'); return; }
     
-    // Mock limit validation
-    const durationMins = parseInt(durationText.split('h')[0]) * 60 + parseInt(durationText.split('h ')[1].split('m')[0]);
-    if (durationMins > 120) {
-      setReqError('Permission duration exceeds the configured limit (max 2 hours).'); return;
+    const { error } = await permissionService.createPermissionRequest({
+      permission_date: reqDate,
+      start_time: reqStart,
+      end_time: reqEnd,
+      reason: reqReason
+    });
+
+    if (error) {
+      setReqError(error.message);
+      return;
     }
 
-    const newReq = {
-      id: `PER-2026-00${history.length + 5}`,
-      date: new Date(reqDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      rawDate: reqDate,
-      type: reqType,
-      start: formatAMPM(reqStart),
-      end: formatAMPM(reqEnd),
-      duration: durationText,
-      reason: reqReason,
-      requestedOn: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      status: 'Pending',
-      approvedBy: '-'
-    };
-    
-    setHistory([newReq, ...history]);
     setShowRequestModal(false);
     showToast('Permission request submitted successfully');
     
     // Reset
     setReqDate(''); setReqStart(''); setReqEnd(''); setReqReason(''); setReqType('Short Permission');
+    fetchPermissions();
   };
 
-  const handleCancelRequest = (id: string) => {
+  const handleCancelRequest = async (id: string) => {
     if (confirm('Are you sure you want to cancel this permission request?')) {
-      setHistory(history.map(h => h.id === id ? { ...h, status: 'Cancelled' } : h));
+      const { error } = await permissionService.cancelPermissionRequest(id);
+      if (error) {
+        alert(error.message);
+        return;
+      }
       setSelectedDetail(null);
       showToast('Permission request cancelled');
+      fetchPermissions();
     }
   };
 
@@ -146,7 +178,9 @@ const EmployeePermission: React.FC = () => {
           <div className="tracking-kpi-grid">
             <div className="tracking-kpi-card">
               <div className="sc-title">Available Permission</div>
-              <div className="sc-val" style={{ color: 'var(--primary-700)' }}>2h 30m</div>
+              <div className="sc-val" style={{ color: 'var(--primary-700)' }}>
+                {appSettings?.permissionMaxHours ? `${appSettings.permissionMaxHours}h 0m` : '2h 0m'}
+              </div>
             </div>
             <div className="tracking-kpi-card">
               <div className="sc-title">Used This Month</div>

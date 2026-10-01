@@ -1,12 +1,7 @@
 import React from 'react';
 import { CalendarClock, Download } from 'lucide-react';
 
-const mockAttendance = [
-  { id: 1, date: 'Oct 24, 2024', name: 'John Doe', checkIn: '08:55 AM', checkOut: '06:05 PM', status: 'Present', hours: '9h 10m' },
-  { id: 2, date: 'Oct 24, 2024', name: 'Sarah Adams', checkIn: '09:15 AM', checkOut: '06:00 PM', status: 'Late', hours: '8h 45m' },
-  { id: 3, date: 'Oct 24, 2024', name: 'Michael King', checkIn: '-', checkOut: '-', status: 'On Leave', hours: '0h 0m' },
-  { id: 4, date: 'Oct 24, 2024', name: 'Emily Larson', checkIn: '08:50 AM', checkOut: '05:30 PM', status: 'Present', hours: '8h 40m' },
-];
+const mockAttendance: any[] = [];
 
 const Attendance: React.FC = () => {
   return (

@@ -6,22 +6,10 @@ import {
   X, Eye, Edit, Trash2, ShieldCheck, Clock, FileText, ArrowRight
 } from 'lucide-react';
 
-const mockKPIs = {
-  total: 48, pending: 8, approvedToday: 5, onLeaveToday: 7, halfDay: 2, alerts: 4, rejected: 3
-};
+import { leaveService } from '../../services/leave/leaveService';
+import { realtimeService } from '../../services/realtime/realtimeService';
 
-const mockLeaveRequests = [
-  { id: 'l1', empId: 'EMP001', name: 'Arun Kumar', dept: 'Engineering', type: 'Casual Leave', dates: '24 Sep - 25 Sep', duration: '2 Days', reason: 'Personal work', status: 'PENDING', appliedOn: '23 Sep 2026', office: 'Chennai', halfDay: false, conflicts: ['Shift Scheduled'] },
-  { id: 'l2', empId: 'EMP002', name: 'Priya Sharma', dept: 'HR', type: 'Sick Leave', dates: '24 Sep', duration: '1 Day', reason: 'Fever', status: 'APPROVED', appliedOn: '23 Sep 2026', office: 'Chennai', halfDay: false, conflicts: [] },
-  { id: 'l3', empId: 'EMP003', name: 'Kumar Raj', dept: 'Support', type: 'Casual Leave', dates: '26 Sep', duration: '0.5 Days', reason: 'Bank appointment', status: 'PENDING', appliedOn: '23 Sep 2026', office: 'Bangalore', halfDay: true, half: 'First Half', conflicts: [] },
-  { id: 'l4', empId: 'EMP004', name: 'Anitha S', dept: 'Finance', type: 'Privilege Leave', dates: '20 Sep - 22 Sep', duration: '3 Days', reason: 'Family trip', status: 'REJECTED', appliedOn: '15 Sep 2026', office: 'Remote', halfDay: false, conflicts: [] },
-];
-
-const mockBalances = [
-  { empId: 'EMP001', name: 'Arun Kumar', dept: 'Engineering', type: 'Casual Leave', allocated: 12, used: 4, pending: 2, remaining: 6 },
-  { empId: 'EMP001', name: 'Arun Kumar', dept: 'Engineering', type: 'Sick Leave', allocated: 10, used: 2, pending: 0, remaining: 8 },
-  { empId: 'EMP002', name: 'Priya Sharma', dept: 'HR', type: 'Sick Leave', allocated: 10, used: 9, pending: 0, remaining: 1 }, // Alert!
-];
+const mockBalances: any[] = [];
 
 const AdminLeave: React.FC = () => {
   const navigate = useNavigate();
@@ -46,12 +34,45 @@ const AdminLeave: React.FC = () => {
   
   // Forms
   const [reasonForm, setReasonForm] = useState('');
-  
-  const [requests, setRequests] = useState(mockLeaveRequests);
+  const [requests, setRequests] = useState<any[]>([]);
+
+  const fetchRequests = async () => {
+    setLoading(true);
+    const { data } = await leaveService.getLeaveRequests();
+    if (data) {
+      setRequests(data.map((r: any) => ({
+        id: r.id,
+        empId: r.employees?.employee_code || '-',
+        name: r.employees ? `${r.employees.first_name} ${r.employees.last_name}` : 'Unknown',
+        dept: r.employees?.departments?.name || '-',
+        type: r.leave_types?.name || '-',
+        dates: r.start_date === r.end_date 
+          ? new Date(r.start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+          : `${new Date(r.start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} - ${new Date(r.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`,
+        duration: `${r.total_days} Days`,
+        reason: r.reason,
+        status: r.status,
+        appliedOn: new Date(r.requested_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        office: '-',
+        halfDay: r.is_half_day,
+        half: r.half_day_type,
+        conflicts: [],
+        reviewer_remarks: r.reviewer_remarks
+      })));
+    }
+    setLoading(false);
+  };
 
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(timer);
+    fetchRequests();
+
+    const channel = realtimeService.subscribeToAdminLeave((payload) => {
+      fetchRequests();
+    });
+
+    return () => {
+      realtimeService.unsubscribe(channel);
+    };
   }, []);
 
   const showToast = (msg: string) => {
@@ -79,32 +100,49 @@ const AdminLeave: React.FC = () => {
     }
   };
 
-  const handleApprove = (e: React.FormEvent) => {
+  const handleApprove = async (e: React.FormEvent) => {
     e.preventDefault();
-    setRequests(prev => prev.map(r => r.id === approveModal ? { ...r, status: 'APPROVED' } : r));
-    if (detailDrawer?.id === approveModal) setDetailDrawer({ ...detailDrawer, status: 'APPROVED' });
+    if (!approveModal) return;
+    const { error } = await leaveService.reviewLeaveRequest(approveModal, 'APPROVED', reasonForm);
+    if (error) {
+      alert(error.message);
+      return;
+    }
     setApproveModal(null);
+    setReasonForm('');
     showToast('Leave approved successfully.');
+    fetchRequests();
+    setDetailDrawer(null);
   };
 
-  const handleReject = (e: React.FormEvent) => {
+  const handleReject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reasonForm) return;
-    setRequests(prev => prev.map(r => r.id === rejectModal ? { ...r, status: 'REJECTED' } : r));
-    if (detailDrawer?.id === rejectModal) setDetailDrawer({ ...detailDrawer, status: 'REJECTED' });
+    if (!reasonForm || !rejectModal) return;
+    const { error } = await leaveService.reviewLeaveRequest(rejectModal, 'REJECTED', reasonForm);
+    if (error) {
+      alert(error.message);
+      return;
+    }
     setRejectModal(null);
     setReasonForm('');
     showToast('Leave request rejected.');
+    fetchRequests();
+    setDetailDrawer(null);
   };
 
-  const handleRevoke = (e: React.FormEvent) => {
+  const handleRevoke = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reasonForm) return;
-    setRequests(prev => prev.map(r => r.id === revokeModal ? { ...r, status: 'REVOKED' } : r));
-    if (detailDrawer?.id === revokeModal) setDetailDrawer({ ...detailDrawer, status: 'REVOKED' });
+    if (!reasonForm || !revokeModal) return;
+    const { error } = await leaveService.reviewLeaveRequest(revokeModal, 'CANCELLED', reasonForm);
+    if (error) {
+      alert(error.message);
+      return;
+    }
     setRevokeModal(null);
     setReasonForm('');
     showToast('Leave revoked successfully.');
+    fetchRequests();
+    setDetailDrawer(null);
   };
 
   return (
@@ -134,38 +172,49 @@ const AdminLeave: React.FC = () => {
         <div className="skeleton-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '1rem' }}>
           {[...Array(7)].map((_, i) => <div key={i} className="skeleton" style={{ height: '70px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
-      ) : (
+      ) : (() => {
+        const kpis = {
+          total: requests.length,
+          pending: pendingRequests.length,
+          approvedToday: requests.filter(r => r.status === 'APPROVED' && r.appliedOn === new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })).length,
+          onLeaveToday: requests.filter(r => r.status === 'APPROVED' && r.dates.includes(new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }))).length,
+          halfDay: requests.filter(r => r.halfDay).length,
+          alerts: requests.filter(r => r.conflicts?.length > 0).length,
+          rejected: requests.filter(r => r.status === 'REJECTED').length
+        };
+        return (
         <div className="kpi-grid">
           <div className="tracking-kpi-card">
-            <div className="sc-val">{mockKPIs.total}</div>
-            <div className="sc-title">Total Employees</div>
+            <div className="sc-val">{kpis.total}</div>
+            <div className="sc-title">Total Requests</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => { setView('Requests'); setFilterStatus('PENDING'); }}>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>{mockKPIs.pending}</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.pending}</div>
             <div className="sc-title">Pending Requests</div>
           </div>
           <div className="tracking-kpi-card">
-            <div className="sc-val" style={{ color: 'var(--success)' }}>{mockKPIs.approvedToday}</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.approvedToday}</div>
             <div className="sc-title">Approved Today</div>
           </div>
           <div className="tracking-kpi-card">
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{mockKPIs.onLeaveToday}</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.onLeaveToday}</div>
             <div className="sc-title">On Leave Today</div>
           </div>
           <div className="tracking-kpi-card">
-            <div className="sc-val">{mockKPIs.halfDay}</div>
+            <div className="sc-val">{kpis.halfDay}</div>
             <div className="sc-title">Half Day</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setView('Balances')}>
-            <div className="sc-val" style={{ color: 'var(--danger)' }}>{mockKPIs.alerts}</div>
+            <div className="sc-val" style={{ color: 'var(--danger)' }}>{kpis.alerts}</div>
             <div className="sc-title">Balance Alerts</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => { setView('Requests'); setFilterStatus('REJECTED'); }}>
-            <div className="sc-val" style={{ color: 'var(--text-secondary)' }}>{mockKPIs.rejected}</div>
+            <div className="sc-val" style={{ color: 'var(--text-secondary)' }}>{kpis.rejected}</div>
             <div className="sc-title">Rejected</div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* View Tabs */}
       <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--gray-200)' }}>
@@ -338,9 +387,9 @@ const AdminLeave: React.FC = () => {
           <p style={{ marginTop: '0.5rem' }}>Mock visualization of approved, pending, and half-day leaves plotted on a calendar grid.</p>
           <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'center', fontFamily: 'monospace', whiteSpace: 'pre-wrap', textAlign: 'left', backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
 {`        Mon  Tue  Wed  Thu  Fri
-Arun     —   CL   CL   —    —
-Priya    —   SL   —    —   WFH
-Kumar    AL  AL   —    —    —`}
+EmpA     —   CL   CL   —    —
+EmpB     —   SL   —    —   WFH
+EmpC     AL  AL   —    —    —`}
           </div>
         </div>
       )}
@@ -360,21 +409,25 @@ Kumar    AL  AL   —    —    —`}
                 </tr>
               </thead>
               <tbody>
-                {mockBalances.map((b, i) => (
-                  <tr key={i}>
-                    <td>
-                      <div style={{ fontWeight: 600 }}>{b.name}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{b.dept}</div>
-                    </td>
-                    <td style={{ fontWeight: 500 }}>{b.type}</td>
-                    <td style={{ textAlign: 'right' }}>{b.allocated}</td>
-                    <td style={{ textAlign: 'right' }}>{b.used}</td>
-                    <td style={{ textAlign: 'right' }}>{b.pending}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 600, color: b.remaining <= 1 ? 'var(--danger-600)' : 'var(--primary-700)' }}>
-                      {b.remaining} {b.remaining <= 1 && <AlertTriangle size={12} style={{ marginLeft: '4px' }}/>}
-                    </td>
-                  </tr>
-                ))}
+                {mockBalances.length === 0 ? (
+                  <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>No balance data available</td></tr>
+                ) : (
+                  mockBalances.map((b, i) => (
+                    <tr key={i}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{b.name}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{b.dept}</div>
+                      </td>
+                      <td style={{ fontWeight: 500 }}>{b.type}</td>
+                      <td style={{ textAlign: 'right' }}>{b.allocated}</td>
+                      <td style={{ textAlign: 'right' }}>{b.used}</td>
+                      <td style={{ textAlign: 'right' }}>{b.pending}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600, color: b.remaining <= 1 ? 'var(--danger-600)' : 'var(--primary-700)' }}>
+                        {b.remaining} {b.remaining <= 1 && <AlertTriangle size={12} style={{ marginLeft: '4px' }}/>}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
