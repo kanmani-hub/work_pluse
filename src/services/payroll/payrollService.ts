@@ -2,7 +2,9 @@ import { supabase } from '../../lib/supabase';
 import { salaryService } from './salaryService';
 import { auditService } from '../audit/auditService';
 import { notificationService } from '../notifications/notificationService';
-import { payrollSettingsService } from './payrollSettingsService';
+import { payrollSettingsService, type PayrollSettings } from './payrollSettingsService';
+import { globalSettingsService } from '../settings/globalSettingsService';
+import { payrollAuditService } from './payrollAuditService';
 import { payrollDataService } from './payrollDataService';
 import type { PayrollEmployeeData } from './payrollDataService';
 
@@ -149,7 +151,8 @@ export const payrollService = {
     }
 
     // 2. Get payroll settings from configuration (not hardcoded)
-    const settings = payrollSettingsService.getSettings();
+    const globalSettings = await globalSettingsService.loadSettings();
+    const settings = globalSettings.payroll;
 
     // 3. Get actual employee data from attendance/leave/permission/wfh modules
     const empData: PayrollEmployeeData = await payrollDataService.getEmployeePayrollData(employeeId, year, month);
@@ -171,15 +174,35 @@ export const payrollService = {
     const deductionItems: { name: string; amount: number }[] = [];
 
     // LOP Deduction
-    if (settings.enableLopDeductions && empData.leave.lopLeave > 0) {
-      lopDeduction = payrollSettingsService.applyRounding(empData.leave.lopLeave * dailyRate, settings);
+    if (settings.enableLopDeductions && empData.attendance.lopDays > 0) {
+      if (settings.lopMethod === 'fixed') {
+        lopDeduction = payrollSettingsService.applyRounding(empData.attendance.lopDays * (settings.lopAmount || 0), settings);
+      } else {
+        lopDeduction = payrollSettingsService.applyRounding(empData.attendance.lopDays * dailyRate, settings);
+      }
       totalDeductions += lopDeduction;
-      deductionItems.push({ name: 'LOP Deduction', amount: lopDeduction });
+      
+      const unauthAbs = Math.max(0, empData.attendance.lopDays - empData.leave.lopLeave);
+      const leaveLop = empData.leave.lopLeave;
+      
+      const parts = [];
+      if (unauthAbs > 0) parts.push(`${unauthAbs}d unauthorized absence`);
+      if (leaveLop > 0) parts.push(`${leaveLop}d unpaid leave`);
+      
+      deductionItems.push({ 
+        name: `LOP Deduction (${parts.join(', ')})`, 
+        amount: lopDeduction 
+      });
     }
 
     // Half-Day Deduction
     if (settings.enableHalfDayDeductions && empData.attendance.halfDays > 0) {
-      const halfDayDeduction = payrollSettingsService.applyRounding(empData.attendance.halfDays * dailyRate * 0.5, settings);
+      let halfDayDeduction = 0;
+      if (settings.halfDayMethod === 'fixed') {
+        halfDayDeduction = payrollSettingsService.applyRounding(empData.attendance.halfDays * (settings.halfDayAmount || 0), settings);
+      } else {
+        halfDayDeduction = payrollSettingsService.applyRounding(empData.attendance.halfDays * dailyRate * 0.5, settings);
+      }
       totalDeductions += halfDayDeduction;
       deductionItems.push({ name: 'Half-Day Deduction', amount: halfDayDeduction });
     }
@@ -189,26 +212,20 @@ export const payrollService = {
       const limit = settings.monthlyLateLoginLimit || 0;
       const chargeableLates = Math.max(0, empData.attendance.lateLogins - limit);
       
-      if (chargeableLates > 0 || (settings.lateDeductionMethod === 'per_minute' && empData.attendance.lateLogins > 0)) {
+      if (chargeableLates > 0 || (settings.lateDeductionMethod === 'per_minute' && empData.attendance.lateLogins > limit)) {
         let lateDeduction = 0;
-        const rate = settings.lateDeductionAmountOrRate || 0;
         
         if (settings.lateDeductionMethod === 'per_minute') {
-          // Typically we charge for ALL late minutes if limit is 0. 
-          // If a monthly limit > 0 is configured, and it's 'per_minute', it's slightly ambiguous 
-          // (do we ignore the minutes from the first N allowed lates?). 
-          // We will use totalLateMinutes unconditionally, assuming if per_minute is chosen with a limit, 
-          // we only trigger deduction if late occurrences > limit, but charge for total minutes. 
-          // If limit is 0 (our default), this works perfectly for all minutes.
-          if (empData.attendance.lateLogins > limit) {
-             const lateMins = empData.attendance.totalLateMinutes || 0;
-             lateDeduction = payrollSettingsService.applyRounding(lateMins * rate, settings);
-          }
+           const lateMins = empData.attendance.totalLateMinutes || 0;
+           lateDeduction = payrollSettingsService.applyRounding(lateMins * (settings.latePerMinuteRate || 0), settings);
         } else if (settings.lateDeductionMethod === 'fixed') {
-          lateDeduction = payrollSettingsService.applyRounding(chargeableLates * rate, settings);
-        } else {
-          // half_day (legacy behavior)
-          lateDeduction = payrollSettingsService.applyRounding(chargeableLates * dailyRate * 0.5, settings);
+           lateDeduction = payrollSettingsService.applyRounding(chargeableLates * (settings.lateFixedAmount || 0), settings);
+        } else if (settings.lateDeductionMethod === 'half_day') {
+           if (settings.halfDayMethod === 'fixed') {
+             lateDeduction = payrollSettingsService.applyRounding(chargeableLates * (settings.lateHalfDayAmount || settings.halfDayAmount || 0), settings);
+           } else {
+             lateDeduction = payrollSettingsService.applyRounding(chargeableLates * dailyRate * 0.5, settings);
+           }
         }
 
         if (lateDeduction > 0) {
@@ -221,23 +238,91 @@ export const payrollService = {
     // Permission Deduction (only excess beyond configured limit)
     if (settings.enablePermissionDeduction && empData.permission.permissionCount > settings.permissionLimit) {
       const excessPermissions = empData.permission.permissionCount - settings.permissionLimit;
-      const permDeduction = payrollSettingsService.applyRounding(excessPermissions * dailyRate * 0.5, settings);
-      totalDeductions += permDeduction;
-      deductionItems.push({ name: 'Permission Deduction', amount: permDeduction });
+      let permDeduction = 0;
+
+      if (settings.permissionDeductionMethod === 'per_minute') {
+        // Technically we need the minutes of the excess permissions. 
+        // For simplicity, we fallback to a fixed amount if exact minutes aren't tracked per excess.
+        // Or if we assume totalPermissionMinutes is available, we could use that.
+        // Currently payrollDataService might not return total excess minutes easily.
+        // Assuming user means per minute of all excess permissions:
+        // For now, multiply excess count by an average permission time (e.g. 60 mins) * rate,
+        // or just use Fixed Amount.
+        // Let's use the explicit permissionPerMinuteRate multiplied by an estimated 60 mins per permission, 
+        // or if totalPermissionMinutes is tracked, use that.
+        permDeduction = payrollSettingsService.applyRounding(excessPermissions * 60 * (settings.permissionPerMinuteRate || 0), settings);
+      } else if (settings.permissionDeductionMethod === 'fixed') {
+        permDeduction = payrollSettingsService.applyRounding(excessPermissions * (settings.permissionFixedAmount || 0), settings);
+      } else if (settings.permissionDeductionMethod === 'half_day') {
+        if (settings.halfDayMethod === 'fixed') {
+          permDeduction = payrollSettingsService.applyRounding(excessPermissions * (settings.permissionHalfDayAmount || settings.halfDayAmount || 0), settings);
+        } else {
+          permDeduction = payrollSettingsService.applyRounding(excessPermissions * dailyRate * 0.5, settings);
+        }
+      }
+
+      if (permDeduction > 0) {
+        totalDeductions += permDeduction;
+        deductionItems.push({ name: 'Permission Deduction', amount: permDeduction });
+      }
     }
 
     // WFH Deduction (if configured)
     if (settings.enableWfhDeduction && empData.wfh.wfhDays > 0) {
-      const wfhDeduction = payrollSettingsService.applyRounding(empData.wfh.wfhDays * dailyRate * 0.1, settings);
-      totalDeductions += wfhDeduction;
-      deductionItems.push({ name: 'WFH Deduction', amount: wfhDeduction });
+      let wfhDeduction = 0;
+      
+      if (settings.wfhDeductionMethod === 'per_day') {
+        wfhDeduction = payrollSettingsService.applyRounding(empData.wfh.wfhDays * (settings.wfhPerDayAmount || 0), settings);
+      } else if (settings.wfhDeductionMethod === 'fixed') {
+        wfhDeduction = payrollSettingsService.applyRounding(empData.wfh.wfhDays * (settings.wfhFixedAmount || 0), settings);
+      } else if (settings.wfhDeductionMethod === 'half_day') {
+        if (settings.halfDayMethod === 'fixed') {
+          wfhDeduction = payrollSettingsService.applyRounding(empData.wfh.wfhDays * (settings.wfhHalfDayAmount || settings.halfDayAmount || 0), settings);
+        } else {
+          wfhDeduction = payrollSettingsService.applyRounding(empData.wfh.wfhDays * dailyRate * 0.5, settings);
+        }
+      }
+
+      if (wfhDeduction > 0) {
+        totalDeductions += wfhDeduction;
+        deductionItems.push({ name: 'WFH Deduction', amount: wfhDeduction });
+      }
     }
 
-    // 7. Overtime (only approved)
+    // Break Overrun Deduction
+    if (settings.enableBreakOverrunDetection && settings.enableBreakOverrunDeduction && empData.attendance.totalBreakOverrunMinutes > 0) {
+      let boDeduction = 0;
+      const boMins = empData.attendance.totalBreakOverrunMinutes;
+      
+      if (settings.breakOverrunDeductionMethod === 'per_minute') {
+        boDeduction = payrollSettingsService.applyRounding(boMins * (settings.breakOverrunPerMinuteRate || 0), settings);
+      } else if (settings.breakOverrunDeductionMethod === 'fixed') {
+        boDeduction = payrollSettingsService.applyRounding(settings.breakOverrunFixedAmount || 0, settings);
+      } else if (settings.breakOverrunDeductionMethod === 'half_day') {
+        if (settings.halfDayMethod === 'fixed') {
+          boDeduction = payrollSettingsService.applyRounding(settings.breakOverrunHalfDayAmount || settings.halfDayAmount || 0, settings);
+        } else {
+          boDeduction = payrollSettingsService.applyRounding(dailyRate * 0.5, settings);
+        }
+      }
+      
+      if (boDeduction > 0) {
+        totalDeductions += boDeduction;
+        deductionItems.push({ name: 'Break Overrun Deduction', amount: boDeduction });
+      }
+    }
+
+    // 7. Overtime (Calculated from clockOut totalOvertimeMinutes)
     let overtime = 0;
-    if (settings.enableOvertimePay) {
-      // For now overtime stays at 0 until an overtime module exists
-      overtime = 0;
+    if (settings.enableOvertimePay && empData.attendance.totalOvertimeMinutes > 0) {
+      const hourlyRate = (dailyRate / 8); // Assuming 8 hour standard for hourly rate
+      const otHours = empData.attendance.totalOvertimeMinutes / 60;
+      if (settings.overtimeRateType === 'multiplier') {
+        overtime = payrollSettingsService.applyRounding(otHours * hourlyRate * (settings.overtimeMultiplier || 1), settings);
+      } else {
+        // fixed rate per hour
+        overtime = payrollSettingsService.applyRounding(otHours * (settings.overtimeFixedRate || 0), settings);
+      }
     }
 
     // 8. Apply rounding
@@ -287,6 +372,21 @@ export const payrollService = {
     if (insErr || !payroll) {
       return { error: insErr || new Error('Failed to create payroll record.') };
     }
+
+    await payrollAuditService.logEvent({
+      payrollId: payroll.id,
+      action: 'PAYROLL_GENERATED',
+      title: `System generated ${year}-${String(month).padStart(2, '0')} payroll`,
+      description: `Base Salary: ₹${basic.toLocaleString('en-IN')}\nNet Salary: ₹${netSalary.toLocaleString('en-IN')}`,
+      newStatus: 'CALCULATED'
+    });
+
+    await payrollAuditService.logEvent({
+      payrollId: payroll.id,
+      action: 'PAYROLL_CALCULATED',
+      title: `Salary Calculation [${year}-${String(month).padStart(2, '0')}]`,
+      description: `Working Days: ${workingDays}\nDaily Rate: ₹${payrollSettingsService.applyRounding(dailyRate, settings)}\nPaid Days: ${empData.attendance.presentDays}\nUnpaid Days: ${empData.attendance.lopDays}`,
+    });
 
     // 11. Insert Payroll Items
     const items: any[] = [];

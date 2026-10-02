@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 /**
  * Application Settings Service
  * 
@@ -6,6 +7,8 @@
  */
 
 const SETTINGS_KEY = 'workpulse_app_settings';
+
+import { supabase } from '../../lib/supabase';
 
 export interface AppSettings {
   // General
@@ -115,28 +118,141 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
 };
 
 export const appSettingsService = {
+  
+  // Local cache
+  _settingsCache: null as AppSettings | null,
+  _listeners: [] as Array<(settings: AppSettings) => void>,
+
+  _realtimeInitialized: false,
+
+  _initRealtime() {
+    if (this._realtimeInitialized) return;
+    this._realtimeInitialized = true;
+    
+    supabase
+      .channel('app_settings_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'app_settings'
+        },
+        (payload: any) => {
+          if (payload.new && payload.new.settings) {
+            const newSettings = { ...DEFAULT_APP_SETTINGS, ...payload.new.settings };
+            this._settingsCache = newSettings;
+            this._listeners.forEach(cb => cb(newSettings));
+          }
+        }
+      )
+      .subscribe();
+  },
+
+
+  subscribe(callback: (settings: AppSettings) => void) {
+    this._listeners.push(callback);
+    if (this._settingsCache) callback(this._settingsCache);
+    return () => {
+      this._listeners = this._listeners.filter(cb => cb !== callback);
+    };
+  },
+
+  async loadSettings(): Promise<AppSettings> {
+    try {
+      // @ts-ignore
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('settings')
+        .limit(1)
+        .maybeSingle() as any;
+
+      if (error) {
+        console.error('Error fetching settings from Supabase:', error);
+      }
+      
+      let finalSettings = { ...DEFAULT_APP_SETTINGS };
+      if (data && data.settings) {
+        finalSettings = { ...finalSettings, ...data.settings };
+      }
+      
+      this._settingsCache = finalSettings;
+      
+      // Notify listeners
+      this._listeners.forEach(cb => cb(finalSettings));
+      this._initRealtime();
+      
+      return finalSettings;
+    } catch (e) {
+      console.error('Failed to load app settings from database:', e);
+      return this._settingsCache || { ...DEFAULT_APP_SETTINGS };
+    }
+  },
+
+  // Fallback for synchronous reads if needed during render, 
+  // but we should ensure loadSettings is called on app boot.
   getSettings(): AppSettings {
+    if (this._settingsCache) {
+      return this._settingsCache;
+    }
+    // Fallback to local storage or defaults if not loaded yet
     try {
       const stored = localStorage.getItem(SETTINGS_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
         return { ...DEFAULT_APP_SETTINGS, ...parsed };
       }
-    } catch (e) {
-      console.warn('Failed to load app settings from storage:', e);
-    }
+    } catch (e) {}
     return { ...DEFAULT_APP_SETTINGS };
   },
 
-  saveSettings(settings: AppSettings): void {
+  async saveSettings(settings: AppSettings): Promise<boolean> {
     try {
+      // Local sync only, Supabase is handled by globalSettingsService
+      this._settingsCache = settings;
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      this._listeners.forEach(cb => cb(settings));
+      return true;
     } catch (e) {
-      console.error('Failed to save app settings:', e);
+      console.error('Failed to save app settings locally:', e);
+      return false;
     }
   },
+
 
   getDefaults(): AppSettings {
     return { ...DEFAULT_APP_SETTINGS };
   }
 };
+
+
+export function useAppSettings() {
+  const [settings, setSettings] = useState<AppSettings>(appSettingsService.getSettings());
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    
+    // Initial async load
+    appSettingsService.loadSettings().then((loaded) => {
+      if (isMounted) {
+        setSettings(loaded);
+        setLoading(false);
+      }
+    });
+
+    // Subscribe to changes
+    const unsubscribe = appSettingsService.subscribe((newSettings) => {
+      if (isMounted) {
+        setSettings(newSettings);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  return { settings, loading };
+}

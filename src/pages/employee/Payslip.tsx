@@ -276,7 +276,7 @@ const EmployeePayslip: React.FC = () => {
       </div>
 
       {loading ? (
-        <div className="skeleton-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+        <div className="skeleton-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))', gap: '1.5rem' }}>
           <div className="skeleton" style={{ height: '200px', borderRadius: 'var(--radius-lg)' }} />
           <div className="skeleton" style={{ height: '300px', borderRadius: 'var(--radius-lg)' }} />
         </div>

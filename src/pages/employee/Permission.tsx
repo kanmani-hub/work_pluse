@@ -61,8 +61,10 @@ const EmployeePermission: React.FC = () => {
 
   useEffect(() => {
     fetchPermissions();
-    import('../../services/settings/appSettingsService').then(({ appSettingsService }) => {
-      setAppSettings(appSettingsService.getSettings());
+    import('../../services/settings/globalSettingsService').then(({ globalSettingsService }) => {
+      globalSettingsService.loadSettings().then(global => {
+        setAppSettings(global.app);
+      });
     });
   }, []);
 

@@ -241,7 +241,7 @@ const AdminLiveTracking: React.FC = () => {
 
       {activeTab === 'Live View' ? (
         <>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
             <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
               Last updated: <strong>{lastUpdatedTime}</strong>
             </div>
@@ -263,7 +263,7 @@ const AdminLiveTracking: React.FC = () => {
             </>
           ) : (
             <>
-              <div className="tracking-kpi-grid">
+              <div className="responsive-grid">
                 <div className="tracking-kpi-card">
                   <div className="sc-title">Currently Working</div>
                   <div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.working}</div>
@@ -371,7 +371,7 @@ const AdminLiveTracking: React.FC = () => {
                     </div>
                   </div>
                   
-                  <div className="table-responsive" style={{ flex: 1, overflowY: 'auto' }}>
+                  <div className="table-container" style={{ flex: 1, overflowY: 'auto' }}>
                     {filteredEmployees.length === 0 ? (
                       <div style={{ padding: '3rem 1rem', textAlign: 'center' }}>
                         <AlertCircle size={32} color="var(--gray-400)" style={{ margin: '0 auto 1rem auto' }} />
@@ -588,8 +588,8 @@ const AdminLiveTracking: React.FC = () => {
         @keyframes spin { 100% { transform: rotate(360deg); } }
         
         .tracking-layout { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
-        @media (min-width: 1024px) { .tracking-layout { grid-template-columns: 380px 1fr; height: 650px; } }
-        @media (min-width: 1280px) { .tracking-layout { grid-template-columns: 480px 1fr; } }
+        @media (min-width: 1024px) { .tracking-layout { grid-template-columns: 1fr 1.1fr; min-height: 650px; height: auto; } }
+        @media (min-width: 1280px) { .tracking-layout { grid-template-columns: 1fr 1.2fr; } }
         
         .mock-map {
           position: relative;

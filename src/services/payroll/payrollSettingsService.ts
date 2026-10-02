@@ -11,27 +11,57 @@ const SETTINGS_KEY = 'workpulse_payroll_settings';
 export interface PayrollSettings {
   // General
   workingDaysBasis: 'configured' | 'calendar' | 'actual';
-  configuredWorkingDays: number; // e.g. 26 — only used when workingDaysBasis === 'configured'
+  configuredWorkingDays: number;
   salaryRounding: 'round' | 'exact';
   requireMultiLevelApproval: boolean;
+  approvalLevels: number;
 
-  // Deduction Rules
+  // LOP Rules
   enableLopDeductions: boolean;
-  enableHalfDayDeductions: boolean;
-  
-  enableLateLoginDeduction: boolean;
-  monthlyLateLoginLimit: number;    // e.g. 3 — no deduction until exceeded
-  lateDeductionMethod: 'per_minute' | 'fixed' | 'half_day';
-  lateDeductionAmountOrRate: number;
+  lopMethod: 'daily_rate' | 'fixed';
+  lopAmount: number;
 
+  // Half-Day Rules
+  enableHalfDayDeductions: boolean;
+  halfDayMethod: '50_percent' | 'fixed';
+  halfDayAmount: number;
+  
+  // Late Login Rules
+  enableLateLoginDeduction: boolean;
+  monthlyLateLoginLimit: number;
+  lateDeductionMethod: 'per_minute' | 'fixed' | 'half_day';
+  lateFixedAmount: number;
+  latePerMinuteRate: number;
+  lateHalfDayAmount: number; // For when method is half_day and halfDayMethod is fixed
+
+  // Permission Rules
   enablePermissionDeduction: boolean;
-  permissionLimit: number;          // e.g. 2 — no deduction until exceeded
+  permissionLimit: number;
+  permissionDeductionMethod: 'per_minute' | 'fixed' | 'half_day';
+  permissionFixedAmount: number;
+  permissionPerMinuteRate: number;
+  permissionHalfDayAmount: number;
+
+  // WFH Rules
   enableWfhDeduction: boolean;
+  wfhDeductionMethod: 'per_day' | 'fixed' | 'half_day';
+  wfhFixedAmount: number;
+  wfhPerDayAmount: number;
+  wfhHalfDayAmount: number;
+
+  // Break Rules
+  enableBreakOverrunDetection: boolean;
+  enableBreakOverrunDeduction: boolean;
+  breakOverrunDeductionMethod: 'per_minute' | 'fixed' | 'half_day';
+  breakOverrunFixedAmount: number;
+  breakOverrunPerMinuteRate: number;
+  breakOverrunHalfDayAmount: number;
 
   // Overtime
   enableOvertimePay: boolean;
   overtimeRateType: 'multiplier' | 'fixed';
-  overtimeMultiplier: number;       // e.g. 1.5
+  overtimeMultiplier: number;
+  overtimeFixedRate: number;
 }
 
 const DEFAULT_SETTINGS: PayrollSettings = {
@@ -39,28 +69,50 @@ const DEFAULT_SETTINGS: PayrollSettings = {
   configuredWorkingDays: 26,
   salaryRounding: 'round',
   requireMultiLevelApproval: false,
+  approvalLevels: 2,
 
   enableLopDeductions: true,
+  lopMethod: 'daily_rate',
+  lopAmount: 0,
+
   enableHalfDayDeductions: true,
+  halfDayMethod: '50_percent',
+  halfDayAmount: 0,
   
   enableLateLoginDeduction: true,
   monthlyLateLoginLimit: 0,
   lateDeductionMethod: 'fixed',
-  lateDeductionAmountOrRate: 100,
+  lateFixedAmount: 100,
+  latePerMinuteRate: 10,
+  lateHalfDayAmount: 0,
 
   enablePermissionDeduction: false,
   permissionLimit: 2,
+  permissionDeductionMethod: 'fixed',
+  permissionFixedAmount: 100,
+  permissionPerMinuteRate: 10,
+  permissionHalfDayAmount: 0,
+
   enableWfhDeduction: false,
+  wfhDeductionMethod: 'fixed',
+  wfhFixedAmount: 100,
+  wfhPerDayAmount: 500,
+  wfhHalfDayAmount: 0,
+
+  enableBreakOverrunDetection: false,
+  enableBreakOverrunDeduction: false,
+  breakOverrunDeductionMethod: 'fixed',
+  breakOverrunFixedAmount: 100,
+  breakOverrunPerMinuteRate: 10,
+  breakOverrunHalfDayAmount: 0,
 
   enableOvertimePay: true,
   overtimeRateType: 'multiplier',
   overtimeMultiplier: 1.5,
+  overtimeFixedRate: 0,
 };
 
 export const payrollSettingsService = {
-  /**
-   * Get current payroll settings. Returns persisted settings or defaults.
-   */
   getSettings(): PayrollSettings {
     try {
       const stored = localStorage.getItem(SETTINGS_KEY);
@@ -80,9 +132,6 @@ export const payrollSettingsService = {
     return { ...DEFAULT_SETTINGS };
   },
 
-  /**
-   * Save payroll settings.
-   */
   saveSettings(settings: PayrollSettings): void {
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -91,9 +140,6 @@ export const payrollSettingsService = {
     }
   },
 
-  /**
-   * Get the number of working days for a given month based on settings.
-   */
   getWorkingDaysForMonth(year: number, month: number, settings?: PayrollSettings): number {
     const s = settings || this.getSettings();
 
@@ -120,9 +166,6 @@ export const payrollSettingsService = {
     }
   },
 
-  /**
-   * Apply rounding based on settings.
-   */
   applyRounding(amount: number, settings?: PayrollSettings): number {
     const s = settings || this.getSettings();
     if (s.salaryRounding === 'round') {
@@ -131,9 +174,6 @@ export const payrollSettingsService = {
     return Number(amount.toFixed(2));
   },
 
-  /**
-   * Get the default settings (useful for reset).
-   */
   getDefaults(): PayrollSettings {
     return { ...DEFAULT_SETTINGS };
   }

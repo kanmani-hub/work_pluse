@@ -130,9 +130,11 @@ export const attendanceService = {
     const empId = await this.getCurrentEmployeeId();
     if (!empId) return { data: null, error: new Error('Unauthorized') };
 
-    const { appSettingsService } = await import('../settings/appSettingsService');
-    const settings = appSettingsService.getSettings();
-    const gracePeriod = settings.gracePeriodMins || 0;
+    const { globalSettingsService } = await import('../settings/globalSettingsService');
+    const globalSettings = await globalSettingsService.loadSettings();
+    const settings = globalSettings.app;
+    // Prefer global settings grace period, fallback to shift template if needed
+    const globalGracePeriod = settings.gracePeriodMins || 0;
     const timezone = settings.timezone === 'UTC' ? 'UTC' : 'Asia/Kolkata';
 
     // 1. Check if attendance already exists for today
@@ -147,8 +149,7 @@ export const attendanceService = {
       return { data: null, error: new Error('Attendance already exists for today.') };
     }
 
-    // 2. Resolve applicable shift (Simplified: get the first active shift_template for this mock, 
-    // real logic would check roster_assignments or shift_assignments first)
+    // 2. Resolve applicable shift
     const { data: shiftAssignments } = await supabase
       .from('shift_assignments')
       .select('*, shift_template:shift_template_id(*)')
@@ -162,36 +163,44 @@ export const attendanceService = {
     let requiredHours = 8;
     let lateMinutes = 0;
     let shiftStartStr = '09:00:00';
+    let shiftGracePeriod = globalGracePeriod;
 
     if (shiftAssignments && shiftAssignments.shift_template) {
       const st = shiftAssignments.shift_template as any;
       shiftTemplateId = st.id;
       requiredHours = st.required_hours || 8;
       if (st.start_time) shiftStartStr = st.start_time;
+      if (st.grace_period_minutes !== undefined) shiftGracePeriod = st.grace_period_minutes; // could override if we want, but user said admin settings
     }
+    
+    // User requested: "The grace-period behavior must come from Admin Settings"
+    const finalGracePeriod = globalGracePeriod;
 
     if (!shiftTemplateId) {
       return { data: null, error: new Error('No shift assigned for today.') };
     }
 
+    const now = new Date();
+    const nowIso = now.toISOString();
+
     if (shiftTemplateId) {
-      const now = new Date();
+      // Calculate late based on shift start + grace
       const nowInTz = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
       const [hrs, mins, secs = 0] = shiftStartStr.split(':').map(Number);
       
       const shiftStartInTz = new Date(nowInTz);
       shiftStartInTz.setHours(hrs, mins, secs, 0);
       
-      const allowedStartInTz = new Date(shiftStartInTz.getTime() + gracePeriod * 60000);
+      const allowedStartInTz = new Date(shiftStartInTz.getTime() + finalGracePeriod * 60000);
       
       if (nowInTz > allowedStartInTz) {
         lateMinutes = Math.floor((nowInTz.getTime() - shiftStartInTz.getTime()) / 60000);
       }
     }
 
+    const initialStatus = lateMinutes > 0 ? 'LATE' : 'WORKING';
+
     // 3. Create Attendance
-    const nowIso = new Date().toISOString();
-    
     // @ts-ignore
     const { data: newAttendance, error } = await supabase
       .from('attendance')
@@ -201,10 +210,13 @@ export const attendanceService = {
         attendance_date: input.localDateStr,
         clock_in_at: nowIso,
         required_hours: requiredHours,
-        status: 'WORKING',
+        status: initialStatus,
         break_minutes: 0,
         late_minutes: lateMinutes,
         early_logout_minutes: 0,
+        break_overrun_minutes: 0,
+        overtime_minutes: 0,
+        absence_minutes: 0,
         is_half_day: false,
         is_auto_logged_out: false
       } as any)
@@ -227,7 +239,7 @@ export const attendanceService = {
       }
     } as any);
 
-    return { data: newAttendance, error: null };
+    return { data: newAttendance as any, error: null };
   },
 
   /**
@@ -240,7 +252,7 @@ export const attendanceService = {
     // Check existing
     const { data: existing } = await supabase
       .from('attendance')
-      .select('*')
+      .select('*, shift_template:shift_template_id(*)')
       .eq('id', attendanceId)
       .eq('employee_id', empId)
       .single() as any;
@@ -252,24 +264,73 @@ export const attendanceService = {
       return { data: null, error: new Error('Attendance is already completed.') };
     }
 
+    const { globalSettingsService } = await import('../settings/globalSettingsService');
+    const globalSettings = await globalSettingsService.loadSettings();
+
     const nowIso = new Date().toISOString();
     
-    // Calculate worked hours (roughly, for demonstration)
     const inTime = new Date(existing.clock_in_at!).getTime();
     const outTime = new Date(nowIso).getTime();
-    let workedHrs = (outTime - inTime) / (1000 * 60 * 60);
-    const breakHrs = (existing.break_minutes || 0) / 60;
-    workedHrs = Math.max(0, workedHrs - breakHrs);
-
-    // Determine status (could also be HALF_DAY etc based on rules)
-    let status = 'COMPLETED';
+    const totalDurationHrs = (outTime - inTime) / (1000 * 60 * 60);
     
-    // @ts-ignore
+    // Fetch Break durations to calculate actual break minutes accurately
+    const { data: breaks } = await supabase
+      .from('attendance_breaks')
+      .select('*')
+      .eq('attendance_id', attendanceId) as any;
+
+    let actualBreakMins = 0;
+    if (breaks) {
+      breaks.forEach((b: any) => {
+         if (b.duration_minutes) {
+             actualBreakMins += b.duration_minutes;
+         } else if (b.started_at && b.ended_at) {
+             actualBreakMins += Math.floor((new Date(b.ended_at).getTime() - new Date(b.started_at).getTime()) / 60000);
+         }
+      });
+    }
+
+    const requiredHours = existing.required_hours || 8;
+    const allowedBreakMins = existing.shift_template?.break_duration_minutes || globalSettings.app.breakDurationMins || 60;
+    
+    let breakOverrunMins = Math.max(0, actualBreakMins - allowedBreakMins);
+
+    // Calculate effective working hours
+    const actualBreakHrs = actualBreakMins / 60;
+    const effectiveWorkedHrs = Math.max(0, totalDurationHrs - actualBreakHrs);
+
+    // Calculate Early Logout / Overtime
+    let earlyLogoutMins = 0;
+    let overtimeMins = 0;
+    const effectiveWorkedMins = Math.floor(effectiveWorkedHrs * 60);
+    const requiredMins = Math.floor(requiredHours * 60);
+
+    if (effectiveWorkedMins < requiredMins) {
+      earlyLogoutMins = requiredMins - effectiveWorkedMins;
+    } else if (effectiveWorkedMins > requiredMins) {
+      overtimeMins = effectiveWorkedMins - requiredMins;
+    }
+
+    // Determine status
+    let status = 'COMPLETED';
+    let isHalfDay = false;
+    
+    if (effectiveWorkedMins < requiredMins * 0.5) {
+      // Worked less than half of required shift
+      isHalfDay = true;
+      status = 'HALF_DAY';
+    }
+
     // @ts-ignore
     const { data: updated, error } = await (supabase.from('attendance') as any)
       .update({
         clock_out_at: nowIso,
-        worked_hours: Number(workedHrs.toFixed(2)),
+        worked_hours: Number(effectiveWorkedHrs.toFixed(2)),
+        break_minutes: actualBreakMins,
+        break_overrun_minutes: breakOverrunMins,
+        early_logout_minutes: earlyLogoutMins,
+        overtime_minutes: overtimeMins,
+        is_half_day: isHalfDay,
         status: status
       } as any)
       .eq('id', attendanceId)
@@ -278,6 +339,7 @@ export const attendanceService = {
 
     if (error) return { data: null, error: new Error(error.message) };
 
+    // @ts-ignore
     await supabase.from('attendance_events').insert({
       attendance_id: attendanceId,
       employee_id: empId,

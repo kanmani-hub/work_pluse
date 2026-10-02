@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { employeeService } from '../../services/employees/employeeService';
 import { 
@@ -8,21 +8,6 @@ import {
   Check, History, Clock, MapPin, Sun
 } from 'lucide-react';
 
-// Removed mockShifts
-
-
-const initialRoster: any = {};
-
-const weekDates = [
-  { date: '2026-09-22', display: 'Mon 22' },
-  { date: '2026-09-23', display: 'Tue 23' },
-  { date: '2026-09-24', display: 'Wed 24' },
-  { date: '2026-09-25', display: 'Thu 25' },
-  { date: '2026-09-26', display: 'Fri 26' },
-  { date: '2026-09-27', display: 'Sat 27' },
-  { date: '2026-09-28', display: 'Sun 28' },
-];
-
 const AdminRoster: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -31,7 +16,7 @@ const AdminRoster: React.FC = () => {
   const [shifts, setShifts] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
   
-  const [rosterData, setRosterData] = useState(initialRoster);
+  const [rosterData, setRosterData] = useState<any>({});
   const [viewMode, setViewMode] = useState('Week');
   const [status, setStatus] = useState('Draft');
   const [isLocked, setIsLocked] = useState(false);
@@ -40,7 +25,7 @@ const AdminRoster: React.FC = () => {
   const [filterDept, setFilterDept] = useState('All');
   
   // Modals & Drawers
-  const [assignModal, setAssignModal] = useState<any>(null); // { empId, date, existing }
+  const [assignModal, setAssignModal] = useState<any>(null); 
   const [conflictModal, setConflictModal] = useState<any>(null); 
   const [bulkModal, setBulkModal] = useState(false);
   const [copyModal, setCopyModal] = useState(false);
@@ -48,9 +33,13 @@ const AdminRoster: React.FC = () => {
   const [rotationModal, setRotationModal] = useState(false);
   const [historyModal, setHistoryModal] = useState(false);
   const [empDrawer, setEmpDrawer] = useState<any>(null);
+  const [dayDrawer, setDayDrawer] = useState<string | null>(null);
 
   // Form State
   const [formData, setFormData] = useState<any>({});
+
+  // Date State
+  const [currentDate, setCurrentDate] = useState(new Date());
 
   const fetchData = async () => {
     setLoading(true);
@@ -76,7 +65,6 @@ const AdminRoster: React.FC = () => {
     
     if (assignRes.data) {
       setAssignments(assignRes.data);
-      // We store all assignments in rosterData for quick lookup, but the UI should resolve effective dates
       const newRoster: any = {};
       assignRes.data.forEach((a: any) => {
         if (!newRoster[a.employee_id]) newRoster[a.employee_id] = {};
@@ -92,11 +80,9 @@ const AdminRoster: React.FC = () => {
   };
 
   const getEffectiveCellData = (empId: string, dateStr: string) => {
-    // Exact match for the date (e.g. Leave, Holiday overrides could exist here later)
     if (rosterData[empId]?.[dateStr]) {
       return rosterData[empId][dateStr];
     }
-    // Fallback to the most recent 'PERMANENT' assignment before or on this date
     const empAssignments = assignments.filter(a => a.employee_id === empId && new Date(a.effective_date) <= new Date(dateStr));
     if (empAssignments.length > 0) {
       const mostRecent = empAssignments.sort((a, b) => new Date(b.effective_date).getTime() - new Date(a.effective_date).getTime())[0];
@@ -118,11 +104,11 @@ const AdminRoster: React.FC = () => {
     setTimeout(() => setToast(''), 3000);
   };
 
-  const filteredEmployees = employees.filter(emp => {
-    const matchesSearch = emp.name.toLowerCase().includes(search.toLowerCase()) || emp.id.toLowerCase().includes(search.toLowerCase());
+  const filteredEmployees = useMemo(() => employees.filter(emp => {
+    const matchesSearch = emp.name.toLowerCase().includes(search.toLowerCase()) || emp.empCode.toLowerCase().includes(search.toLowerCase());
     const matchesDept = filterDept === 'All' || emp.dept === filterDept;
     return matchesSearch && matchesDept;
-  });
+  }), [employees, search, filterDept]);
 
   const getShiftDetails = (shiftId: string) => {
     const s = shifts.find(sh => sh.id === shiftId);
@@ -130,7 +116,7 @@ const AdminRoster: React.FC = () => {
     return {
       name: s.name,
       time: `${s.start_time?.slice(0,5) || ''} - ${s.end_time?.slice(0,5) || ''}`,
-      overnight: false // Simplified for now since schema might not have is_night_shift
+      overnight: s.crosses_midnight || false
     };
   };
 
@@ -169,25 +155,89 @@ const AdminRoster: React.FC = () => {
     showToast(assignModal.existing ? 'Shift assignment updated' : 'Shift assigned successfully');
   };
 
-  const handleRemoveAssign = () => {
-    const { empId, date } = assignModal;
-    const newRoster = { ...rosterData };
-    if (newRoster[empId] && newRoster[empId][date]) {
-      delete newRoster[empId][date];
-    }
-    setRosterData(newRoster);
-    setAssignModal(null);
-    showToast('Assignment removed');
-  };
-
   const handlePublish = () => {
     setStatus('Published');
     showToast('Roster published successfully');
   };
 
+  // Calendar Math
+  const getDaysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
+  const getFirstDayOfMonth = (year: number, month: number) => {
+    let day = new Date(year, month, 1).getDay();
+    return day === 0 ? 6 : day - 1; // 0 = Mon, 6 = Sun
+  };
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  const daysInMonth = getDaysInMonth(year, month);
+  const firstDay = getFirstDayOfMonth(year, month);
+  
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  
+  const handlePrev = () => {
+    if (viewMode === 'Week') {
+      setCurrentDate(new Date(year, month, currentDate.getDate() - 7));
+    } else {
+      setCurrentDate(new Date(year, month - 1, 1));
+    }
+  };
+  
+  const handleNext = () => {
+    if (viewMode === 'Week') {
+      setCurrentDate(new Date(year, month, currentDate.getDate() + 7));
+    } else {
+      setCurrentDate(new Date(year, month + 1, 1));
+    }
+  };
+  
+  const handleToday = () => {
+    setCurrentDate(new Date());
+  };
+
+  const getWeekStart = (date: Date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    return new Date(d.setDate(diff));
+  };
+
+  const weekStart = getWeekStart(currentDate);
+  const weekDates = Array.from({ length: 7 }).map((_, i) => {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + i);
+    const ds = d.toISOString().split('T')[0];
+    const display = d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' });
+    return { date: ds, display };
+  });
+
+  const getDayAssignments = (dateStr: string) => {
+    const dayAss: any = {};
+    filteredEmployees.forEach(emp => {
+      const cell = getEffectiveCellData(emp.id, dateStr);
+      if (cell && cell.shift) {
+         const s = getShiftDetails(cell.shift);
+         if (s) {
+           const key = s.name;
+           if (!dayAss[key]) dayAss[key] = { count: 0, time: s.time, overnight: s.overnight, shiftId: cell.shift };
+           dayAss[key].count++;
+         }
+      }
+    });
+    return dayAss;
+  };
+
+  const getEmployeesForDay = (dateStr: string) => {
+    return filteredEmployees.map(emp => {
+      const cell = getEffectiveCellData(emp.id, dateStr);
+      if (cell && cell.shift) {
+        return { emp, cell, details: getShiftDetails(cell.shift) };
+      }
+      return null;
+    }).filter(Boolean);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', position: 'relative' }}>
-      
       {toast && (
         <div style={{ position: 'fixed', top: '24px', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'var(--text-primary)', color: 'var(--bg-primary)', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-full)', zIndex: 1000, display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: 'var(--shadow-lg)', animation: 'slideDown 0.3s forwards' }}>
           <CheckCircle2 size={18} color="var(--success)" />
@@ -198,8 +248,8 @@ const AdminRoster: React.FC = () => {
       {/* Header */}
       <div className="page-header" style={{ marginBottom: 0, flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <h1 className="page-title">Shift Roster</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>Plan and manage employee shifts, work modes, and date-wise assignments.</p>
+          <h1 className="page-title" style={{ fontSize: 'clamp(1.4rem, 2vw, 2rem)' }}>Shift Roster</h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 'clamp(0.875rem, 0.3vw + 0.8rem, 1rem)', marginTop: '0.25rem' }}>Plan and manage employee shifts, work modes, and date-wise assignments.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           {isLocked ? (
@@ -209,14 +259,15 @@ const AdminRoster: React.FC = () => {
           )}
           
           <div style={{ display: 'flex', backgroundColor: 'var(--gray-100)', borderRadius: 'var(--radius-md)', padding: '0.25rem' }}>
-            <button onClick={() => setViewMode('Week')} className={`btn ${viewMode === 'Week' ? 'btn-primary' : ''}`} style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', backgroundColor: viewMode === 'Week' ? 'var(--bg-surface)' : 'transparent', color: viewMode === 'Week' ? 'var(--gray-900)' : 'var(--gray-600)', border: 'none', boxShadow: viewMode === 'Week' ? 'var(--shadow-sm)' : 'none' }}>Week</button>
-            <button onClick={() => setViewMode('Month')} className={`btn ${viewMode === 'Month' ? 'btn-primary' : ''}`} style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', backgroundColor: viewMode === 'Month' ? 'var(--bg-surface)' : 'transparent', color: viewMode === 'Month' ? 'var(--gray-900)' : 'var(--gray-600)', border: 'none', boxShadow: viewMode === 'Month' ? 'var(--shadow-sm)' : 'none' }}>Month</button>
+            <button onClick={() => setViewMode('Week')} className={`btn ${viewMode === 'Week' ? 'btn-primary' : ''}`} style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', backgroundColor: viewMode === 'Week' ? 'var(--bg-surface-solid)' : 'transparent', color: viewMode === 'Week' ? 'var(--text-primary)' : 'var(--text-secondary)', border: 'none', boxShadow: viewMode === 'Week' ? 'var(--shadow-sm)' : 'none' }}>Grid View</button>
+            <button onClick={() => setViewMode('Month')} className={`btn ${viewMode === 'Month' ? 'btn-primary' : ''}`} style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', backgroundColor: viewMode === 'Month' ? 'var(--bg-surface-solid)' : 'transparent', color: viewMode === 'Month' ? 'var(--text-primary)' : 'var(--text-secondary)', border: 'none', boxShadow: viewMode === 'Month' ? 'var(--shadow-sm)' : 'none' }}>Calendar View</button>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
-            <button className="icon-button" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)' }}><ChevronLeft size={18}/></button>
-            <button className="btn" style={{ backgroundColor: 'var(--bg-surface-elevated)', border: 'none', padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600 }}>Today</button>
-            <button className="icon-button" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}><ChevronRight size={18}/></button>
+          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface)' }}>
+            <button onClick={handlePrev} className="icon-button" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)' }}><ChevronLeft size={18}/></button>
+            <button onClick={handleToday} className="btn" style={{ backgroundColor: 'transparent', border: 'none', padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600 }}>{monthNames[month]} {year}</button>
+            <button onClick={handleNext} className="icon-button" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}><ChevronRight size={18}/></button>
+            <button onClick={handleToday} className="btn" style={{ backgroundColor: 'var(--bg-surface-elevated)', border: 'none', borderLeft: '1px solid var(--border-color)', padding: '0.5rem 1rem', fontSize: '0.875rem', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}>Today</button>
           </div>
           
           <button onClick={handlePublish} className="btn btn-primary" style={{ fontSize: '0.875rem' }} disabled={status === 'Published'}>
@@ -235,7 +286,6 @@ const AdminRoster: React.FC = () => {
         
         filteredEmployees.forEach(emp => {
           let hasAssignment = false;
-          
           weekDates.forEach(d => {
             const cell = getEffectiveCellData(emp.id, d.date);
             if (cell && cell.shift) {
@@ -247,12 +297,7 @@ const AdminRoster: React.FC = () => {
                if (cell.mode === 'WFH') wfh++;
             }
           });
-          
-          if (hasAssignment) {
-            scheduled++;
-          } else {
-            unassigned++;
-          }
+          if (hasAssignment) scheduled++; else unassigned++;
         });
         
         return (
@@ -284,24 +329,21 @@ const AdminRoster: React.FC = () => {
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--gray-100)', color: 'var(--text-secondary)' }}><AlertTriangle size={16} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--gray-700)' }}>{unassigned}</div>
+            <div className="sc-val" style={{ color: 'var(--text-primary)' }}>{unassigned}</div>
             <div className="sc-title">Unassigned</div>
           </div>
         </div>
         );
       })()}
 
-      {/* Main Roster Card */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         {/* Toolbar */}
         <div style={{ padding: '1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-          
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', flex: 1 }}>
             <div style={{ position: 'relative', width: '220px' }}>
               <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
               <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} />
             </div>
-            
             <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
               <option value="All">All Departments</option>
               <option>Development</option>
@@ -309,25 +351,22 @@ const AdminRoster: React.FC = () => {
               <option>Finance</option>
               <option>Support</option>
             </select>
-            
             <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem' }}><Filter size={14} style={{ marginRight: '0.25rem' }}/> More Filters</button>
-            
             {(search || filterDept !== 'All') && (
               <button onClick={() => { setSearch(''); setFilterDept('All'); }} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem' }}>Clear</button>
             )}
           </div>
-
           <div style={{ display: 'flex', gap: '0.75rem' }}>
             <div className="dropdown" style={{ position: 'relative' }}>
               <button className="btn btn-outline" style={{ fontSize: '0.875rem' }} onClick={() => setActiveMenu(activeMenu === 'actions' ? null : 'actions')}>
                 Roster Actions <MoreVertical size={14} style={{ marginLeft: '0.25rem' }}/>
               </button>
               {activeMenu === 'actions' && (
-                <div className="dropdown-menu" style={{ position: 'absolute', right: 0, top: '100%', marginTop: '0.25rem', zIndex: 10 }}>
+                <div className="dropdown-menu" style={{ position: 'absolute', right: 0, top: '100%', marginTop: '0.25rem', zIndex: 10, background: 'var(--bg-surface-solid)', borderColor: 'var(--border-color)' }}>
                   <button onClick={() => { setActiveMenu(null); setBulkModal(true); }} className="dropdown-item"><Users size={14}/> Bulk Assign</button>
                   <button onClick={() => { setActiveMenu(null); setCopyModal(true); }} className="dropdown-item"><Copy size={14}/> Copy Previous Week</button>
                   <button onClick={() => { setActiveMenu(null); setRotationModal(true); }} className="dropdown-item"><CalendarDays size={14}/> Create Rotation Pattern</button>
-                  <div className="dropdown-divider"></div>
+                  <div className="dropdown-divider" style={{ backgroundColor: 'var(--border-color)' }}></div>
                   <button onClick={() => { setActiveMenu(null); setHistoryModal(true); }} className="dropdown-item"><History size={14}/> Roster History</button>
                 </div>
               )}
@@ -335,7 +374,6 @@ const AdminRoster: React.FC = () => {
           </div>
         </div>
 
-        {/* Roster Grid */}
         {loading ? (
           <div className="skeleton" style={{ height: '400px', margin: '1rem' }} />
         ) : filteredEmployees.length === 0 ? (
@@ -345,100 +383,88 @@ const AdminRoster: React.FC = () => {
             <p style={{ marginTop: '0.5rem' }}>Try changing your filters or search criteria.</p>
           </div>
         ) : (
-          <div className="roster-container">
-            {/* Desktop Table View */}
-            <div className="desktop-roster">
-              <table className="roster-table">
-                <thead>
-                  <tr>
-                    <th className="sticky-col">Employee</th>
-                    {weekDates.map(d => (
-                      <th key={d.date} style={{ textAlign: 'center', minWidth: '130px' }}>{d.display}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredEmployees.map(emp => (
-                    <tr key={emp.id}>
-                      <td className="sticky-col" onClick={() => setEmpDrawer(emp)} style={{ cursor: 'pointer' }}>
-                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{emp.name}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.empCode} • {emp.dept}</div>
-                      </td>
-                      {weekDates.map(d => {
-                        const cellData = getEffectiveCellData(emp.id, d.date);
-                        return (
-                          <td key={d.date} className="roster-cell" onClick={() => handleCellClick(emp.id, d.date)}>
-                            {cellData ? (
-                              cellData.type === 'Leave' || cellData.type === 'Holiday' || cellData.type === 'Week Off' ? (
-                                <div className={`roster-badge ${cellData.type === 'Leave' ? 'bg-leave' : cellData.type === 'Holiday' ? 'bg-holiday' : 'bg-gray'}`}>
-                                  {cellData.type}
-                                </div>
-                              ) : (
-                                <div className={`roster-shift ${getShiftDetails(cellData.shift)?.overnight ? 'bg-overnight' : 'bg-normal'}`}>
-                                  <div className="shift-name">{getShiftDetails(cellData.shift)?.name}</div>
-                                  {viewMode === 'Week' && (
-                                    <>
-                                      <div className="shift-time">
-                                        {getShiftDetails(cellData.shift)?.time} 
-                                        {getShiftDetails(cellData.shift)?.overnight && <span style={{ color: 'var(--purple-700)', fontWeight: 600 }}> +1d</span>}
-                                      </div>
-                                      <div className={`shift-mode ${cellData.mode === 'WFH' ? 'text-primary' : 'text-gray'}`}>{cellData.mode}</div>
-                                    </>
-                                  )}
-                                </div>
-                              )
-                            ) : (
-                              <div className="roster-empty">+ Assign</div>
-                            )}
-                          </td>
-                        );
-                      })}
+          viewMode === 'Week' ? (
+            <div className="roster-container">
+              <div className="desktop-roster">
+                <table className="roster-table">
+                  <thead>
+                    <tr>
+                      <th className="sticky-col">Employee</th>
+                      {weekDates.map(d => (
+                        <th key={d.date} style={{ textAlign: 'center', minWidth: '130px' }}>{d.display}</th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Mobile Card View */}
-            <div className="mobile-roster">
-              <div style={{ padding: '1rem', backgroundColor: 'var(--gray-50)', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontWeight: 600 }}>Tue 23 Sep 2026</span>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button className="icon-button  border"><ChevronLeft size={16}/></button>
-                  <button className="icon-button  border"><ChevronRight size={16}/></button>
-                </div>
+                  </thead>
+                  <tbody>
+                    {filteredEmployees.map(emp => (
+                      <tr key={emp.id}>
+                        <td className="sticky-col" onClick={() => setEmpDrawer(emp)} style={{ cursor: 'pointer' }}>
+                          <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 'clamp(0.85rem, 0.5vw + 0.5rem, 1rem)' }}>{emp.name}</div>
+                          <div style={{ fontSize: 'clamp(0.7rem, 0.3vw + 0.5rem, 0.8rem)', color: 'var(--text-secondary)' }}>{emp.empCode} • {emp.dept}</div>
+                        </td>
+                        {weekDates.map(d => {
+                          const cellData = getEffectiveCellData(emp.id, d.date);
+                          return (
+                            <td key={d.date} className="roster-cell" onClick={() => handleCellClick(emp.id, d.date)}>
+                              {cellData ? (
+                                cellData.type === 'Leave' || cellData.type === 'Holiday' || cellData.type === 'Week Off' ? (
+                                  <div className={`roster-badge ${cellData.type === 'Leave' ? 'bg-leave' : cellData.type === 'Holiday' ? 'bg-holiday' : 'bg-gray'}`}>
+                                    {cellData.type}
+                                  </div>
+                                ) : (
+                                  <div className={`roster-shift ${getShiftDetails(cellData.shift)?.overnight ? 'bg-overnight' : 'bg-normal'}`}>
+                                    <div className="shift-name">{getShiftDetails(cellData.shift)?.name}</div>
+                                    <div className="shift-time">
+                                      {getShiftDetails(cellData.shift)?.time} 
+                                      {getShiftDetails(cellData.shift)?.overnight && <span style={{ color: 'var(--purple-700)', fontWeight: 600 }}> +1d</span>}
+                                    </div>
+                                    <div className={`shift-mode ${cellData.mode === 'WFH' ? 'text-primary' : 'text-gray'}`}>{cellData.mode}</div>
+                                  </div>
+                                )
+                              ) : (
+                                <div className="roster-empty">+ Assign</div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <div style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {filteredEmployees.map(emp => {
-                  const cellData = getEffectiveCellData(emp.id, '2026-09-23');
+            </div>
+          ) : (
+            <div className="calendar-container">
+              <div className="calendar-grid">
+                {['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map(day => (
+                  <div key={day} className="cal-header">{day}</div>
+                ))}
+                
+                {Array.from({ length: firstDay }).map((_, i) => (
+                  <div key={`empty-${i}`} className="cal-cell empty"></div>
+                ))}
+                
+                {Array.from({ length: daysInMonth }).map((_, i) => {
+                  const day = i + 1;
+                  const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                  const isToday = new Date().toISOString().split('T')[0] === dateStr;
+                  const dayAss = getDayAssignments(dateStr);
+                  const keys = Object.keys(dayAss);
+                  const hasMore = keys.length > 3;
+                  const displayKeys = keys.slice(0, 3);
+                  
                   return (
-                    <div key={emp.id} className="card" style={{ padding: '1rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                        <div>
-                          <div style={{ fontWeight: 600 }}>{emp.name}</div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.empCode}</div>
-                        </div>
-                        <button onClick={() => setEmpDrawer(emp)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}>View Schedule</button>
-                      </div>
-                      
-                      <div onClick={() => handleCellClick(emp.id, '2026-09-23')} style={{ border: '1px dashed var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem', cursor: 'pointer', backgroundColor: cellData ? 'transparent' : 'var(--gray-50)' }}>
-                        {cellData ? (
-                          cellData.type === 'Leave' || cellData.type === 'Holiday' || cellData.type === 'Week Off' ? (
-                            <div className="badge badge-gray" style={{ width: '100%', textAlign: 'center', padding: '0.5rem' }}>{cellData.type}</div>
-                          ) : (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <div>
-                                <div style={{ fontWeight: 600, color: getShiftDetails(cellData.shift)?.overnight ? 'var(--purple-700)' : 'var(--primary-700)' }}>{getShiftDetails(cellData.shift)?.name} Shift</div>
-                                <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>{getShiftDetails(cellData.shift)?.time} {getShiftDetails(cellData.shift)?.overnight && <span style={{ color: 'var(--purple-700)', fontSize: '0.75rem' }}>+1 Day</span>}</div>
-                              </div>
-                              <div style={{ textAlign: 'right' }}>
-                                <div className="badge badge-gray">{cellData.mode}</div>
-                                {cellData.mode === 'Office' && <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>{emp.office}</div>}
-                              </div>
-                            </div>
-                          )
-                        ) : (
-                          <div style={{ textAlign: 'center', color: 'var(--primary-600)', fontWeight: 500 }}>+ Assign Shift</div>
+                    <div key={day} className={`cal-cell ${isToday ? 'today' : ''}`} onClick={() => setDayDrawer(dateStr)}>
+                      <div className="cal-date">{day}</div>
+                      <div className="cal-shifts">
+                        {displayKeys.map(k => (
+                          <div key={k} className={`cal-shift-pill ${dayAss[k].overnight ? 'pill-purple' : 'pill-primary'}`}>
+                            <span className="cal-s-name">{k}</span>
+                            <span className="cal-s-count">{dayAss[k].count}</span>
+                          </div>
+                        ))}
+                        {hasMore && (
+                          <div className="cal-more">+{keys.length - 3} more</div>
                         )}
                       </div>
                     </div>
@@ -446,322 +472,174 @@ const AdminRoster: React.FC = () => {
                 })}
               </div>
             </div>
-          </div>
+          )
         )}
       </div>
 
-      {/* Assign / Edit Assignment Drawer */}
-      {assignModal && (
-        <div className="drawer-overlay" onClick={() => setAssignModal(null)}>
+      {dayDrawer && (
+        <div className="drawer-overlay" onClick={() => setDayDrawer(null)}>
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
-              <div>
-                <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>{assignModal.existing ? 'Edit Assignment' : 'Assign Shift'}</h2>
-                <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>{assignModal.date}</div>
-              </div>
-              <button className="icon-button" onClick={() => setAssignModal(null)}><X size={20} /></button>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Assignments for {new Date(dayDrawer).toLocaleDateString()}</h2>
+              <button className="icon-button" onClick={() => setDayDrawer(null)}><X size={20} /></button>
             </div>
-            
-            <form onSubmit={handleSaveAssign} className="drawer-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-              
-              {assignModal.existing && (
-                <div style={{ padding: '0.75rem', backgroundColor: 'var(--warning-50)', color: 'var(--warning-800)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.875rem' }}>
-                  <AlertTriangle size={16} style={{ marginTop: '0.125rem' }} /> 
-                  <div>
-                    <strong>Warning:</strong> Changing this assignment may affect attendance and payroll calculations if the employee has already clocked in for this date.
-                  </div>
-                </div>
-              )}
+            <div className="drawer-body">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {getEmployeesForDay(dayDrawer).length === 0 ? (
+                  <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '2rem 0' }}>No shifts assigned.</div>
+                ) : (
+                  getEmployeesForDay(dayDrawer).map((data: any, idx: number) => (
+                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface)' }}>
+                      <div>
+                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{data.emp.name}</div>
+                        <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>{data.emp.empCode} • {data.emp.dept}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 600, color: data.details.overnight ? 'var(--purple-700)' : 'var(--primary-700)' }}>
+                          {data.details.name} {data.details.overnight && '+1d'}
+                        </div>
+                        <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>{data.details.time}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{data.cell.mode}</div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
+      {assignModal && (
+        <div className="modal-overlay" onClick={() => setAssignModal(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+            <h2 className="modal-title">{assignModal.existing ? 'Edit Shift' : 'Assign Shift'}</h2>
+            <p className="modal-subtitle">For {employees.find(e => e.id === assignModal.empId)?.name} on {assignModal.date}</p>
+            
+            <form onSubmit={handleSaveAssign} style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
-                <label className="form-label">Work Mode</label>
-                <select className="form-control" value={formData.mode || 'Office'} onChange={e => setFormData({...formData, mode: e.target.value})}>
+                <label className="form-label">Shift Template</label>
+                <select className="form-control" value={formData.shift} onChange={e => setFormData({...formData, shift: e.target.value})} disabled={formData.mode === 'Week Off'}>
+                  {shifts.map(s => (
+                    <option key={s.id} value={s.id}>{s.name} ({s.start_time?.slice(0,5)} - {s.end_time?.slice(0,5)})</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="form-label">Work Mode / Exception</label>
+                <select className="form-control" value={formData.mode} onChange={e => setFormData({...formData, mode: e.target.value})}>
                   <option>Office</option>
                   <option>WFH</option>
                   <option>Week Off</option>
                 </select>
               </div>
-
-              {formData.mode !== 'Week Off' && (
-                <>
-                  <div>
-                    <label className="form-label">Shift *</label>
-                    <select required className="form-control" value={formData.shift || ''} onChange={e => setFormData({...formData, shift: e.target.value})}>
-                      {shifts.map(s => (
-                        <option key={s.id} value={s.id}>{s.name} ({s.start_time?.slice(0,5)} - {s.end_time?.slice(0,5)})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {formData.mode === 'Office' && (
-                    <div>
-                      <label className="form-label">Office Location</label>
-                      <input className="form-control" value="Office" disabled style={{ backgroundColor: 'var(--gray-100)' }} />
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Employee's default assigned office.</div>
-                    </div>
-                  )}
-                  
-                  {formData.shift === 's4' && (
-                    <div style={{ padding: '1rem', backgroundColor: 'var(--purple-50)', border: '1px solid var(--purple-200)', borderRadius: 'var(--radius-md)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--purple-800)', fontWeight: 600, marginBottom: '0.5rem' }}>
-                        <Moon size={16} /> Overnight Shift Warning
-                      </div>
-                      <p style={{ fontSize: '0.875rem', color: 'var(--purple-700)' }}>
-                        This shift is configured as an overnight shift. The employee's working hours will span across midnight and conclude on the following calendar day.
-                      </p>
-                    </div>
-                  )}
-                </>
-              )}
-
-              <div>
-                <label className="form-label">Notes (Optional)</label>
-                <textarea className="form-control" rows={2} placeholder="Add any special instructions..."></textarea>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', borderTop: '1px solid var(--gray-200)', paddingTop: '1.5rem' }}>
-                {assignModal.existing ? (
-                  <button type="button" onClick={handleRemoveAssign} className="btn btn-outline" style={{ color: 'var(--danger-600)', borderColor: 'var(--danger-300)' }}>Remove Assignment</button>
-                ) : <div></div>}
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                  <button type="button" onClick={() => setAssignModal(null)} className="btn btn-outline">Cancel</button>
-                  <button type="submit" className="btn btn-primary">{assignModal.existing ? 'Update Assignment' : 'Assign Shift'}</button>
-                </div>
+              
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+                <button type="button" className="btn btn-outline" onClick={() => setAssignModal(null)} style={{ flex: 1 }}>Cancel</button>
+                <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Save</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Conflict Modal */}
-      {conflictModal && (
-        <div className="drawer-overlay" style={{ alignItems: 'center', zIndex: 120 }}>
-          <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '450px', animation: 'slideUp 0.3s', borderTop: '4px solid var(--danger)' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <AlertTriangle size={20} color="var(--danger-600)" /> Schedule Conflict
-            </h3>
-            <p style={{ fontSize: '0.875rem', color: 'var(--gray-700)', marginBottom: '1.5rem' }}>
-              <strong>Employee</strong> has approved <strong>{conflictModal.type}</strong> on <strong>{conflictModal.date}</strong>.
-            </p>
-            <div style={{ backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)', fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-              Assigning a shift will override the approved leave/holiday record in the roster visual. Are you sure you want to proceed?
-            </div>
-            <div style={{ display: 'flex', gap: '1rem' }}>
-              <button type="button" onClick={() => setConflictModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
-              <button onClick={() => { 
-                setAssignModal({ empId: conflictModal.empId, date: conflictModal.date, existing: { type: conflictModal.type } }); 
-                setFormData({ shift: 's2', mode: 'Office' });
-                setConflictModal(null);
-              }} className="btn btn-primary" style={{ flex: 1, backgroundColor: 'var(--danger-600)', borderColor: 'var(--danger-600)' }}>Override</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Bulk / Copy / Pattern Modals (Placeholders) */}
-      {bulkModal && (
-        <div className="drawer-overlay" style={{ alignItems: 'center' }}>
-          <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '450px', animation: 'slideUp 0.3s' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem' }}>Bulk Assign Shifts</h3>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Mock interaction for selecting multiple employees and dates.</p>
-            <div style={{ display: 'flex', gap: '1rem' }}>
-              <button onClick={() => setBulkModal(false)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
-              <button onClick={() => { setBulkModal(false); showToast('Bulk assignment applied'); }} className="btn btn-primary" style={{ flex: 1 }}>Confirm</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Copy Previous Week */}
-      {copyModal && (
-        <div className="drawer-overlay" style={{ alignItems: 'center' }}>
-          <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '450px', animation: 'slideUp 0.3s' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem' }}>Copy Previous Week Roster</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
-              <div style={{ backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Source</div>
-                <div style={{ fontWeight: 600 }}>15 Sep 2026 - 21 Sep 2026</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>Destination</div>
-                <div style={{ fontWeight: 600 }}>22 Sep 2026 - 28 Sep 2026</div>
-              </div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem' }}><input type="checkbox" defaultChecked /> Copy shifts</label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem' }}><input type="checkbox" defaultChecked /> Copy work modes</label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem' }}><input type="checkbox" /> Skip existing assignments</label>
-            </div>
-            <div style={{ display: 'flex', gap: '1rem' }}>
-              <button onClick={() => setCopyModal(false)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
-              <button onClick={() => { setCopyModal(false); showToast("Previous week's roster copied successfully."); }} className="btn btn-primary" style={{ flex: 1 }}>Copy Roster</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Employee Roster Drawer */}
-      {empDrawer && (
-        <div className="drawer-overlay" onClick={() => setEmpDrawer(null)}>
-          <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
-            <div className="drawer-header" style={{ paddingBottom: '1.5rem' }}>
-              <div>
-                <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{empDrawer.name}</h2>
-                <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                  <span>{empDrawer.id}</span>
-                  <span>•</span>
-                  <span>{empDrawer.dept}</span>
-                </div>
-              </div>
-              <button className="icon-button" onClick={() => setEmpDrawer(null)}><X size={20} /></button>
-            </div>
-            
-            <div className="drawer-body">
-              <h3 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '1rem' }}>This Week's Schedule</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                {weekDates.map(d => {
-                  const cellData = rosterData[empDrawer.id]?.[d.date];
-                  return (
-                    <div key={d.date} style={{ display: 'flex', alignItems: 'center', padding: '1rem', backgroundColor: 'var(--gray-50)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
-                      <div style={{ width: '100px' }}>
-                        <div style={{ fontWeight: 600 }}>{d.display.split(' ')[0]}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{d.date.split('-').reverse().join('-')}</div>
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        {cellData ? (
-                          cellData.type ? (
-                            <span className={`badge ${cellData.type === 'Leave' ? 'badge-primary' : 'badge-gray'}`}>{cellData.type}</span>
-                          ) : (
-                            <div>
-                              <div style={{ fontWeight: 600, color: getShiftDetails(cellData.shift)?.overnight ? 'var(--purple-700)' : 'var(--gray-900)' }}>
-                                {getShiftDetails(cellData.shift)?.name} Shift
-                              </div>
-                              <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>{getShiftDetails(cellData.shift)?.time} {getShiftDetails(cellData.shift)?.overnight && <span style={{ color: 'var(--purple-700)', fontSize: '0.75rem' }}>+1d</span>}</div>
-                            </div>
-                          )
-                        ) : (
-                          <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Unassigned</span>
-                        )}
-                      </div>
-                      <div>
-                        {cellData && !cellData.type && (
-                          <span className="badge badge-gray">{cellData.mode}</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* History Modal */}
-      {historyModal && (
-        <div className="drawer-overlay" onClick={() => setHistoryModal(false)}>
-          <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
-            <div className="drawer-header">
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Roster History</h2>
-              <button className="icon-button" onClick={() => setHistoryModal(false)}><X size={20} /></button>
-            </div>
-            <div className="drawer-body">
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem' }}>
-                  <div style={{ color: 'var(--text-secondary)', width: '60px' }}>Sep 24</div>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>Published Week 39 Roster</div>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>By Admin User</div>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem' }}>
-                  <div style={{ color: 'var(--text-secondary)', width: '60px' }}>Sep 23</div>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>Updated Shift: Employee A → Night</div>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>By HR Manager</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-
       <style>{`
-        
-        
-        
-        
-        
-        
-        .summary-card-small:hover { transform: translateY(-2px); box-shadow: var(--shadow-sm); }
-        
-        
-        
-        
-        
         .roster-container { width: 100%; overflow-x: auto; }
         .desktop-roster { display: block; }
-        .mobile-roster { display: none; }
         
         .roster-table { width: 100%; border-collapse: collapse; min-width: 900px; }
-        .roster-table th { background-color: var(--gray-50); border: 1px solid var(--border-color); padding: 0.75rem; font-size: 0.75rem; text-transform: uppercase; color: var(--gray-600); font-weight: 600; }
+        .roster-table th { background-color: var(--bg-surface-elevated); border: 1px solid var(--border-color); padding: 0.75rem; font-size: clamp(0.75rem, 0.4vw + 0.65rem, 1rem); text-transform: uppercase; color: var(--text-secondary); font-weight: 600; }
         .roster-table td { border: 1px solid var(--border-color); padding: 0.5rem; vertical-align: top; }
         
-        .sticky-col { position: sticky; left: 0; background-color: white; z-index: 2; border-right: 2px solid var(--gray-200) !important; min-width: 150px; }
-        .roster-table th.sticky-col { background-color: var(--gray-50); z-index: 3; }
+        .sticky-col { position: sticky; left: 0; background-color: var(--bg-surface-solid); z-index: 2; border-right: 2px solid var(--border-strong) !important; min-width: 150px; }
+        .roster-table th.sticky-col { background-color: var(--bg-surface-elevated); z-index: 3; }
         
         .roster-cell { height: 70px; cursor: pointer; transition: background-color 0.1s; position: relative; }
-        .roster-cell:hover { background-color: var(--gray-50); }
+        .roster-cell:hover { background-color: var(--bg-glass-hover); }
         
         .roster-shift { padding: 0.5rem; border-radius: var(--radius-sm); border-left: 3px solid transparent; height: 100%; display: flex; flex-direction: column; gap: 0.25rem; }
         .roster-shift.bg-normal { background-color: var(--primary-50); border-left-color: var(--primary-500); }
         .roster-shift.bg-overnight { background-color: var(--purple-50); border-left-color: var(--purple-500); }
-        .shift-name { font-size: 0.875rem; font-weight: 600; color: var(--gray-900); }
-        .shift-time { font-size: 0.7rem; color: var(--gray-600); }
-        .shift-mode { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+        .shift-name { font-size: clamp(0.75rem, 0.4vw + 0.65rem, 1rem); font-weight: 600; color: var(--text-primary); }
+        .shift-time { font-size: clamp(0.65rem, 0.3vw + 0.5rem, 0.8rem); color: var(--text-secondary); }
+        .shift-mode { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
         .text-primary { color: var(--primary-700); }
-        .text-gray { color: var(--gray-500); }
+        .text-gray { color: var(--text-secondary); }
         
         .roster-empty { height: 100%; display: flex; align-items: center; justify-content: center; color: transparent; font-size: 0.75rem; font-weight: 500; transition: color 0.2s; }
-        .roster-cell:hover .roster-empty { color: var(--primary-600); }
+        .roster-cell:hover .roster-empty { color: var(--text-secondary); }
         
-        .roster-badge { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; border-radius: var(--radius-sm); }
-        .bg-leave { background-color: var(--danger-50); color: var(--danger); }
-        .bg-holiday { background-color: var(--warning-50); color: var(--warning); }
-        .bg-gray { background-color: var(--gray-100); color: var(--gray-600); }
-        
-        .dropdown-menu { background: white; border: 1px solid var(--border-color); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); padding: 0.5rem 0; min-width: 180px; }
-        .dropdown-item { width: 100%; text-align: left; padding: 0.5rem 1rem; font-size: 0.875rem; display: flex; align-items: center; gap: 0.5rem; background: none; border: none; cursor: pointer; color: var(--gray-700); }
-        .dropdown-item:hover { background-color: var(--gray-50); color: var(--gray-900); }
-        .dropdown-divider { height: 1px; background-color: var(--gray-200); margin: 0.25rem 0; }
-        
+        /* Calendar CSS */
+        .calendar-container { padding: 1rem; }
+        .calendar-grid {
+          display: grid;
+          grid-template-columns: repeat(7, minmax(0, 1fr));
+          gap: 1px;
+          background-color: var(--border-color);
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius-md);
+          overflow: hidden;
+        }
+        .cal-header {
+          background-color: var(--bg-surface-elevated);
+          padding: 0.75rem;
+          text-align: center;
+          font-weight: 600;
+          font-size: clamp(0.75rem, 0.4vw + 0.65rem, 1rem);
+          color: var(--text-secondary);
+        }
+        .cal-cell {
+          background-color: var(--bg-surface-solid);
+          min-height: 120px;
+          padding: 0.5rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+          cursor: pointer;
+          transition: background-color 0.2s;
+        }
+        .cal-cell:hover { background-color: var(--bg-glass-hover); }
+        .cal-cell.empty { background-color: var(--bg-secondary); cursor: default; }
+        .cal-cell.today { background-color: var(--primary-50); }
+        .cal-date { font-weight: 600; font-size: clamp(0.875rem, 0.5vw + 0.75rem, 1rem); color: var(--text-primary); }
+        .cal-cell.today .cal-date { color: var(--primary-600); }
+        .cal-shifts { display: flex; flex-direction: column; gap: 0.25rem; }
+        .cal-shift-pill {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 0.25rem 0.5rem;
+          border-radius: var(--radius-sm);
+          font-size: clamp(0.65rem, 0.3vw + 0.55rem, 0.8rem);
+          font-weight: 500;
+        }
+        .pill-primary { background-color: var(--primary-100); color: var(--primary-700); }
+        .pill-purple { background-color: var(--purple-100); color: var(--purple-700); }
+        .cal-s-count { background: rgba(0,0,0,0.1); padding: 0.1rem 0.3rem; border-radius: var(--radius-sm); }
+        .cal-more { font-size: 0.7rem; color: var(--text-muted); text-align: center; font-weight: 500; }
+
+        .dropdown-menu { background: var(--bg-surface-solid); border: 1px solid var(--border-color); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); padding: 0.5rem 0; min-width: 180px; }
+        .dropdown-item { width: 100%; text-align: left; padding: 0.5rem 1rem; font-size: 0.875rem; display: flex; align-items: center; gap: 0.5rem; background: none; border: none; cursor: pointer; color: var(--text-primary); }
+        .dropdown-item:hover { background-color: var(--bg-glass-hover); color: var(--text-primary); }
+
         .drawer-overlay { position: fixed; inset: 0; background-color: rgba(0,0,0,0.4); z-index: 100; display: flex; justify-content: flex-end; }
-        .drawer { background-color: var(--bg-surface); width: 100%; height: 100%; display: flex; flex-direction: column; box-shadow: var(--shadow-xl); animation: slideInRight 0.3s forwards; }
+        .drawer { background-color: var(--bg-surface-solid); width: 100%; height: 100%; display: flex; flex-direction: column; box-shadow: var(--shadow-xl); animation: slideInRight 0.3s forwards; }
         .wide-drawer { max-width: min(520px, 100vw); }
-        .drawer-header { padding: 1.5rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; alignItems: flex-start; }
+        .drawer-header { padding: 1.5rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: flex-start; }
         .drawer-body { padding: 1.5rem; overflow-y: auto; flex: 1; }
         
         @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
-        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
         @keyframes slideDown { from { transform: translate(-50%, -100%); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
-        
+
         @media (max-width: 900px) {
-          .desktop-roster { display: none; }
-          .mobile-roster { display: block; }
-          
+          .cal-cell { min-height: 80px; padding: 0.25rem; }
+          .cal-shift-pill { flex-direction: column; text-align: center; gap: 0.1rem; padding: 0.25rem; }
+          .cal-s-name { font-size: 0.65rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
         }
-        @media (max-width: 600px) {
-          
-          .drawer-overlay { align-items: flex-end; }
-          .drawer, .wide-drawer { height: 90vh; border-top-left-radius: var(--radius-xl); border-top-right-radius: var(--radius-xl); animation: slideUp 0.3s forwards; }
-        }
-        
-        .skeleton { background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%); background-size: 200% 100%; animation: skeleton-loading 1.5s infinite; }
-        @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
     </div>
   );
 };
 
 export default AdminRoster;
-
-
-

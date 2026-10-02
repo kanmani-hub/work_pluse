@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { appSettingsService, type AppSettings } from '../../services/settings/appSettingsService';
+import { globalSettingsService } from '../../services/settings/globalSettingsService';
 import { payrollSettingsService, type PayrollSettings } from '../../services/payroll/payrollSettingsService';
 
 const navCategories = [
@@ -35,16 +36,13 @@ const AdminSettings: React.FC = () => {
   // Modals
   const [confirmModal, setConfirmModal] = useState<any>(null);
 
-  const loadSettings = () => {
+  const loadSettings = async () => {
     setLoading(true);
     setErrorMsg('');
     try {
-      const appSettings = appSettingsService.getSettings();
-      const payrollSettings = payrollSettingsService.getSettings();
-      const combined = { app: appSettings, payroll: payrollSettings };
-      
-      setSettings(combined);
-      setInitialState(JSON.parse(JSON.stringify(combined))); // Deep copy
+      const combined = await globalSettingsService.loadSettings();
+      setSettings(JSON.parse(JSON.stringify(combined)));
+      setInitialState(JSON.parse(JSON.stringify(combined)));
       setHasChanges(false);
     } catch (e) {
       setErrorMsg('Unable to load settings.');
@@ -90,7 +88,7 @@ const AdminSettings: React.FC = () => {
     });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!hasChanges || !settings) return;
     setLoading(true);
     setErrorMsg('');
@@ -102,13 +100,20 @@ const AdminSettings: React.FC = () => {
       if (settings.payroll.monthlyLateLoginLimit < 0) throw new Error("Late Login Limit cannot be negative.");
       if (settings.payroll.permissionLimit < 0) throw new Error("Permission Limit cannot be negative.");
 
-      // Save to services
-      appSettingsService.saveSettings(settings.app);
-      payrollSettingsService.saveSettings(settings.payroll);
+      // Save to Supabase using globalSettingsService (Single Source of Truth)
+      // The error is now thrown directly from globalSettingsService
+      await globalSettingsService.saveSettings(settings);
       
       setInitialState(JSON.parse(JSON.stringify(settings)));
       setHasChanges(false);
-      setLastSaved(`Today, ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`);
+      
+      // Refresh the settings to get the actual updated_at
+      const freshSettings = await globalSettingsService.getSettings();
+      if (freshSettings.updated_at) {
+        setLastSaved(new Date(freshSettings.updated_at).toLocaleString());
+      } else {
+        setLastSaved(`Today, ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`);
+      }
       setToast('Settings saved successfully');
       setTimeout(() => setToast(''), 3000);
     } catch (e: any) {
@@ -348,7 +353,7 @@ const AdminSettings: React.FC = () => {
           </select>
         </div>
         {settings.payroll.workingDaysBasis === 'configured' && (
-          <div><label className="form-label">Configured Working Days</label><input type="number" className="form-control" value={settings.payroll.configuredWorkingDays} onChange={e => handleChangePayroll('configuredWorkingDays', parseInt(e.target.value) || 0)}/></div>
+          <div><label className="form-label">Configured Working Days</label><input type="number" className="form-control" value={settings.payroll.configuredWorkingDays !== null ? settings.payroll.configuredWorkingDays : ''} onChange={e => handleChangePayroll('configuredWorkingDays', e.target.value === '' ? null : parseInt(e.target.value))}/></div>
         )}
         <div>
           <label className="form-label">Salary Rounding</label>
@@ -363,65 +368,218 @@ const AdminSettings: React.FC = () => {
         <div><div style={{ fontWeight: 600 }}>Require Multi-Level Approval</div><div className="help-text">Require multiple admins to approve payroll runs.</div></div>
         <input type="checkbox" className="toggle" checked={settings.payroll.requireMultiLevelApproval} onChange={e => handleChangePayroll('requireMultiLevelApproval', e.target.checked)}/>
       </div>
+      {settings.payroll.requireMultiLevelApproval && (
+        <div className="form-grid" style={{ marginTop: '0.5rem' }}>
+          <div><label className="form-label">Number of Approval Levels</label><input type="number" className="form-control" value={settings.payroll.approvalLevels !== null ? settings.payroll.approvalLevels : ''} onChange={e => handleChangePayroll('approvalLevels', e.target.value === '' ? null : parseInt(e.target.value))}/></div>
+        </div>
+      )}
 
-      <h3 className="section-title" style={{ marginTop: '2rem' }}>Deduction Rules</h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <div className="toggle-row"><span style={{ fontWeight: 500, fontSize: '0.875rem' }}>Enable LOP (Loss of Pay) Deductions</span><input type="checkbox" checked={settings.payroll.enableLopDeductions} onChange={e => handleChangePayroll('enableLopDeductions', e.target.checked)}/></div>
-        <div className="toggle-row"><span style={{ fontWeight: 500, fontSize: '0.875rem' }}>Enable Half-Day Deductions</span><input type="checkbox" checked={settings.payroll.enableHalfDayDeductions} onChange={e => handleChangePayroll('enableHalfDayDeductions', e.target.checked)}/></div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '1rem', backgroundColor: 'var(--bg-surface-elevated)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontWeight: 500, fontSize: '0.875rem' }}>Enable Late Login Deduction</span>
-            <input type="checkbox" checked={settings.payroll.enableLateLoginDeduction} onChange={e => handleChangePayroll('enableLateLoginDeduction', e.target.checked)}/>
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>LOP Settings</h3>
+      <div className="toggle-row">
+        <div><div style={{ fontWeight: 600 }}>Enable LOP (Loss of Pay) Deductions</div></div>
+        <input type="checkbox" className="toggle" checked={settings.payroll.enableLopDeductions} onChange={e => handleChangePayroll('enableLopDeductions', e.target.checked)}/>
+      </div>
+      {settings.payroll.enableLopDeductions && (
+        <div className="form-grid" style={{ marginTop: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+          <div>
+            <label className="form-label">LOP Calculation Basis</label>
+            <select className="form-control" value={settings.payroll.lopMethod} onChange={e => handleChangePayroll('lopMethod', e.target.value)}>
+              <option value="daily_rate">Daily Rate</option>
+              <option value="fixed">Fixed Amount</option>
+            </select>
           </div>
-          {settings.payroll.enableLateLoginDeduction && (
-            <div className="form-grid" style={{ marginTop: '0.5rem' }}>
-              <div>
-                <label className="form-label">Monthly Late Login Limit</label>
-                <input type="number" className="form-control" value={settings.payroll.monthlyLateLoginLimit} onChange={e => handleChangePayroll('monthlyLateLoginLimit', parseInt(e.target.value) || 0)}/>
-              </div>
-              <div>
-                <label className="form-label">Deduction Method</label>
-                <select className="form-control" value={settings.payroll.lateDeductionMethod} onChange={e => handleChangePayroll('lateDeductionMethod', e.target.value)}>
-                  <option value="fixed">Fixed Amount</option>
-                  <option value="per_minute">Per Late Minute</option>
-                  <option value="half_day">Half Day (existing)</option>
-                </select>
-              </div>
-              <div>
-                <label className="form-label">Amount / Rate</label>
-                <input type="number" className="form-control" value={settings.payroll.lateDeductionAmountOrRate} onChange={e => handleChangePayroll('lateDeductionAmountOrRate', parseFloat(e.target.value) || 0)}/>
-              </div>
-            </div>
+          {settings.payroll.lopMethod === 'fixed' && (
+            <div><label className="form-label">LOP Amount / Rate (₹)</label><input type="number" className="form-control" value={settings.payroll.lopAmount !== null ? settings.payroll.lopAmount : ''} onChange={e => handleChangePayroll('lopAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
           )}
         </div>
-        <div className="toggle-row">
-          <div>
-            <span style={{ fontWeight: 500, fontSize: '0.875rem' }}>Deduct for Permissions Exceeding Limit</span>
-            {settings.payroll.enablePermissionDeduction && <div style={{ marginTop: '0.5rem' }}><label className="form-label">Permission Limit</label><input type="number" className="form-control" style={{ width: '100px', display: 'inline-block', padding: '0.25rem 0.5rem' }} value={settings.payroll.permissionLimit} onChange={e => handleChangePayroll('permissionLimit', parseInt(e.target.value) || 0)}/></div>}
-          </div>
-          <input type="checkbox" checked={settings.payroll.enablePermissionDeduction} onChange={e => handleChangePayroll('enablePermissionDeduction', e.target.checked)}/>
-        </div>
-        <div className="toggle-row"><span style={{ fontWeight: 500, fontSize: '0.875rem' }}>Deduct for WFH Days</span><input type="checkbox" checked={settings.payroll.enableWfhDeduction} onChange={e => handleChangePayroll('enableWfhDeduction', e.target.checked)}/></div>
+      )}
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>Half-Day Deduction</h3>
+      <div className="toggle-row">
+        <div><div style={{ fontWeight: 600 }}>Enable Half-Day Deductions</div></div>
+        <input type="checkbox" className="toggle" checked={settings.payroll.enableHalfDayDeductions} onChange={e => handleChangePayroll('enableHalfDayDeductions', e.target.checked)}/>
       </div>
-      
-      <h3 className="section-title" style={{ marginTop: '2rem' }}>Overtime Rules</h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <div className="toggle-row"><span style={{ fontWeight: 500, fontSize: '0.875rem' }}>Enable Overtime Pay</span><input type="checkbox" checked={settings.payroll.enableOvertimePay} onChange={e => handleChangePayroll('enableOvertimePay', e.target.checked)}/></div>
-        {settings.payroll.enableOvertimePay && (
-          <div className="sub-settings" style={{ gridTemplateColumns: '1fr' }}>
-            <div style={{ marginBottom: '1rem' }}>
-              <label className="form-label">Overtime Rate Type</label>
-              <div style={{ display: 'flex', gap: '1rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><input type="radio" checked={settings.payroll.overtimeRateType === 'multiplier'} onChange={() => handleChangePayroll('overtimeRateType', 'multiplier')}/> Multiplier</label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><input type="radio" checked={settings.payroll.overtimeRateType === 'fixed'} onChange={() => handleChangePayroll('overtimeRateType', 'fixed')}/> Fixed Rate</label>
-              </div>
+      {settings.payroll.enableHalfDayDeductions && (
+        <div className="form-grid" style={{ marginTop: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+          <div>
+            <label className="form-label">Half-Day Deduction Method</label>
+            <select className="form-control" value={settings.payroll.halfDayMethod} onChange={e => handleChangePayroll('halfDayMethod', e.target.value)}>
+              <option value="50_percent">50% of Daily Salary</option>
+              <option value="fixed">Fixed Amount</option>
+            </select>
+          </div>
+          {settings.payroll.halfDayMethod === 'fixed' && (
+            <div><label className="form-label">Half-Day Deduction Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.halfDayAmount !== null ? settings.payroll.halfDayAmount : ''} onChange={e => handleChangePayroll('halfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+          )}
+        </div>
+      )}
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>Late Login Deduction</h3>
+      <div className="toggle-row">
+        <div><div style={{ fontWeight: 600 }}>Enable Late Login Deduction</div></div>
+        <input type="checkbox" className="toggle" checked={settings.payroll.enableLateLoginDeduction} onChange={e => handleChangePayroll('enableLateLoginDeduction', e.target.checked)}/>
+      </div>
+      {settings.payroll.enableLateLoginDeduction && (
+        <div style={{ marginTop: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div className="form-grid">
+            <div>
+              <label className="form-label">Monthly Late Login Limit</label>
+              <input type="number" className="form-control" value={settings.payroll.monthlyLateLoginLimit !== null ? settings.payroll.monthlyLateLoginLimit : ''} onChange={e => handleChangePayroll('monthlyLateLoginLimit', e.target.value === '' ? null : parseInt(e.target.value))}/>
             </div>
-            {settings.payroll.overtimeRateType === 'multiplier' && (
-              <div><label className="form-label">Overtime Multiplier (e.g., 1.5)</label><input type="number" step="0.1" className="form-control" value={settings.payroll.overtimeMultiplier} onChange={e => handleChangePayroll('overtimeMultiplier', parseFloat(e.target.value) || 0)}/></div>
+            <div>
+              <label className="form-label">Deduction Method</label>
+              <select className="form-control" value={settings.payroll.lateDeductionMethod} onChange={e => handleChangePayroll('lateDeductionMethod', e.target.value)}>
+                <option value="fixed">Fixed Amount</option>
+                <option value="per_minute">Per Late Minute</option>
+                <option value="half_day">Half Day</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-grid">
+            {settings.payroll.lateDeductionMethod === 'fixed' && (
+              <div><label className="form-label">Amount per Late Occurrence (₹)</label><input type="number" className="form-control" value={settings.payroll.lateFixedAmount !== null ? settings.payroll.lateFixedAmount : ''} onChange={e => handleChangePayroll('lateFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+            )}
+            {settings.payroll.lateDeductionMethod === 'per_minute' && (
+              <div><label className="form-label">Amount per Late Minute (₹)</label><input type="number" className="form-control" value={settings.payroll.latePerMinuteRate !== null ? settings.payroll.latePerMinuteRate : ''} onChange={e => handleChangePayroll('latePerMinuteRate', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+            )}
+            {settings.payroll.lateDeductionMethod === 'half_day' && (
+              <div><label className="form-label">Half-Day Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.lateHalfDayAmount !== null ? settings.payroll.lateHalfDayAmount : ''} onChange={e => handleChangePayroll('lateHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
             )}
           </div>
-        )}
+        </div>
+      )}
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>Permission Deduction</h3>
+      <div className="toggle-row">
+        <div><div style={{ fontWeight: 600 }}>Deduct for Permissions Exceeding Limit</div></div>
+        <input type="checkbox" className="toggle" checked={settings.payroll.enablePermissionDeduction} onChange={e => handleChangePayroll('enablePermissionDeduction', e.target.checked)}/>
       </div>
+      {settings.payroll.enablePermissionDeduction && (
+        <div style={{ marginTop: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div className="form-grid">
+            <div>
+              <label className="form-label">Monthly Permission Limit</label>
+              <input type="number" className="form-control" value={settings.payroll.permissionLimit !== null ? settings.payroll.permissionLimit : ''} onChange={e => handleChangePayroll('permissionLimit', e.target.value === '' ? null : parseInt(e.target.value))}/>
+            </div>
+            <div>
+              <label className="form-label">Deduction Method</label>
+              <select className="form-control" value={settings.payroll.permissionDeductionMethod} onChange={e => handleChangePayroll('permissionDeductionMethod', e.target.value)}>
+                <option value="fixed">Fixed Amount</option>
+                <option value="per_minute">Per Excess Minute</option>
+                <option value="half_day">Half Day</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-grid">
+            {settings.payroll.permissionDeductionMethod === 'fixed' && (
+              <div><label className="form-label">Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.permissionFixedAmount !== null ? settings.payroll.permissionFixedAmount : ''} onChange={e => handleChangePayroll('permissionFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+            )}
+            {settings.payroll.permissionDeductionMethod === 'per_minute' && (
+              <div><label className="form-label">Rate per Excess Minute (₹)</label><input type="number" className="form-control" value={settings.payroll.permissionPerMinuteRate !== null ? settings.payroll.permissionPerMinuteRate : ''} onChange={e => handleChangePayroll('permissionPerMinuteRate', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+            )}
+            {settings.payroll.permissionDeductionMethod === 'half_day' && (
+              <div><label className="form-label">Half-Day Deduction (₹)</label><input type="number" className="form-control" value={settings.payroll.permissionHalfDayAmount !== null ? settings.payroll.permissionHalfDayAmount : ''} onChange={e => handleChangePayroll('permissionHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>WFH Deduction</h3>
+      <div className="toggle-row">
+        <div><div style={{ fontWeight: 600 }}>Deduct for WFH Days</div></div>
+        <input type="checkbox" className="toggle" checked={settings.payroll.enableWfhDeduction} onChange={e => handleChangePayroll('enableWfhDeduction', e.target.checked)}/>
+      </div>
+      {settings.payroll.enableWfhDeduction && (
+        <div style={{ marginTop: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div className="form-grid">
+            <div>
+              <label className="form-label">Deduction Method</label>
+              <select className="form-control" value={settings.payroll.wfhDeductionMethod} onChange={e => handleChangePayroll('wfhDeductionMethod', e.target.value)}>
+                <option value="fixed">Fixed Amount</option>
+                <option value="per_day">Per WFH Day</option>
+                <option value="half_day">Half Day</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-grid">
+            {settings.payroll.wfhDeductionMethod === 'fixed' && (
+              <div><label className="form-label">Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.wfhFixedAmount !== null ? settings.payroll.wfhFixedAmount : ''} onChange={e => handleChangePayroll('wfhFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+            )}
+            {settings.payroll.wfhDeductionMethod === 'per_day' && (
+              <div><label className="form-label">Amount per WFH Day (₹)</label><input type="number" className="form-control" value={settings.payroll.wfhPerDayAmount !== null ? settings.payroll.wfhPerDayAmount : ''} onChange={e => handleChangePayroll('wfhPerDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+            )}
+            {settings.payroll.wfhDeductionMethod === 'half_day' && (
+              <div><label className="form-label">Half-Day Deduction (₹)</label><input type="number" className="form-control" value={settings.payroll.wfhHalfDayAmount !== null ? settings.payroll.wfhHalfDayAmount : ''} onChange={e => handleChangePayroll('wfhHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>Break Policy</h3>
+      <div className="toggle-row">
+        <div><div style={{ fontWeight: 600 }}>Enable Break Overrun Detection</div><div className="help-text">Track break duration against allowed time.</div></div>
+        <input type="checkbox" className="toggle" checked={settings.payroll.enableBreakOverrunDetection} onChange={e => handleChangePayroll('enableBreakOverrunDetection', e.target.checked)}/>
+      </div>
+      {settings.payroll.enableBreakOverrunDetection && (
+        <div style={{ marginTop: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div className="toggle-row">
+            <div><div style={{ fontWeight: 600 }}>Break Overrun Deduction</div></div>
+            <input type="checkbox" className="toggle" checked={settings.payroll.enableBreakOverrunDeduction} onChange={e => handleChangePayroll('enableBreakOverrunDeduction', e.target.checked)}/>
+          </div>
+          {settings.payroll.enableBreakOverrunDeduction && (
+            <>
+              <div className="form-grid">
+                <div>
+                  <label className="form-label">Deduction Method</label>
+                  <select className="form-control" value={settings.payroll.breakOverrunDeductionMethod} onChange={e => handleChangePayroll('breakOverrunDeductionMethod', e.target.value)}>
+                    <option value="fixed">Fixed Amount</option>
+                    <option value="per_minute">Per Excess Minute</option>
+                    <option value="half_day">Half Day</option>
+                  </select>
+                </div>
+              </div>
+              <div className="form-grid">
+                {settings.payroll.breakOverrunDeductionMethod === 'fixed' && (
+                  <div><label className="form-label">Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.breakOverrunFixedAmount !== null ? settings.payroll.breakOverrunFixedAmount : ''} onChange={e => handleChangePayroll('breakOverrunFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+                )}
+                {settings.payroll.breakOverrunDeductionMethod === 'per_minute' && (
+                  <div><label className="form-label">Rate per Excess Minute (₹)</label><input type="number" className="form-control" value={settings.payroll.breakOverrunPerMinuteRate !== null ? settings.payroll.breakOverrunPerMinuteRate : ''} onChange={e => handleChangePayroll('breakOverrunPerMinuteRate', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+                )}
+                {settings.payroll.breakOverrunDeductionMethod === 'half_day' && (
+                  <div><label className="form-label">Half-Day Deduction (₹)</label><input type="number" className="form-control" value={settings.payroll.breakOverrunHalfDayAmount !== null ? settings.payroll.breakOverrunHalfDayAmount : ''} onChange={e => handleChangePayroll('breakOverrunHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>Overtime Settings</h3>
+      <div className="toggle-row">
+        <div><div style={{ fontWeight: 600 }}>Enable Overtime Pay</div></div>
+        <input type="checkbox" className="toggle" checked={settings.payroll.enableOvertimePay} onChange={e => handleChangePayroll('enableOvertimePay', e.target.checked)}/>
+      </div>
+      {settings.payroll.enableOvertimePay && (
+        <div style={{ marginTop: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div className="form-grid">
+            <div>
+              <label className="form-label">Overtime Rate Type</label>
+              <select className="form-control" value={settings.payroll.overtimeRateType} onChange={e => handleChangePayroll('overtimeRateType', e.target.value)}>
+                <option value="multiplier">Multiplier</option>
+                <option value="fixed">Fixed Rate</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-grid">
+            {settings.payroll.overtimeRateType === 'multiplier' && (
+              <div><label className="form-label">Overtime Multiplier (e.g., 1.5)</label><input type="number" step="0.1" className="form-control" value={settings.payroll.overtimeMultiplier !== null ? settings.payroll.overtimeMultiplier : ''} onChange={e => handleChangePayroll('overtimeMultiplier', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+            )}
+            {settings.payroll.overtimeRateType === 'fixed' && (
+              <div><label className="form-label">Overtime Rate Per Hour (₹)</label><input type="number" className="form-control" value={settings.payroll.overtimeFixedRate !== null ? settings.payroll.overtimeFixedRate : ''} onChange={e => handleChangePayroll('overtimeFixedRate', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -527,7 +685,7 @@ const AdminSettings: React.FC = () => {
 
       <style>{`
         .settings-section { background-color: var(--bg-surface); padding: 1.5rem; border-radius: var(--radius-xl); border: 1px solid var(--border-color); box-shadow: var(--shadow-sm); }
-        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; }
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 1.5rem; }
         
         .nav-item { width: 100%; text-align: left; padding: 0.75rem 1.25rem; background: none; border: none; font-size: 0.875rem; font-weight: 500; color: var(--text-secondary); cursor: pointer; border-left: 3px solid transparent; transition: all 0.2s; }
         .nav-item:hover { background-color: var(--bg-surface-elevated); color: var(--text-primary); }

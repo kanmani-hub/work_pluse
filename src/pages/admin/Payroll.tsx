@@ -10,6 +10,7 @@ import { payrollService } from '../../services/payroll/payrollService';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { payslipService } from '../../services/payroll/payslipService';
 import { payrollSettingsService, type PayrollSettings } from '../../services/payroll/payrollSettingsService';
+import { globalSettingsService } from '../../services/settings/globalSettingsService';
 import { payrollDataService, type PayrollEmployeeData } from '../../services/payroll/payrollDataService';
 import SalaryEditor from '../../components/SalaryEditor';
 import PayslipDocument from '../../components/PayslipDocument';
@@ -19,6 +20,9 @@ import { employeeService, type EmployeeWithRelations } from '../../services/empl
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 const AdminPayroll: React.FC = () => {
+  React.useEffect(() => {
+    globalSettingsService.loadSettings().then(s => setSettingsForm(s.payroll));
+  }, []);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -313,7 +317,7 @@ const AdminPayroll: React.FC = () => {
 
   // Payroll settings save
   const handleSaveSettings = () => {
-    payrollSettingsService.saveSettings(settingsForm);
+    globalSettingsService.saveSettings({ app: globalSettingsService.getSettings().app, payroll: settingsForm });
     setSettingsDrawer(false);
     showToast('Payroll settings saved.');
   };
@@ -321,7 +325,7 @@ const AdminPayroll: React.FC = () => {
   // Helper: get data summary values for table display
   const getTableSummary = (p: any) => {
     const summary = parseDataSummary(p);
-    const settings = payrollSettingsService.getSettings();
+    const settings = globalSettingsService.getSettings().payroll;
     const workingDays = summary?.settings?.workingDaysUsed ?? payrollSettingsService.getWorkingDaysForMonth(p.payroll_year, p.payroll_month, settings);
     const present = summary?.attendance?.presentDays ?? 0;
     const approvedLeave = summary?.leave?.approvedLeave ?? 0;
@@ -363,7 +367,7 @@ const AdminPayroll: React.FC = () => {
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem', overflowWrap: 'anywhere', whiteSpace: 'normal' }}>Manage monthly salary calculations, deductions, approvals, payments, and payslips.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <button onClick={() => { setSettingsForm(payrollSettingsService.getSettings()); setSettingsDrawer(true); }} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Settings size={16}/> Payroll Settings</button>
+          <button onClick={() => { setSettingsForm(globalSettingsService.getSettings().payroll); setSettingsDrawer(true); }} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Settings size={16}/> Payroll Settings</button>
           <button onClick={() => showToast('Payroll export prepared.')} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export</button>
           <button onClick={() => setGenerateModal(true)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Activity size={16}/> Generate</button>
         </div>
@@ -599,11 +603,11 @@ const AdminPayroll: React.FC = () => {
       {detailDrawer && (() => {
         const ds = getDetailSummary();
         const storedSummary = parseDataSummary(detailDrawer);
-        const att = ds?.attendance || { workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0 };
+        const att = ds?.attendance || { workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, totalLateMinutes: 0, earlyLogouts: 0, totalBreakOverrunMinutes: 0, totalOvertimeMinutes: 0, halfDays: 0, lopDays: 0 };
         const lv = ds?.leave || { approvedLeave: 0, lopLeave: 0, totalLeaveDays: 0 };
         const wfh = ds?.wfh || { wfhDays: 0 };
         const perm = ds?.permission || { permissionCount: 0, totalMinutes: 0 };
-        const settings = payrollSettingsService.getSettings();
+        const settings = globalSettingsService.getSettings().payroll;
         const workingDays = storedSummary?.settings?.workingDaysUsed ?? payrollSettingsService.getWorkingDaysForMonth(detailDrawer.payroll_year, detailDrawer.payroll_month, settings);
 
         return (
@@ -702,9 +706,10 @@ const AdminPayroll: React.FC = () => {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.875rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Working Days</span><span className="info-val">{workingDays}</span></div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Present</span><span className="info-val">{att.presentDays}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Late Login</span><span className="info-val">{att.lateLogins}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Early Logout</span><span className="info-val">{att.earlyLogouts}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gridColumn: '1 / -1' }}><span className="info-label">Half Days</span><span className="info-val">{att.halfDays}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Late Logins</span><span className="info-val">{att.lateLogins} ({att.totalLateMinutes}m)</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Break Overrun</span><span className="info-val">{att.totalBreakOverrunMinutes}m</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Overtime</span><span className="info-val">{att.totalOvertimeMinutes}m</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Absent Days</span><span className="info-val" style={{ color: att.absentDays > 0 ? 'var(--danger)' : undefined }}>{att.absentDays}</span></div>
                     </div>
                   </div>
 
@@ -944,121 +949,22 @@ const AdminPayroll: React.FC = () => {
         <div className="drawer-overlay" onClick={() => setSettingsDrawer(false)}>
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Payroll Policy Configuration</h2>
-              <button className="icon-button" onClick={() => setSettingsDrawer(false)}><X size={20} /></button>
+              <div>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)' }}>Payroll Policy Configuration</h2>
+                <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Manage company payroll rules</div>
+              </div>
+              <button className="btn btn-icon" onClick={() => setSettingsDrawer(false)}><X size={20} /></button>
             </div>
-            <div className="drawer-body">
-              <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '2rem' }}>Configure how attendance, leave, and permissions impact salary calculations. Settings are persisted.</p>
-              
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                
-                <div>
-                  <h3 className="section-title">General Settings</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
-                    <div>
-                      <label className="form-label">Working Days Basis</label>
-                      <select className="form-control" value={settingsForm.workingDaysBasis} onChange={e => setSettingsForm({...settingsForm, workingDaysBasis: e.target.value as any})}>
-                        <option value="configured">Configured Working Days</option>
-                        <option value="calendar">Calendar Days</option>
-                        <option value="actual">Actual Working Days (excl. weekends)</option>
-                      </select>
-                    </div>
-                    {settingsForm.workingDaysBasis === 'configured' && (
-                      <div>
-                        <label className="form-label">Configured Working Days</label>
-                        <input type="number" className="form-control" min={1} max={31} value={settingsForm.configuredWorkingDays} onChange={e => setSettingsForm({...settingsForm, configuredWorkingDays: Number(e.target.value)})} />
-                      </div>
-                    )}
-                    <div>
-                      <label className="form-label">Salary Rounding</label>
-                      <select className="form-control" value={settingsForm.salaryRounding} onChange={e => setSettingsForm({...settingsForm, salaryRounding: e.target.value as any})}>
-                        <option value="round">Round to nearest integer</option>
-                        <option value="exact">Exact decimals</option>
-                      </select>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0' }}>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Require Multi-Level Approval</span>
-                      <input type="checkbox" checked={settingsForm.requireMultiLevelApproval} onChange={e => setSettingsForm({...settingsForm, requireMultiLevelApproval: e.target.checked})} />
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="section-title">Deduction Rules</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px' }}>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Enable LOP (Loss of Pay) Deductions</span>
-                      <input type="checkbox" checked={settingsForm.enableLopDeductions} onChange={e => setSettingsForm({...settingsForm, enableLopDeductions: e.target.checked})} />
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px' }}>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Enable Half-Day Deductions</span>
-                      <input type="checkbox" checked={settingsForm.enableHalfDayDeductions} onChange={e => setSettingsForm({...settingsForm, enableHalfDayDeductions: e.target.checked})} />
-                    </div>
-                    <div style={{ backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Enable Late Login Deduction</span>
-                        <input type="checkbox" checked={settingsForm.enableLateLoginDeduction} onChange={e => setSettingsForm({...settingsForm, enableLateLoginDeduction: e.target.checked})} />
-                      </div>
-                      {settingsForm.enableLateLoginDeduction && (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
-                          <div>
-                            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Monthly Late Login Limit</label>
-                            <input type="number" className="form-control" min={0} value={settingsForm.monthlyLateLoginLimit} onChange={e => setSettingsForm({...settingsForm, monthlyLateLoginLimit: Number(e.target.value)})} style={{ marginTop: '0.25rem' }} />
-                          </div>
-                          <div>
-                            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Deduction Method</label>
-                            <select className="form-control" value={settingsForm.lateDeductionMethod} onChange={e => setSettingsForm({...settingsForm, lateDeductionMethod: e.target.value as any})} style={{ marginTop: '0.25rem' }}>
-                              <option value="fixed">Fixed Amount</option>
-                              <option value="per_minute">Per Minute</option>
-                              <option value="half_day">Half Day (existing)</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Amount / Rate (₹)</label>
-                            <input type="number" className="form-control" min={0} value={settingsForm.lateDeductionAmountOrRate} onChange={e => setSettingsForm({...settingsForm, lateDeductionAmountOrRate: Number(e.target.value)})} style={{ marginTop: '0.25rem' }} />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Deduct for Permissions Exceeding Limit</span>
-                        <input type="checkbox" checked={settingsForm.enablePermissionDeduction} onChange={e => setSettingsForm({...settingsForm, enablePermissionDeduction: e.target.checked})} />
-                      </div>
-                      {settingsForm.enablePermissionDeduction && (
-                        <div style={{ marginTop: '0.5rem' }}>
-                          <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Permission Limit</label>
-                          <input type="number" className="form-control" min={0} value={settingsForm.permissionLimit} onChange={e => setSettingsForm({...settingsForm, permissionLimit: Number(e.target.value)})} style={{ marginTop: '0.25rem' }} />
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: '4px' }}>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Deduct for WFH</span>
-                      <input type="checkbox" checked={settingsForm.enableWfhDeduction} onChange={e => setSettingsForm({...settingsForm, enableWfhDeduction: e.target.checked})} />
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="section-title">Overtime Rules</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>Enable Overtime Pay</span>
-                      <input type="checkbox" checked={settingsForm.enableOvertimePay} onChange={e => setSettingsForm({...settingsForm, enableOvertimePay: e.target.checked})} />
-                    </div>
-                    {settingsForm.enableOvertimePay && (
-                      <div>
-                        <label className="form-label">Overtime Rate Type</label>
-                        <select className="form-control" value={settingsForm.overtimeRateType} onChange={e => setSettingsForm({...settingsForm, overtimeRateType: e.target.value as any})}>
-                          <option value="multiplier">Multiplier (e.g. 1.5x Hourly)</option>
-                          <option value="fixed">Fixed Rate</option>
-                        </select>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <button onClick={handleSaveSettings} className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>Save Payroll Settings</button>
+            <div className="drawer-body" style={{ display: 'flex', flexDirection: 'column', gap: '2rem', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '4rem 2rem' }}>
+              <Settings size={64} style={{ color: 'var(--gray-400)' }} />
+              <div>
+                <h3 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '0.5rem' }}>Centralized Payroll Settings</h3>
+                <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                  Payroll policies (Working days, LOP, Late Login Deductions, Half-Day, Permission, WFH, Overtime) are now managed globally in the Admin Settings page to maintain a single source of truth.
+                </p>
+                <button className="btn btn-primary" onClick={() => navigate('/admin/settings?section=Payroll')}>
+                  Go to Admin Settings <ArrowRight size={16} />
+                </button>
               </div>
             </div>
           </div>

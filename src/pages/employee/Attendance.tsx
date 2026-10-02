@@ -83,7 +83,7 @@ const EmployeeAttendance: React.FC = () => {
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
-  const firstDay = new Date(year, month, 1).getDay();
+  const firstDay = (new Date(year, month, 1).getDay() + 6) % 7;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const emptyCells = Array.from({ length: firstDay }, (_, i) => i);
   const monthDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
@@ -729,7 +729,7 @@ const EmployeeAttendance: React.FC = () => {
               <div className="skeleton" style={{ height: '240px' }} />
             ) : (
               <div className="calendar-grid">
-                {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map(d => (
+                {['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map(d => (
                   <div key={d} className="cal-head">{d}</div>
                 ))}
                 

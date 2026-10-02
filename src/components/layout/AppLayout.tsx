@@ -31,7 +31,9 @@ const AppLayout: React.FC<AppLayoutProps> = ({ role = 'admin' }) => {
   };
 
   return (
-    <div className="app-layout">
+    <>
+      <div className="bg-blobs"></div>
+      <div className="app-layout">
       <Sidebar isOpen={isMobileMenuOpen} onClose={closeMobileMenu} role={role} />
       
       <div className="main-wrapper">
@@ -40,7 +42,8 @@ const AppLayout: React.FC<AppLayoutProps> = ({ role = 'admin' }) => {
           <Outlet />
         </main>
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 

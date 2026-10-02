@@ -13,6 +13,8 @@ export interface PayrollAttendanceSummary {
   absentDays: number;
   lateLogins: number;
   totalLateMinutes: number;
+  totalBreakOverrunMinutes: number;
+  totalOvertimeMinutes: number;
   earlyLogouts: number;
   halfDays: number;
   lopDays: number;
@@ -62,6 +64,12 @@ export const payrollDataService = {
       this._fetchPermissions(employeeId, startDate, endDate),
     ]);
 
+    // Calculate unauthorized absences
+    const unauthorizedAbsences = Math.max(0, attendanceResult.absentDays - leaveResult.approvedLeave - wfhResult.wfhDays);
+    
+    // Total LOP = Unauthorized absences + Approved Unpaid Leave
+    attendanceResult.lopDays = unauthorizedAbsences + leaveResult.lopLeave;
+
     return {
       attendance: attendanceResult,
       leave: leaveResult,
@@ -84,7 +92,7 @@ export const payrollDataService = {
         .lte('attendance_date', endDate);
 
       if (error || !data) {
-        return { workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, totalLateMinutes: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0 };
+        return { workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, totalLateMinutes: 0, totalBreakOverrunMinutes: 0, totalOvertimeMinutes: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0 };
       }
 
       const presentDays = data.filter((a: any) =>
@@ -96,6 +104,8 @@ export const payrollDataService = {
       ).length;
 
       const totalLateMinutes = data.reduce((sum: number, a: any) => sum + (Number(a.late_minutes) || 0), 0);
+      const totalBreakOverrunMinutes = data.reduce((sum: number, a: any) => sum + (Number(a.break_overrun_minutes) || 0), 0);
+      const totalOvertimeMinutes = data.reduce((sum: number, a: any) => sum + (Number(a.overtime_minutes) || 0), 0);
 
       const earlyLogouts = data.filter((a: any) =>
         (a.early_logout_minutes && Number(a.early_logout_minutes) > 0)
@@ -103,8 +113,6 @@ export const payrollDataService = {
 
       const halfDays = data.filter((a: any) => a.is_half_day === true).length;
 
-      // Calculate working days as total days with attendance records
-      // (this represents actual working days in the month for this employee)
       const workingDays = data.length;
 
       return {
@@ -113,13 +121,15 @@ export const payrollDataService = {
         absentDays: Math.max(0, workingDays - presentDays),
         lateLogins,
         totalLateMinutes,
+        totalBreakOverrunMinutes,
+        totalOvertimeMinutes,
         earlyLogouts,
         halfDays,
-        lopDays: 0, // Will be computed from leave data
+        lopDays: 0,
       };
     } catch (err) {
       console.error('Error fetching attendance for payroll:', err);
-      return { workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, totalLateMinutes: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0 };
+      return { workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, totalLateMinutes: 0, totalBreakOverrunMinutes: 0, totalOvertimeMinutes: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0 };
     }
   },
 
@@ -133,7 +143,7 @@ export const payrollDataService = {
         .from('leave_requests')
         .select('*, leave_types(name, code)')
         .eq('employee_id', employeeId)
-        .in('status', ['APPROVED', 'PENDING'])
+        .eq('status', 'APPROVED')
         .lte('start_date', endDate)
         .gte('end_date', startDate);
 

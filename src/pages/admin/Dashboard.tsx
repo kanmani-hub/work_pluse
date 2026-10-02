@@ -132,7 +132,7 @@ const AdminDashboard: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', position: 'relative' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', position: 'relative' }}>
       
       {toast && (
         <div style={{ position: 'fixed', top: '24px', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'var(--text-primary)', color: 'var(--bg-primary)', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-full)', zIndex: 1000, display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: 'var(--shadow-lg)', animation: 'slideDown 0.3s forwards' }}>
@@ -144,412 +144,219 @@ const AdminDashboard: React.FC = () => {
       {/* Page Header */}
       <div className="page-header" style={{ marginBottom: 0, flexWrap: 'wrap', gap: '1rem', alignItems: 'flex-start' }}>
         <div>
-          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            Good morning, Admin <span className="badge badge-primary" style={{ fontSize: '0.75rem' }}>COMMAND CENTER</span>
+          <h1 className="page-title" style={{ fontSize: '2rem' }}>
+            Welcome back, Admin!
           </h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>Here's what's happening across your workforce.</p>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>Let's manage your workforce efficiently and stay ahead of today's tasks.</p>
         </div>
         
-        <select value={period} onChange={(e) => {setLoading(true); setPeriod(e.target.value);}} className="form-control" style={{ width: 'auto', backgroundColor: 'var(--bg-surface)' }}>
-          <option>Today</option>
-          <option>This Week</option>
-          <option>This Month</option>
-          <option>Custom Range</option>
-        </select>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <select value={period} onChange={(e) => {setLoading(true); setPeriod(e.target.value);}} className="form-control" style={{ width: 'auto', borderRadius: 'var(--radius-full)' }}>
+            <option>Today</option>
+            <option>This Week</option>
+            <option>This Month</option>
+          </select>
+          <button className="btn btn-secondary"><Filter size={16} /> Filter</button>
+          <button className="btn btn-primary">Export</button>
+        </div>
       </div>
 
       {loading ? (
         <div className="skeleton-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
-          {[...Array(8)].map((_, i) => <div key={i} className="skeleton" style={{ height: '90px', borderRadius: 'var(--radius-md)' }} />)}
+          {[...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ height: '90px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
       ) : (
-        <div className="dashboard-stats">
-          <div className="stat-card" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
-            <div className="stat-header">Workforce <div className="stat-icon"><Users size={16} /></div></div>
-            <div className="stat-value">{stats.employees}</div>
-            <div className="stat-footer"><span className="stat-trend">{stats.employees}</span> total active</div>
-          </div>
-          <div className="stat-card" onClick={() => navigate('/admin/attendance')} style={{ cursor: 'pointer' }}>
-            <div className="stat-header">Working <div className="stat-icon success"><Briefcase size={16} /></div></div>
-            <div className="stat-value">{stats.working}</div>
-            <div className="stat-footer"><span className="stat-trend">{stats.working}</span> clocked in today</div>
-          </div>
-          <div className="stat-card" onClick={() => navigate('/admin/wfh')} style={{ cursor: 'pointer' }}>
-            <div className="stat-header">WFH <div className="stat-icon"><Home size={16} /></div></div>
-            <div className="stat-value">{stats.wfhPending}</div>
-            <div className="stat-footer"><span className="stat-trend">{stats.wfhPending} pending</span> requests</div>
-          </div>
-          <div className="stat-card" onClick={() => navigate('/admin/attendance')} style={{ cursor: 'pointer', borderColor: 'var(--warning)', boxShadow: '0 0 15px rgba(255, 181, 71, 0.1)' }}>
-            <div className="stat-header" style={{ color: 'var(--warning)' }}>Attention <div className="stat-icon warning"><AlertTriangle size={16} /></div></div>
-            <div className="stat-value">{(stats.leavePending + stats.permPending) || 0}</div>
-            <div className="stat-footer" style={{ color: 'var(--warning)' }}>{stats.leavePending} Leave, {stats.permPending} Perm reqs</div>
-          </div>
-        </div>
-      )}
-
-      {/* Main Content Grid */}
-      <div className="dashboard-grid">
-        
-        {/* Left Column (Main) */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', gridColumn: 'span 8' }}>
+        <div className="bento-grid">
           
-          {/* Live Workforce Signals */}
-          <div className="card" style={{ padding: '1.5rem', overflow: 'hidden' }}>
-            <div className="card-header" style={{ marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                <h2 className="card-title" style={{ fontSize: '1.25rem', color: 'var(--cyan-500)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                  <Activity size={20} style={{ marginRight: '0.5rem' }} /> Live Workforce Signals
-                </h2>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Real-time telemetry across all locations</span>
-              </div>
-              <button onClick={() => navigate('/admin/live-tracking')} className="btn btn-outline" style={{ fontSize: '0.75rem' }}>Open Live Tracking <ArrowUpRight size={14} /></button>
+          {/* Top KPI row */}
+          <div className="bento-col-3 kpi-card">
+            <div className="kpi-header">
+              <div className="kpi-icon" style={{ background: 'var(--primary-50)', color: 'var(--accent-primary)' }}><Users size={16} /></div>
+              Total Employees
             </div>
-            
-            {loading ? (
-              <div className="skeleton" style={{ height: '250px' }} />
-            ) : liveStatus.length === 0 ? (
-              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No live workforce data available.</div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
-                {liveStatus.map(emp => (
-                  <div key={emp.id} className="stat-card" onClick={() => setSelectedEmp(emp)} style={{ padding: '1rem', cursor: 'pointer', border: emp.status === 'Working' ? '1px solid var(--border-accent)' : '1px solid var(--border-color)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-                      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                        <div className="avatar" style={{ width: '36px', height: '36px', fontSize: '0.8rem' }}>{emp.name.substring(0,2).toUpperCase()}</div>
-                        <div>
-                          <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>{emp.name}</div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{emp.dept} • {emp.shift}</div>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', fontWeight: 600, color: emp.status === 'Working' ? 'var(--success)' : emp.status === 'On Break' ? 'var(--warning)' : 'var(--danger)', padding: '2px 6px', borderRadius: '12px', backgroundColor: 'var(--bg-surface-elevated)' }}>
-                        {emp.status === 'Working' && <div className="status-dot" style={{ animation: 'pulseDot 2s infinite' }}></div>}
-                        {emp.status.toUpperCase()}
-                      </div>
-                    </div>
-                    
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Working Time</span>
-                        <span style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--primary-400)', lineHeight: 1 }}>{emp.time}</span>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Clock In</span>
-                        <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)' }}>{emp.in}</span>
-                      </div>
-                    </div>
-                    
-                    <div style={{ marginTop: '1rem', height: '4px', width: '100%', backgroundColor: 'var(--bg-surface-elevated)', borderRadius: '2px', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: emp.status === 'Working' ? '65%' : emp.status === 'On Break' ? '45%' : '15%', backgroundColor: emp.status === 'Working' ? 'var(--success)' : emp.status === 'On Break' ? 'var(--warning)' : 'var(--danger)', boxShadow: emp.status === 'Working' ? '0 0 10px var(--success)' : 'none' }}></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
+              <div className="kpi-value">{stats.employees}</div>
+              <span className="badge badge-success">+5%</span>
+            </div>
+          </div>
+          
+          <div className="bento-col-3 kpi-card">
+            <div className="kpi-header">
+              <div className="kpi-icon" style={{ background: 'var(--success-50)', color: 'var(--success)' }}><Activity size={16} /></div>
+              Working Now
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
+              <div className="kpi-value">{stats.working}</div>
+              <span className="badge badge-success">+12%</span>
+            </div>
           </div>
 
-          {/* Pending Requests */}
-          <div className="card">
-            <h3 className="card-title" style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <AlertTriangle size={18} color="var(--warning-600)" /> Needs Attention (Pending Requests)
-            </h3>
-            
-            {loading ? (
-              <div className="skeleton" style={{ height: '300px' }} />
-            ) : wfhReqs.length === 0 && leaveReqs.length === 0 && permReqs.length === 0 ? (
-              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No pending requests require your attention.</div>
-            ) : (
+          <div className="bento-col-3 kpi-card">
+            <div className="kpi-header">
+              <div className="kpi-icon" style={{ background: 'var(--warning-50)', color: 'var(--warning)' }}><AlertTriangle size={16} /></div>
+              Pending Action
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
+              <div className="kpi-value">{(stats.leavePending + stats.permPending + stats.wfhPending)}</div>
+              <span className="badge badge-warning">-2%</span>
+            </div>
+          </div>
+
+          <div className="bento-col-3 kpi-card">
+            <div className="kpi-header">
+              <div className="kpi-icon" style={{ background: 'var(--danger-50)', color: 'var(--danger)' }}><CalendarOff size={16} /></div>
+              On Leave
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
+              <div className="kpi-value">{stats.leavePending || 0}</div>
+              <span className="badge badge-danger">+1%</span>
+            </div>
+          </div>
+
+          {/* Second Row */}
+          <div className="bento-col-4 card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+            <div className="card-header" style={{ width: '100%' }}>
+              <h3 className="card-title">Attendance Rate</h3>
+              <button className="icon-button"><Filter size={16}/></button>
+            </div>
+            <div style={{ position: 'relative', width: '200px', height: '100px', overflow: 'hidden', marginTop: '1rem' }}>
+              <div style={{ width: '200px', height: '200px', borderRadius: '50%', border: '20px solid var(--bg-glass)', borderTopColor: 'var(--accent-primary)', borderRightColor: 'var(--accent-primary)', transform: 'rotate(-45deg)', position: 'absolute', top: 0, left: 0 }}></div>
+              <div style={{ position: 'absolute', bottom: 0, left: '50%', transform: 'translateX(-50%)', textAlign: 'center' }}>
+                <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>{stats.employees ? Math.round((stats.working / stats.employees) * 100) : 0}%</div>
+              </div>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: '2rem' }}>
+              Positive vibes! Attendance reached {stats.employees ? Math.round((stats.working / stats.employees) * 100) : 0}%. Let's keep it going.
+            </p>
+          </div>
+
+          <div className="bento-col-4 card">
+            <div className="card-header">
+              <h3 className="card-title">Workforce Composition</h3>
+            </div>
+            <div style={{ marginTop: '1rem' }}>
+              <div style={{ display: 'flex', gap: '4px', height: '40px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', marginBottom: '1.5rem' }}>
+                <div style={{ flex: 7, background: 'var(--info)' }}></div>
+                <div style={{ flex: 2, background: 'var(--accent-secondary)' }}></div>
+                <div style={{ flex: 1, background: 'var(--bg-glass)' }}></div>
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                
-                {/* WFH Requests */}
-                {wfhReqs.map(r => (
-                  <div key={`wfh-${r.id}`} className="req-card">
-                    <div className="req-header">
-                      <span className="badge badge-primary">WFH Request</span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{r.requested}</span>
-                    </div>
-                    <div className="req-body">
-                      <div><strong>{r.emp}</strong> requested {r.type} WFH on <strong>{r.date}</strong> for "{r.reason}".</div>
-                      <div className="req-actions">
-                        <button className="btn btn-outline" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }} onClick={() => setRejectModal({type: 'wfh', id: r.id})}>Reject</button>
-                        <button className="btn btn-primary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }} onClick={() => handleApprove('wfh', r.id)}>Approve</button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
-                {/* Leave Requests */}
-                {leaveReqs.map(r => (
-                  <div key={`lv-${r.id}`} className="req-card">
-                    <div className="req-header">
-                      <span className="badge badge-gray" style={{ backgroundColor: 'var(--gray-200)', color: 'var(--gray-800)' }}>Leave Request</span>
-                    </div>
-                    <div className="req-body">
-                      <div><strong>{r.emp}</strong> applied for {r.type} ({r.days} days) from <strong>{r.from}</strong> to <strong>{r.to}</strong>. Reason: "{r.reason}".</div>
-                      <div className="req-actions">
-                        <button className="btn btn-outline" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }} onClick={() => setRejectModal({type: 'leave', id: r.id})}>Reject</button>
-                        <button className="btn btn-primary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }} onClick={() => handleApprove('leave', r.id)}>Approve</button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
-                {/* Permission Requests */}
-                {permReqs.map(r => (
-                  <div key={`perm-${r.id}`} className="req-card">
-                    <div className="req-header">
-                      <span className="badge badge-warning" style={{ backgroundColor: 'var(--warning-100)', color: 'var(--warning-800)' }}>Permission Request</span>
-                    </div>
-                    <div className="req-body">
-                      <div><strong>{r.emp}</strong> requested {r.type} on <strong>{r.date}</strong> from {r.start} to {r.end} ({r.duration}).</div>
-                      <div className="req-actions">
-                        <button className="btn btn-outline" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }} onClick={() => setRejectModal({type: 'perm', id: r.id})}>Reject</button>
-                        <button className="btn btn-primary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }} onClick={() => handleApprove('perm', r.id)}>Approve</button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
-              </div>
-            )}
-          </div>
-
-          <div className="responsive-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))' }}>
-            
-            {/* Offices Overview */}
-            <div className="card">
-              <h3 className="card-title" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                Office Attendance
-                <button onClick={() => navigate('/admin/offices')} className="icon-button" style={{ color: 'var(--primary-600)' }}><ArrowRight size={18}/></button>
-              </h3>
-              {loading ? (
-                <div className="skeleton" style={{ height: '120px' }} />
-              ) : (
-                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No office attendance available.</div>
-              )}
-            </div>
-
-            {/* Quick Actions */}
-            <div className="card">
-              <h3 className="card-title" style={{ marginBottom: '1rem' }}>Quick Actions</h3>
-              {loading ? (
-                <div className="skeleton" style={{ height: '120px' }} />
-              ) : (
-                <div className="quick-actions-grid">
-                  <button onClick={() => navigate('/admin/employees')} className="btn btn-outline quick-action" style={{ fontSize: '0.75rem', padding: '0.5rem', justifyContent: 'flex-start' }}><Users size={14}/> <span>Add Employee</span></button>
-                  <button onClick={() => navigate('/admin/shifts')} className="btn btn-outline quick-action" style={{ fontSize: '0.75rem', padding: '0.5rem', justifyContent: 'flex-start' }}><Briefcase size={14}/> <span>Manage Shifts</span></button>
-                  <button onClick={() => navigate('/admin/payroll')} className="btn btn-outline quick-action" style={{ fontSize: '0.75rem', padding: '0.5rem', justifyContent: 'flex-start' }}><Wallet size={14}/> <span>Process Payroll</span></button>
-                  <button onClick={() => navigate('/admin/reports')} className="btn btn-outline quick-action" style={{ fontSize: '0.75rem', padding: '0.5rem', justifyContent: 'flex-start' }}><Activity size={14}/> <span>View Reports</span></button>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.875rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--info)' }}></div> Full Time Employees</div>
+                  <div style={{ fontWeight: 600 }}>{Math.floor(stats.employees * 0.7)} <span style={{ color: 'var(--info)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>70%</span></div>
                 </div>
-              )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.875rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-secondary)' }}></div> Part Time</div>
+                  <div style={{ fontWeight: 600 }}>{Math.floor(stats.employees * 0.2)} <span style={{ color: 'var(--accent-secondary)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>20%</span></div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.875rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--bg-glass)' }}></div> Interns</div>
+                  <div style={{ fontWeight: 600 }}>{Math.floor(stats.employees * 0.1)} <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>10%</span></div>
+                </div>
+              </div>
             </div>
-
           </div>
-        </div>
 
-        {/* Right Column (Sidebar) */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', gridColumn: 'span 4' }}>
+          <div className="bento-col-4 bento-row-2 card">
+            <div className="card-header">
+              <h3 className="card-title">Schedule</h3>
+              <button className="icon-button"><Filter size={16}/></button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginTop: '1rem' }}>
+              <div className="timeline-item">
+                <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--accent-primary)', border: '2px solid var(--bg-surface)', zIndex: 1, marginTop: '4px' }}></div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Morning Shift</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>09:00 - 18:00 • All Departments</div>
+                </div>
+              </div>
+              <div className="timeline-item">
+                <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--info)', border: '2px solid var(--bg-surface)', zIndex: 1, marginTop: '4px' }}></div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Payroll Review</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>11:00 - 12:00 • HR Team</div>
+                </div>
+              </div>
+              <div className="timeline-item">
+                <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--warning)', border: '2px solid var(--bg-surface)', zIndex: 1, marginTop: '4px' }}></div>
+                <div style={{ flex: 1, background: 'var(--bg-glass)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-strong)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--accent-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}><Activity size={16}/></div>
+                      <div>
+                        <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Team Alignment</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>14:00 - 15:00 • Zoom</div>
+                      </div>
+                    </div>
+                  </div>
+                  <button className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', justifyContent: 'center' }}>Join Now <ArrowRight size={14}/></button>
+                </div>
+              </div>
+            </div>
+          </div>
           
-          {/* Today's Attendance Visual */}
-          <div className="card">
-            <h3 className="card-title" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
-              Attendance Today
-              <button onClick={() => navigate('/admin/attendance')} className="icon-button" style={{ color: 'var(--primary-600)' }}><ArrowUpRight size={18}/></button>
-            </h3>
-            {loading ? (
-              <div className="skeleton" style={{ height: '180px' }} />
-            ) : (
-              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No attendance data available for today.</div>
-            )}
+          {/* Third Row */}
+          <div className="bento-col-4 card" style={{ position: 'relative', overflow: 'hidden', padding: 0 }}>
+             <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%)', opacity: 0.1 }}></div>
+             <div style={{ padding: '1.5rem', height: '100%', display: 'flex', flexDirection: 'column' }}>
+               <h3 className="card-title" style={{ marginBottom: 'auto' }}>Remote vs Onsite</h3>
+               <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around', height: '120px', marginTop: '1rem' }}>
+                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+                   <span style={{ fontSize: '1.5rem', fontWeight: 700 }}>{stats.working}</span>
+                   <div style={{ width: '40px', height: '80px', borderRadius: '20px 20px 0 0', background: 'linear-gradient(to top, var(--info), var(--cyan-400))' }}></div>
+                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Onsite</span>
+                 </div>
+                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+                   <span style={{ fontSize: '1.5rem', fontWeight: 700 }}>{stats.wfhPending}</span>
+                   <div style={{ width: '40px', height: '50px', borderRadius: '20px 20px 0 0', background: 'linear-gradient(to top, var(--accent-secondary), var(--pink-400))' }}></div>
+                   <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Remote</span>
+                 </div>
+               </div>
+             </div>
           </div>
-
-          {/* Shift Distribution */}
-          <div className="card">
-            <h3 className="card-title" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
-              Shift Distribution
-              <button onClick={() => navigate('/admin/shifts')} className="icon-button" style={{ color: 'var(--primary-600)' }}><ArrowUpRight size={18}/></button>
-            </h3>
-            {loading ? (
-              <div className="skeleton" style={{ height: '150px' }} />
-            ) : (
-              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No shift assignments available.</div>
-            )}
-          </div>
-
-          {/* Payroll Overview */}
-          <div className="card" style={{ borderTop: '4px solid var(--primary-600)' }}>
-            <h3 className="card-title" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
-              Payroll Status
-              <button onClick={() => navigate('/admin/payroll')} className="icon-button" style={{ color: 'var(--primary-600)' }}><ArrowUpRight size={18}/></button>
-            </h3>
-            {loading ? (
-              <div className="skeleton" style={{ height: '180px' }} />
-            ) : (
-              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No payroll records found.</div>
-            )}
-          </div>
-
-          {/* Recent Activity */}
-          <div className="card">
-            <h3 className="card-title" style={{ marginBottom: '1rem' }}>Recent Activity</h3>
-            {loading ? (
-              <div className="skeleton" style={{ height: '200px' }} />
-            ) : (
-              <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No audit activity available.</div>
-            )}
-          </div>
-
-        </div>
-      </div>
-
-      {/* Employee Detail Drawer */}
-      {selectedEmp && (
-        <div className="drawer-overlay" onClick={() => setSelectedEmp(null)}>
-          <div className="drawer" onClick={e => e.stopPropagation()}>
-            <div className="drawer-header">
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Live Status Detail</h2>
-              <button className="icon-button" onClick={() => setSelectedEmp(null)}><X size={20} /></button>
+          
+          <div className="bento-col-4 card">
+            <div className="card-header">
+              <h3 className="card-title">Pending Approvals</h3>
             </div>
-            <div className="drawer-body">
-              
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: '1px solid var(--border-color)' }}>
-                <div className="avatar">{selectedEmp.name.substring(0,2).toUpperCase()}</div>
-                <div>
-                  <div style={{ fontWeight: 600 }}>{selectedEmp.name}</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{selectedEmp.id} • {selectedEmp.dept}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-strong)' }}>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <div className="icon-button" style={{ background: 'var(--warning-50)', color: 'var(--warning)' }}><Home size={16}/></div>
+                  <div>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>WFH Requests</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{stats.wfhPending} awaiting review</div>
+                  </div>
                 </div>
+                <button onClick={() => navigate('/admin/wfh')} className="btn btn-outline" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>View</button>
               </div>
-
-              <div className="detail-grid">
-                <div className="detail-item highlight">
-                  <span className="detail-label">Status</span>
-                  <span className={`badge ${getStatusBadge(selectedEmp.status)}`} style={{ width: 'fit-content', marginTop: '0.25rem' }}>{selectedEmp.status}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-strong)' }}>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <div className="icon-button" style={{ background: 'var(--danger-50)', color: 'var(--danger)' }}><CalendarOff size={16}/></div>
+                  <div>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>Leave Requests</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{stats.leavePending} awaiting review</div>
+                  </div>
                 </div>
-                <div className="detail-item highlight">
-                  <span className="detail-label">Work Mode</span>
-                  <span className="detail-value" style={{ fontWeight: 600 }}>{selectedEmp.mode}</span>
-                </div>
-                
-                <div className="detail-item">
-                  <span className="detail-label">Assigned Shift</span>
-                  <span className="detail-value">{selectedEmp.shift}</span>
-                </div>
-                <div className="detail-item">
-                  <span className="detail-label">Scheduled</span>
-                  <span className="detail-value">{selectedEmp.scheduled}</span>
-                </div>
-
-                <div className="detail-item">
-                  <span className="detail-label">Clock In</span>
-                  <span className="detail-value">{selectedEmp.in}</span>
-                </div>
-                <div className="detail-item">
-                  <span className="detail-label">Location Verification</span>
-                  <span className="detail-value" style={{ color: selectedEmp.loc === 'Verified' ? 'var(--success-600)' : 'var(--gray-500)' }}>{selectedEmp.loc}</span>
-                </div>
-
-                <div className="detail-item">
-                  <span className="detail-label">Live Working Time</span>
-                  <span className="detail-value" style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--primary-700)' }}>{selectedEmp.time}</span>
-                </div>
-                <div className="detail-item">
-                  <span className="detail-label">Break Duration</span>
-                  <span className="detail-value" style={{ fontSize: '1.25rem', fontWeight: 700 }}>{selectedEmp.break}</span>
-                </div>
+                <button onClick={() => navigate('/admin/leave')} className="btn btn-outline" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>View</button>
               </div>
-              
-              <button onClick={() => navigate('/admin/attendance')} className="btn btn-outline" style={{ width: '100%', marginTop: '2rem' }}>
-                View Full Attendance Record
-              </button>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', background: 'var(--bg-glass)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-strong)' }}>
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <div className="icon-button" style={{ background: 'var(--primary-50)', color: 'var(--accent-primary)' }}><Clock size={16}/></div>
+                  <div>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>Permission Requests</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{stats.permPending} awaiting review</div>
+                  </div>
+                </div>
+                <button onClick={() => navigate('/admin/permission')} className="btn btn-outline" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>View</button>
+              </div>
             </div>
           </div>
+          
         </div>
       )}
-
-      {/* Reject Modal */}
-      {rejectModal && (
-        <div className="drawer-overlay" style={{ alignItems: 'center' }}>
-          <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '400px', animation: 'slideUp 0.3s' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <ShieldAlert size={20} color="var(--danger-600)" /> Reject Request
-            </h3>
-            <form onSubmit={handleRejectSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Reason for Rejection *</label>
-                <textarea 
-                  value={rejectReason} 
-                  onChange={e => setRejectReason(e.target.value)} 
-                  className="form-control" 
-                  rows={3} 
-                  placeholder="Provide a mandatory reason..." 
-                  required
-                ></textarea>
-              </div>
-              <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
-                <button type="button" onClick={() => setRejectModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{ flex: 1, backgroundColor: 'var(--danger-600)', borderColor: 'var(--danger-600)' }}>Reject</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      <style>{`
-        
-        
-        
-        
-        
-        .summary-card-small:hover { transform: translateY(-2px); box-shadow: var(--shadow-sm); }
-        
-        
-        
-        
-        
-        .dashboard-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 1.5rem; }
-        @media (max-width: 1024px) { .dashboard-grid > div { grid-column: span 12 !important; } }
-        
-        .desktop-table { display: block; }
-        .mobile-cards { display: none; }
-        @media (max-width: 768px) {
-          .desktop-table { display: none; }
-          .mobile-cards { display: flex; flex-direction: column; padding: 0 1rem 1rem 1rem; }
-          .mobile-hist-card { padding: 1rem; border-bottom: 1px solid var(--border-color); cursor: pointer; }
-          .mobile-hist-card:active { background-color: var(--gray-50); }
-        }
-
-        .req-card { border: 1px solid var(--border-color); border-radius: var(--radius-md); overflow: hidden; }
-        .req-header { background-color: var(--gray-50); padding: 0.75rem 1rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); }
-        .req-body { padding: 1rem; font-size: 0.875rem; color: var(--gray-700); display: flex; flex-direction: column; gap: 1rem; }
-        .req-actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
-
-        .drawer-overlay { position: fixed; inset: 0; background-color: rgba(0,0,0,0.4); z-index: 100; display: flex; justify-content: flex-end; }
-        .drawer { background-color: var(--bg-surface); width: 100%; max-width: 450px; height: 100%; display: flex; flex-direction: column; box-shadow: var(--shadow-xl); animation: slideInRight 0.3s forwards; }
-        .drawer-header { padding: 1.5rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; alignItems: center; }
-        .drawer-body { padding: 1.5rem; overflow-y: auto; flex: 1; }
-        .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-        .detail-item { display: flex; flex-direction: column; gap: 0.25rem; }
-        .detail-item.highlight { background-color: var(--gray-50); padding: 0.75rem; border-radius: var(--radius-md); }
-        .detail-label { font-size: 0.75rem; color: var(--gray-500); }
-        .detail-value { font-size: 0.875rem; font-weight: 500; color: var(--gray-900); }
-        
-        .pulse-dot { animation: pulseTimeline 2s infinite; }
-        @keyframes pulseTimeline { 0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); } 70% { box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); } 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); } }
-        @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
-        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-        @keyframes slideDown { from { transform: translate(-50%, -100%); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
-        @media (max-width: 768px) {
-          .drawer-overlay { align-items: flex-end; }
-          .drawer { height: 90vh; border-top-left-radius: var(--radius-xl); border-top-right-radius: var(--radius-xl); animation: slideUp 0.3s forwards; }
-        }
-        
-        .skeleton { background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%); background-size: 200% 100%; animation: skeleton-loading 1.5s infinite; }
-        @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-      `}</style>
     </div>
   );
 };
 
 export default AdminDashboard;
-
-
-
