@@ -1,19 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Home, Plus, Info, Calendar, X, AlertCircle, CheckCircle2, ChevronDown, 
   MapPin, LogOut, Coffee, ArrowRight, ShieldAlert
 } from 'lucide-react';
 import { wfhService } from '../../services/wfh/wfhService';
+import { useGlobalSettings } from '../../services/settings/globalSettingsService';
 import { useAuth } from '../../context/AuthContext';
 
 const EmployeeWfh: React.FC = () => {
+  const { settings } = useGlobalSettings();
+  const appSettings = settings.app;
+
   const { employee } = useAuth();
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<any[]>([]);
   const [selectedDetail, setSelectedDetail] = useState<any>(null);
   const [toastMessage, setToastMessage] = useState('');
-  const [appSettings, setAppSettings] = useState<any>(null);
-  
+    
   // WFH Request Form State
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [reqDate, setReqDate] = useState('');
@@ -52,11 +55,6 @@ const EmployeeWfh: React.FC = () => {
 
   useEffect(() => {
     fetchWfh();
-    import('../../services/settings/globalSettingsService').then(({ globalSettingsService }) => {
-      globalSettingsService.loadSettings().then(global => {
-        setAppSettings(global.app);
-      });
-    });
   }, []);
 
   useEffect(() => {
@@ -297,7 +295,7 @@ const EmployeeWfh: React.FC = () => {
               WFH Policy <span className="badge badge-gray" style={{ fontSize: '0.75rem' }}>COMPANY-CONFIGURED</span>
             </h3>
             <ul style={{ fontSize: '0.875rem', color: 'var(--gray-700)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Maximum WFH:</span> <strong>{appSettings?.wfhMaxDaysPerMonth || 10} days/month</strong></li>
+              <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Maximum WFH:</span> <strong>{appSettings?.wfhMaxDaysPerMonth ?? 10} days/month</strong></li>
               <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Maximum Consecutive:</span> <strong>3 days</strong></li>
               <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Half-Day WFH:</span> <strong>Allowed</strong></li>
               <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Approval:</span> <strong>Required</strong></li>

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useGlobalSettings } from '../../services/settings/globalSettingsService';
 import { 
   Plus, Info, X, AlertCircle, CheckCircle2, 
   ArrowRight, Clock, Calendar as CalendarIcon, ShieldAlert
@@ -7,12 +8,14 @@ import {
 import { permissionService } from '../../services/permission/permissionService';
 
 const EmployeePermission: React.FC = () => {
+  const { settings } = useGlobalSettings();
+  const appSettings = settings.app;
+
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<any[]>([]);
   const [selectedDetail, setSelectedDetail] = useState<any>(null);
   const [toastMessage, setToastMessage] = useState('');
-  const [appSettings, setAppSettings] = useState<any>(null);
-  
+    
   // Request Modal State
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [reqDate, setReqDate] = useState('');
@@ -61,11 +64,6 @@ const EmployeePermission: React.FC = () => {
 
   useEffect(() => {
     fetchPermissions();
-    import('../../services/settings/globalSettingsService').then(({ globalSettingsService }) => {
-      globalSettingsService.loadSettings().then(global => {
-        setAppSettings(global.app);
-      });
-    });
   }, []);
 
   // Calculate Duration
@@ -181,7 +179,7 @@ const EmployeePermission: React.FC = () => {
             <div className="tracking-kpi-card">
               <div className="sc-title">Available Permission</div>
               <div className="sc-val" style={{ color: 'var(--primary-700)' }}>
-                {appSettings?.permissionMaxHours ? `${appSettings.permissionMaxHours}h 0m` : '2h 0m'}
+                {`${appSettings?.permissionMaxHours ?? 2}h 0m`}
               </div>
             </div>
             <div className="tracking-kpi-card">

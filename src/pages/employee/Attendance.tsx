@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useGlobalSettings } from '../../services/settings/globalSettingsService';
 import { 
   ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Filter, 
   MapPin, AlertCircle, X, Info, Loader2, ArrowRight
@@ -13,6 +14,10 @@ import { supabase } from '../../lib/supabase';
 const SearchIcon = ({size, color}: any) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
 
 const EmployeeAttendance: React.FC = () => {
+  const { settings } = useGlobalSettings();
+  const appSettings = settings.app;
+  const payrollSettings = settings.payroll;
+
   const [loading, setLoading] = useState(true);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDateDetail, setSelectedDateDetail] = useState<any>(null);

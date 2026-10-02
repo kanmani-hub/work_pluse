@@ -134,7 +134,7 @@ export const attendanceService = {
     const globalSettings = await globalSettingsService.loadSettings();
     const settings = globalSettings.app;
     // Prefer global settings grace period, fallback to shift template if needed
-    const globalGracePeriod = settings.gracePeriodMins || 0;
+    const globalGracePeriod = settings.gracePeriodMins ?? 0;
     const timezone = settings.timezone === 'UTC' ? 'UTC' : 'Asia/Kolkata';
 
     // 1. Check if attendance already exists for today
@@ -168,7 +168,7 @@ export const attendanceService = {
     if (shiftAssignments && shiftAssignments.shift_template) {
       const st = shiftAssignments.shift_template as any;
       shiftTemplateId = st.id;
-      requiredHours = st.required_hours || 8;
+      requiredHours = st.required_hours ?? 8;
       if (st.start_time) shiftStartStr = st.start_time;
       if (st.grace_period_minutes !== undefined) shiftGracePeriod = st.grace_period_minutes; // could override if we want, but user said admin settings
     }
@@ -290,8 +290,8 @@ export const attendanceService = {
       });
     }
 
-    const requiredHours = existing.required_hours || 8;
-    const allowedBreakMins = existing.shift_template?.break_duration_minutes || globalSettings.app.breakDurationMins || 60;
+    const requiredHours = existing.required_hours ?? 8;
+    const allowedBreakMins = existing.shift_template?.break_duration_minutes ?? globalSettings.app.breakDurationMins ?? 60;
     
     let breakOverrunMins = Math.max(0, actualBreakMins - allowedBreakMins);
 

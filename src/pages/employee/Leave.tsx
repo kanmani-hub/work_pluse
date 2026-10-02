@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useGlobalSettings } from '../../services/settings/globalSettingsService';
 import { 
   Calendar, Plus, Info, X, AlertCircle, CheckCircle2, 
   ArrowRight, Upload, ShieldAlert
@@ -7,6 +8,10 @@ import {
 import { leaveService } from '../../services/leave/leaveService';
 
 const EmployeeLeave: React.FC = () => {
+  const { settings } = useGlobalSettings();
+  const appSettings = settings.app;
+  const payrollSettings = settings.payroll;
+
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<any[]>([]);
   const [balances, setBalances] = useState<any[]>([]);

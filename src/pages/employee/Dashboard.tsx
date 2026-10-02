@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useGlobalSettings } from '../../services/settings/globalSettingsService';
 import { useNavigate } from 'react-router-dom';
 import { 
   Clock, Calendar, MapPin, Coffee, LogOut, CheckCircle2, 
@@ -13,6 +14,10 @@ import { locationService } from '../../services/location/locationService';
 type AttendanceState = 'not_clocked_in' | 'working' | 'on_break' | 'clocked_out';
 
 const EmployeeDashboard: React.FC = () => {
+  const { settings } = useGlobalSettings();
+  const appSettings = settings.app;
+  const payrollSettings = settings.payroll;
+
   const navigate = useNavigate();
   
   // Real-time date
@@ -151,7 +156,11 @@ const EmployeeDashboard: React.FC = () => {
         setSecStep('location_failed');
       } else {
         setLocVerificationEventId(eventId || undefined);
-        startCamera();
+        if (appSettings?.requireFaceVerification) {
+          startCamera();
+        } else {
+          setSecStep('success');
+        }
       }
     } catch (e: any) {
       alert("Unable to verify your current location.");
@@ -170,9 +179,15 @@ const EmployeeDashboard: React.FC = () => {
     setShowSecurityModal(true);
     setSecStep('init');
     
-    // Auto-start location check
+    // Auto-start depending on settings
     setTimeout(() => {
-      startLocationCheck();
+      if (appSettings?.requireGeolocation) {
+        startLocationCheck();
+      } else if (appSettings?.requireFaceVerification) {
+        startCamera();
+      } else {
+        setSecStep('success');
+      }
     }, 500);
   };
 
