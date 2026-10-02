@@ -14,7 +14,7 @@ const SearchIcon = ({size, color}: any) => <svg width={size} height={size} viewB
 
 const EmployeeAttendance: React.FC = () => {
   const [loading, setLoading] = useState(true);
-  const [currentMonth, setCurrentMonth] = useState('September 2026');
+  const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDateDetail, setSelectedDateDetail] = useState<any>(null);
   
   const [history, setHistory] = useState<any[]>([]);
@@ -38,6 +38,55 @@ const EmployeeAttendance: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const locVerificationIdRef = useRef<string | null>(null);
+
+
+  useEffect(() => {
+    let workingDays = 0, present = 0, late = 0, halfDay = 0, leave = 0, wfh = 0;
+    let totalSeconds = 0;
+    let totalLateMins = 0;
+
+    const currentMonthHistory = history.filter(item => {
+      const d = new Date(item.rawDate);
+      return d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear();
+    });
+
+    currentMonthHistory.forEach(row => {
+      workingDays++;
+      if (row.status === 'PRESENT' || row.status === 'COMPLETED' || row.status === 'WORKING' || row.status === 'ON_BREAK') present++;
+      if (row.lateMin > 0) {
+        late++;
+        totalLateMins += row.lateMin;
+      }
+      if (row.originalStatus === 'HALF DAY' || row.is_half_day) halfDay++;
+      if (row.originalStatus === 'LEAVE' || row.status === 'LEAVE') leave++;
+      if (row.originalStatus === 'WFH' || row.status === 'WFH') wfh++;
+
+      if (row.worked_hours) {
+         totalSeconds += Math.floor(row.worked_hours * 3600);
+      } else {
+         const match = String(row.hours).match(/(\d+)h\s*(\d+)m/);
+         if (match) {
+            totalSeconds += (parseInt(match[1]) * 3600) + (parseInt(match[2]) * 60);
+         }
+      }
+    });
+
+    const totalH = Math.floor(totalSeconds / 3600);
+    const totalM = Math.floor((totalSeconds % 3600) / 60);
+    
+    setSummaryStats({ workingDays, present, late, halfDay, leave, wfh, totalHours: `${totalH}h ${totalM}m`, totalLateMinutes: totalLateMins } as any);
+  }, [history, currentDate]);
+
+  const currentMonthStr = currentDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const handlePrevMonth = () => setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+  const handleNextMonth = () => setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const emptyCells = Array.from({ length: firstDay }, (_, i) => i);
+  const monthDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
   useEffect(() => {
     fetchData();
@@ -170,10 +219,6 @@ const EmployeeAttendance: React.FC = () => {
         };
       });
 
-      const totalH = Math.floor(totalSeconds / 3600);
-      const totalM = Math.floor((totalSeconds % 3600) / 60);
-      
-      setSummaryStats({ workingDays, present, late, halfDay, leave, wfh, totalHours: `${totalH}h ${totalM}m`, totalLateMinutes: totalLateMins } as any);
       setHistory(mapped);
       
       const localDateStr = new Date().toISOString().split('T')[0];
@@ -567,12 +612,12 @@ const EmployeeAttendance: React.FC = () => {
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>Track your daily working hours, attendance status, shifts and breaks.</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '0.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-          <button className="icon-button"><ChevronLeft size={20} /></button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0 0.5rem', fontWeight: 600 }}>
+          <button className="icon-button" onClick={handlePrevMonth} aria-label="Previous month"><ChevronLeft size={20} /></button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0 0.5rem', fontWeight: 600, minWidth: '160px', justifyContent: 'center' }}>
             <CalendarIcon size={18} className="nav-icon" />
-            {currentMonth}
+            {currentMonthStr}
           </div>
-          <button className="icon-button"><ChevronRight size={20} /></button>
+          <button className="icon-button" onClick={handleNextMonth} aria-label="Next month"><ChevronRight size={20} /></button>
         </div>
       </div>
 
@@ -668,39 +713,50 @@ const EmployeeAttendance: React.FC = () => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           
           {/* Monthly Calendar */}
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 className="card-title">{currentMonth}</h3>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div className="card" style={{ padding: '0', overflow: 'hidden', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem' }}>
+              <h3 className="card-title" style={{ margin: 0 }}>{currentMonthStr}</h3>
+              <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', flexWrap: 'wrap' }}>
                 <div className="cal-legend"><span style={{ backgroundColor: 'var(--success)' }}/> PR</div>
                 <div className="cal-legend"><span style={{ backgroundColor: 'var(--warning)' }}/> LT</div>
                 <div className="cal-legend"><span style={{ backgroundColor: 'var(--primary-500)' }}/> WFH</div>
+                <div className="cal-legend"><span style={{ backgroundColor: '#3b82f6' }}/> LV</div>
+                <div className="cal-legend"><span style={{ backgroundColor: 'var(--danger)' }}/> AB</div>
               </div>
             </div>
             
             {loading ? (
-              <div className="skeleton" style={{ height: '240px', borderRadius: 'var(--radius-md)' }} />
+              <div className="skeleton" style={{ height: '240px' }} />
             ) : (
               <div className="calendar-grid">
-                {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => (
+                {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map(d => (
                   <div key={d} className="cal-head">{d}</div>
                 ))}
-                {/* Empty cells for padding */}
-                <div className="cal-day empty"></div>
                 
-                {calendarDays.map(day => {
-                  const dStr = `2026-09-${day.toString().padStart(2, '0')}`;
+                {emptyCells.map(i => (
+                  <div key={`empty-${i}`} className="cal-day empty"></div>
+                ))}
+                
+                {monthDays.map(day => {
+                  const dStr = `${year}-${(month + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
                   const record = history.find((h: any) => h.rawDate === dStr);
-                  const status = record ? record.status : (day > new Date().getDate() ? 'FUTURE' : 'WEEK OFF');
-
+                  const isToday = dStr === new Date().toISOString().split('T')[0];
+                  let status = record ? record.status : (new Date(year, month, day) > new Date() ? 'FUTURE' : 'WEEK OFF');
+                  
+                  const dayOfWeek = new Date(year, month, day).getDay();
+                  if (!record && (dayOfWeek === 0 || dayOfWeek === 6) && status !== 'FUTURE') status = 'WEEKEND';
+                  
                   return (
                     <div 
                       key={day} 
-                      className={`cal-day ${day === new Date().getDate() ? 'active' : ''} ${status === 'FUTURE' ? 'future' : ''}`}
-                      onClick={() => status !== 'FUTURE' && setSelectedDateDetail(record)}
+                      className={`cal-day ${isToday ? 'today' : ''} ${status === 'FUTURE' ? 'future' : ''}`}
+                      onClick={() => {
+                        if (record) setSelectedDateDetail(record);
+                        else if (status !== 'FUTURE') setSelectedDateDetail({ date: new Date(year, month, day).toLocaleDateString('en-US', {day:'numeric', month:'short', year:'numeric'}), status: status, mode: '-', shift: '-', in: '-', out: '-', break: '-', hours: '-', lateMin: 0, earlyMin: 0 });
+                      }}
                     >
-                      <span className="cal-date">{day}</span>
-                      {status !== 'FUTURE' && status !== 'WEEK OFF' && status !== 'WORKING' && status !== 'ON_BREAK' && status !== 'COMPLETED' && status !== 'PRESENT' && (
+                      <span className="cal-date" aria-label={`${currentMonthStr} ${day}, ${status}`}>{day}</span>
+                      {status !== 'FUTURE' && status !== 'WEEK OFF' && status !== 'WEEKEND' && status !== 'WORKING' && status !== 'ON_BREAK' && status !== 'COMPLETED' && status !== 'PRESENT' && (
                         <div className="cal-dot" style={{ backgroundColor: getStatusColorCode(status) }}></div>
                       )}
                       {(status === 'WORKING' || status === 'ON_BREAK') && (
@@ -976,6 +1032,83 @@ const EmployeeAttendance: React.FC = () => {
         .tl-dot.tl-primary { border-color: var(--primary-500); }
         .tl-dot.tl-active { border-color: var(--primary-500); }
         .tl-dot.tl-outline { background-color: var(--bg-surface); border-width: 2px; }
+
+        .calendar-grid {
+          display: grid;
+          grid-template-columns: repeat(7, minmax(0, 1fr));
+          gap: 1px;
+          background-color: var(--border-color);
+          border-top: 1px solid var(--border-color);
+        }
+        .cal-head {
+          background-color: var(--gray-50);
+          padding: 0.5rem 0.25rem;
+          text-align: center;
+          font-size: 0.7rem;
+          font-weight: 600;
+          color: var(--text-secondary);
+        }
+        .cal-day {
+          background-color: var(--bg-surface);
+          min-height: 60px;
+          padding: 0.25rem;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          cursor: pointer;
+        }
+        .cal-day:hover:not(.empty):not(.future) {
+          background-color: var(--gray-50);
+        }
+        .cal-day.empty {
+          background-color: var(--gray-50);
+          cursor: default;
+        }
+        .cal-day.future {
+          color: var(--gray-400);
+          cursor: default;
+          background-color: var(--gray-50);
+        }
+        .cal-day.future .cal-date {
+          color: var(--gray-400);
+        }
+        .cal-date {
+          font-size: 0.875rem;
+          font-weight: 500;
+          margin-bottom: 0.25rem;
+          width: 28px;
+          height: 28px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+        }
+        .cal-day.today .cal-date {
+          background-color: var(--primary-100);
+          color: var(--primary-700);
+          border: 1px solid var(--primary-300);
+          font-weight: 700;
+        }
+        .cal-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          margin-top: auto;
+          margin-bottom: 4px;
+        }
+        .cal-legend {
+          display: flex;
+          align-items: center;
+          gap: 0.25rem;
+          color: var(--text-secondary);
+        }
+        .cal-legend span {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          display: inline-block;
+        }
+
         .pulse-dot { animation: pulseTimeline 2s infinite; }
         @keyframes pulseTimeline {
           0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }

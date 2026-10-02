@@ -30,6 +30,18 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Missing required parameters' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 });
     }
 
+    // SECURITY CHECK: Employee can only verify their own identity. Admins might register others.
+    if (action === 'VERIFY') {
+      if (user.id !== employeeId) {
+        // Only allow if user is an admin or HR. Let's do a basic check by querying roles.
+        const { data: profile } = await supabaseClient.from('profiles').select('role_id').eq('employee_id', user.id).single();
+        const { data: role } = await supabaseClient.from('roles').select('name').eq('id', profile?.role_id).single();
+        if (role?.name !== 'ADMIN' && role?.name !== 'HR') {
+          return new Response(JSON.stringify({ status: 'FACE_NOT_MATCHED', failureReason: 'Unauthorized. You can only verify your own identity.' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 });
+        }
+      }
+    }
+
     const accessKeyId = Deno.env.get('AWS_ACCESS_KEY_ID');
     const secretAccessKey = Deno.env.get('AWS_SECRET_ACCESS_KEY');
     const region = Deno.env.get('AWS_REGION');

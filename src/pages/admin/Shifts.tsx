@@ -6,20 +6,14 @@ import {
   Settings, UserPlus, Info, CalendarClock, Activity
 } from 'lucide-react';
 
-const initialShifts = [
-  { id: 's1', name: 'Morning Shift', code: 'MORNING', start: '06:00', end: '15:00', reqHours: 8, breakMins: 60, grace: 15, overnight: false, employees: 32, status: 'Active', mode: 'Office' },
-  { id: 's2', name: 'General Shift', code: 'GENERAL', start: '09:00', end: '18:00', reqHours: 8, breakMins: 60, grace: 15, overnight: false, employees: 48, status: 'Active', mode: 'Office' },
-  { id: 's3', name: 'Evening Shift', code: 'EVENING', start: '14:00', end: '23:00', reqHours: 8, breakMins: 60, grace: 15, overnight: false, employees: 28, status: 'Active', mode: 'Office' },
-  { id: 's4', name: 'Night Shift', code: 'NIGHT', start: '22:00', end: '07:00', reqHours: 8, breakMins: 60, grace: 15, overnight: true, employees: 12, status: 'Active', mode: 'Office' },
-  { id: 's5', name: 'Part-Time Flex', code: 'PT-FLEX', start: '10:00', end: '14:00', reqHours: 4, breakMins: 0, grace: 10, overnight: false, employees: 8, status: 'Inactive', mode: 'Flexible' },
-];
+import { shiftService } from '../../services/shifts/shiftService';
 
 const AdminShifts: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
   
-  const [shifts, setShifts] = useState(initialShifts);
+  const [shifts, setShifts] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterOvernight, setFilterOvernight] = useState('All');
@@ -33,14 +27,37 @@ const AdminShifts: React.FC = () => {
   const [assignModal, setAssignModal] = useState<any>(null);
   const [conflictModal, setConflictModal] = useState<any>(null);
   const [deactivateModal, setDeactivateModal] = useState<any>(null);
+  const [deleteModal, setDeleteModal] = useState<any>(null);
+  const [deleteError, setDeleteError] = useState<any>(null);
 
   // Form State
   const [formData, setFormData] = useState<any>({});
   const [formError, setFormError] = useState('');
 
+  const fetchShifts = async () => {
+    setLoading(true);
+    const { data } = await shiftService.getShifts();
+    if (data) {
+      setShifts(data.map((d: any) => ({
+        id: d.id,
+        name: d.name,
+        code: d.code,
+        start: d.start_time ? d.start_time.substring(0, 5) : '',
+        end: d.end_time ? d.end_time.substring(0, 5) : '',
+        reqHours: d.required_hours,
+        breakMins: d.break_duration_minutes,
+        grace: d.grace_period_minutes,
+        overnight: d.crosses_midnight,
+        employees: 0,
+        status: d.is_active ? 'Active' : 'Inactive',
+        mode: d.is_wfh_allowed ? 'Flexible' : 'Office'
+      })));
+    }
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 700);
-    return () => clearTimeout(timer);
+    fetchShifts();
   }, []);
 
   const showToast = (msg: string) => {
@@ -62,54 +79,86 @@ const AdminShifts: React.FC = () => {
       case 'edit': setIsDuplicating(false); setFormData(shift); setShowForm(shift.id); break;
       case 'duplicate': setIsDuplicating(true); setFormData({...shift, name: `${shift.name} (Copy)`, code: `${shift.code}_COPY`}); setShowForm(true); break;
       case 'deactivate': setDeactivateModal(shift); break;
-      case 'reactivate': 
-        setShifts(prev => prev.map(s => s.id === shift.id ? { ...s, status: 'Active' } : s));
-        showToast('Shift reactivated successfully');
-        break;
+      case 'delete': setDeleteModal(shift); setDeleteError(null); break;
+      case 'reactivate': handleReactivate(shift); break;
     }
   };
 
-  const handleSaveForm = (e: React.FormEvent) => {
+  const handleSaveForm = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
     if (!formData.name || !formData.code || !formData.start || !formData.end) return setFormError('Name, Code, Start Time, and End Time are required.');
     if (!formData.reqHours) return setFormError('Required hours must be configured.');
     
+    const startHour = parseInt(formData.start.split(':')[0], 10);
+    let shiftType = 'GENERAL';
+    if (startHour >= 4 && startHour < 9) shiftType = 'MORNING';
+    else if (startHour >= 9 && startHour < 14) shiftType = 'GENERAL';
+    else if (startHour >= 14 && startHour < 20) shiftType = 'EVENING';
+    else shiftType = 'NIGHT';
+
+    const dbPayload = {
+      name: formData.name,
+      code: formData.code.toUpperCase(),
+      shift_type: shiftType,
+      start_time: formData.start,
+      end_time: formData.end,
+      required_hours: parseFloat(formData.reqHours) || 8,
+      break_duration_minutes: parseInt(formData.breakMins) || 0,
+      grace_period_minutes: parseInt(formData.grace) || 15,
+      crosses_midnight: formData.overnight || false,
+      is_active: formData.status === 'Inactive' ? false : true,
+      is_wfh_allowed: formData.mode === 'WFH' || formData.mode === 'Flexible'
+    };
+    
     if (showForm === true || isDuplicating) {
-      setShifts(prev => [{
-        id: `s${Date.now()}`,
-        name: formData.name,
-        code: formData.code.toUpperCase(),
-        start: formData.start,
-        end: formData.end,
-        reqHours: parseFloat(formData.reqHours) || 8,
-        breakMins: parseInt(formData.breakMins) || 0,
-        grace: parseInt(formData.grace) || 15,
-        overnight: formData.overnight || false,
-        employees: 0,
-        status: formData.status || 'Active',
-        mode: formData.mode || 'Office'
-      }, ...prev]);
+      const { error } = await shiftService.createShift(dbPayload);
+      if (error) return setFormError(error.message);
       showToast(isDuplicating ? 'Shift duplicated successfully' : 'Shift created successfully');
     } else {
-      setShifts(prev => prev.map(s => s.id === showForm ? { 
-        ...s, 
-        ...formData, 
-        code: formData.code.toUpperCase(),
-        reqHours: parseFloat(formData.reqHours) || 8,
-        breakMins: parseInt(formData.breakMins) || 0,
-        grace: parseInt(formData.grace) || 15,
-      } : s));
+      const { error } = await shiftService.updateShift(showForm as string, dbPayload);
+      if (error) return setFormError(error.message);
       showToast('Shift updated successfully');
     }
     setShowForm(false);
     setIsDuplicating(false);
+    fetchShifts();
   };
 
-  const handleDeactivate = () => {
-    setShifts(prev => prev.map(s => s.id === deactivateModal.id ? { ...s, status: 'Inactive' } : s));
-    setDeactivateModal(null);
-    showToast('Shift deactivated successfully');
+  const handleDeactivate = async () => {
+    const target = deactivateModal || deleteModal;
+    if (target) {
+      await shiftService.deactivateShift(target.id);
+      setDeactivateModal(null);
+      setDeleteModal(null);
+      setDeleteError(null);
+      showToast('Shift deactivated successfully');
+      fetchShifts();
+    }
+  };
+
+  const handleReactivate = async (shift: any) => {
+    await shiftService.activateShift(shift.id);
+    showToast('Shift reactivated successfully');
+    fetchShifts();
+  };
+
+  const handleDelete = async () => {
+    const { success, reason, assignmentCount, error } = await shiftService.deleteShift(deleteModal.id);
+    if (!success) {
+      if (reason === 'ASSIGNMENTS_EXIST') {
+        setDeleteError({ message: `Cannot delete this shift because it is currently assigned to employees. This shift is currently assigned to ${assignmentCount} employees.`, isDependency: false, isAssigned: true });
+      } else if (reason === 'HISTORICAL_DEPENDENCY') {
+        setDeleteError({ message: 'This shift cannot be permanently deleted because historical records depend on it.', isDependency: true });
+      } else {
+        setDeleteError({ message: error || 'Failed to delete shift.', isDependency: false });
+      }
+      return;
+    }
+    showToast('Shift deleted successfully');
+    setDeleteModal(null);
+    setDeleteError(null);
+    fetchShifts();
   };
 
   const triggerMockConflict = (e: React.FormEvent) => {
@@ -271,8 +320,9 @@ const AdminShifts: React.FC = () => {
                           <button onClick={() => handleActionClick('edit', shift)} className="dropdown-item"><Edit size={14}/> Edit Shift</button>
                           <button onClick={() => handleActionClick('duplicate', shift)} className="dropdown-item"><Copy size={14}/> Duplicate Shift</button>
                           <div className="dropdown-divider"></div>
+                          <button onClick={() => handleActionClick('delete', shift)} className="dropdown-item danger" style={{ color: 'var(--danger-700)' }}><Trash2 size={14}/> Delete Shift</button>
                           {shift.status === 'Active' ? (
-                            <button onClick={() => handleActionClick('deactivate', shift)} className="dropdown-item danger"><Trash2 size={14}/> Deactivate</button>
+                            <button onClick={() => handleActionClick('deactivate', shift)} className="dropdown-item"><Trash2 size={14} color="var(--gray-500)"/> Deactivate</button>
                           ) : (
                             <button onClick={() => handleActionClick('reactivate', shift)} className="dropdown-item"><CheckCircle2 size={14}/> Reactivate</button>
                           )}
@@ -668,6 +718,55 @@ const AdminShifts: React.FC = () => {
               <button type="button" onClick={() => setDeactivateModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
               <button onClick={handleDeactivate} className="btn btn-primary" style={{ flex: 1, backgroundColor: 'var(--danger-600)', borderColor: 'var(--danger-600)' }}>Deactivate</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Modal */}
+      {deleteModal && (
+        <div className="drawer-overlay" style={{ alignItems: 'center', zIndex: 110 }}>
+          <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '450px', animation: 'slideUp 0.3s', borderTop: '4px solid var(--danger-600)' }}>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem' }}>Delete Shift?</h3>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+              Are you sure you want to delete <strong>{deleteModal.name}</strong>?
+            </p>
+
+            <div style={{ padding: '1rem', backgroundColor: 'var(--gray-50)', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem', border: '1px solid var(--gray-200)', fontSize: '0.875rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '0.5rem' }}>
+                <div style={{ color: 'var(--text-secondary)' }}>Shift Name</div>
+                <div style={{ fontWeight: 500 }}>{deleteModal.name}</div>
+                <div style={{ color: 'var(--text-secondary)' }}>Shift Code</div>
+                <div style={{ fontWeight: 500, fontFamily: 'monospace' }}>{deleteModal.code}</div>
+                <div style={{ color: 'var(--text-secondary)' }}>Timing</div>
+                <div style={{ fontWeight: 500 }}>{formatTimeAMPM(deleteModal.start)} - {formatTimeAMPM(deleteModal.end)}</div>
+              </div>
+            </div>
+
+            {deleteError ? (
+              <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)', border: '1px solid var(--danger-200)' }}>
+                <p style={{ color: 'var(--danger-800)', fontSize: '0.875rem', fontWeight: 500, marginBottom: '1rem' }}>
+                  {deleteError.message}
+                </p>
+                {deleteError.isDependency ? (
+                  <div style={{ display: 'flex', gap: '1rem' }}>
+                    <button type="button" onClick={() => { setDeleteModal(null); setDeleteError(null); }} className="btn btn-outline" style={{ flex: 1, borderColor: 'var(--danger-300)' }}>Cancel</button>
+                    <button onClick={handleDeactivate} className="btn btn-primary" style={{ flex: 1 }}>Deactivate Shift</button>
+                  </div>
+                ) : deleteError.isAssigned ? (
+                  <div style={{ display: 'flex', gap: '1rem' }}>
+                    <button type="button" onClick={() => { setDeleteModal(null); setDeleteError(null); }} className="btn btn-outline" style={{ flex: 1, borderColor: 'var(--danger-300)' }}>Cancel</button>
+                    <button onClick={() => navigate('/admin/roster')} className="btn btn-primary" style={{ flex: 1 }}>View Assignments</button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => { setDeleteModal(null); setDeleteError(null); }} className="btn btn-outline" style={{ width: '100%', borderColor: 'var(--danger-300)' }}>Cancel</button>
+                )}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: '1rem' }}>
+                <button type="button" onClick={() => setDeleteModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
+                <button onClick={handleDelete} className="btn btn-primary" style={{ flex: 1, backgroundColor: 'var(--danger-600)', borderColor: 'var(--danger-600)' }}>Delete Shift</button>
+              </div>
+            )}
           </div>
         </div>
       )}

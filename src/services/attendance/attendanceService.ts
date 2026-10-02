@@ -168,20 +168,10 @@ export const attendanceService = {
       shiftTemplateId = st.id;
       requiredHours = st.required_hours || 8;
       if (st.start_time) shiftStartStr = st.start_time;
-    } else {
-      // Fallback
-      const { data: fallbackShift } = await supabase
-        .from('shift_templates')
-        .select('*')
-        .eq('is_active', true)
-        .limit(1)
-        .single() as any;
-      
-      if (fallbackShift) {
-        shiftTemplateId = fallbackShift.id;
-        requiredHours = fallbackShift.required_hours;
-        if (fallbackShift.start_time) shiftStartStr = fallbackShift.start_time;
-      }
+    }
+
+    if (!shiftTemplateId) {
+      return { data: null, error: new Error('No shift assigned for today.') };
     }
 
     if (shiftTemplateId) {
@@ -197,10 +187,6 @@ export const attendanceService = {
       if (nowInTz > allowedStartInTz) {
         lateMinutes = Math.floor((nowInTz.getTime() - shiftStartInTz.getTime()) / 60000);
       }
-    }
-
-    if (!shiftTemplateId) {
-      return { data: null, error: new Error('No active shift is assigned for today.') };
     }
 
     // 3. Create Attendance

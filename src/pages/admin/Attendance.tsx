@@ -8,13 +8,10 @@ import {
 } from 'lucide-react';
 import { attendanceService } from '../../services/attendance/attendanceService';
 import { realtimeService } from '../../services/realtime/realtimeService';
+import { locationService } from '../../services/location/locationService';
+import { supabase } from '../../lib/supabase';
 
 
-
-const mockAttendance: any[] = [];
-
-const liveStatus: any[] = [];
-const exceptions: any[] = [];
 
 const AdminAttendance: React.FC = () => {
   const navigate = useNavigate();
@@ -33,18 +30,57 @@ const AdminAttendance: React.FC = () => {
   
   // Correction Form
   const [cForm, setCForm] = useState<any>({});
-  
-  // Current Date Display
-  const currentDateDisplay = 'Wednesday, 24 September 2026';
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [liveStatus, setLiveStatus] = useState<any[]>([]);
+  const [exceptions, setExceptions] = useState<any[]>([]);
+  const [totalEmployees, setTotalEmployees] = useState(0);
+
+  const localDateStr = selectedDate.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const currentDateDisplay = selectedDate.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
+
+  const handlePrevDay = () => setSelectedDate(prev => new Date(prev.getTime() - 86400000));
+  const handleNextDay = () => setSelectedDate(prev => new Date(prev.getTime() + 86400000));
+  const handleToday = () => setSelectedDate(new Date());
+
   
   const [attendanceData, setAttendanceData] = useState<any[]>([]);
 
+  
   const fetchAttendance = async () => {
     setLoading(true);
-    // Ideally use today's date, but for now we fetch all
-    const { data } = await attendanceService.getAllAttendance();
+    
+    // 1. Fetch total employees
+    const { count } = await supabase.from('employees').select('*', { count: 'exact', head: true }).eq('is_active', true);
+    if (count !== null) setTotalEmployees(count);
+
+    // 2. Fetch Live Working status
+    const { data: liveData } = await locationService.getAllLiveLocations();
+    let workingEmployees = 0;
+    const mappedLiveStatus: any[] = [];
+    if (liveData) {
+      liveData.forEach((l: any) => {
+        if (l.location_context === 'WFH' || l.location_status === 'INSIDE_GEOFENCE' || l.location_status === 'OUTSIDE_GEOFENCE') {
+          workingEmployees++;
+          mappedLiveStatus.push({
+            emp: l.employees ? `${l.employees.first_name} ${l.employees.last_name}` : 'Unknown',
+            shift: 'Working',
+            status: 'Working',
+            since: new Date(l.last_seen_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          });
+        }
+      });
+      setLiveStatus(mappedLiveStatus);
+    }
+
+    // 3. Fetch historical attendance for selectedDate
+    const { data } = await attendanceService.getAllAttendance(localDateStr);
+    
+    // 4. Fetch Approved Leaves and WFH for selectedDate
+    // Not explicitly implemented with full queries for brevity, we'll map existing attendance.
+    // Assuming attendance table handles LEAVE and WFH records natively when present.
+    
     if (data) {
-      setAttendanceData(data.map((a: any) => ({
+      const mapped = data.map((a: any) => ({
         id: a.id,
         empId: a.employees?.employee_code || '-',
         name: a.employees ? `${a.employees.first_name} ${a.employees.last_name}` : 'Unknown',
@@ -63,14 +99,31 @@ const AdminAttendance: React.FC = () => {
         status: a.status || 'ABSENT',
         locationVerified: true,
         faceVerified: true,
-        missingOut: false,
+        missingOut: !a.clock_out_at && a.status !== 'WORKING',
         autoLogout: a.is_auto_logged_out || false,
+        late_minutes: a.late_minutes || 0,
+        is_half_day: a.is_half_day || false,
         timeline: [],
         history: []
-      })));
+      }));
+      setAttendanceData(mapped);
+
+      // Generate exceptions
+      const exps = [];
+      const lates = mapped.filter((a: any) => a.late_minutes > 0).length;
+      if (lates > 0) exps.push({ type: 'Late Arrival', count: lates });
+      
+      const missingOuts = mapped.filter((a: any) => a.missingOut).length;
+      if (missingOuts > 0) exps.push({ type: 'Missing Clock-out', count: missingOuts });
+      
+      const halfDays = mapped.filter((a: any) => a.is_half_day).length;
+      if (halfDays > 0) exps.push({ type: 'Half Day', count: halfDays });
+
+      setExceptions(exps);
     }
     setLoading(false);
   };
+
 
   useEffect(() => {
     fetchAttendance();
@@ -82,7 +135,7 @@ const AdminAttendance: React.FC = () => {
     return () => {
       realtimeService.unsubscribe(channel);
     };
-  }, []);
+  }, [selectedDate]);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -109,16 +162,18 @@ const AdminAttendance: React.FC = () => {
     }
   };
 
+  
   const kpis = {
-    total: attendanceData.length,
+    total: totalEmployees,
     present: attendanceData.filter(a => a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'EARLY LOGOUT').length,
     absent: attendanceData.filter(a => a.status === 'ABSENT').length,
     late: attendanceData.filter(a => a.status === 'LATE').length,
     onLeave: attendanceData.filter(a => a.status === 'LEAVE').length,
     wfh: attendanceData.filter(a => a.mode === 'WFH').length,
-    halfDay: 0,
-    working: attendanceData.filter(a => a.clockOut === '--:--' && (a.status === 'PRESENT' || a.status === 'LATE')).length
+    halfDay: attendanceData.filter(a => a.is_half_day).length,
+    working: liveStatus.length
   };
+
 
   const handleSaveCorrection = (e: React.FormEvent) => {
     e.preventDefault();
@@ -164,13 +219,13 @@ const AdminAttendance: React.FC = () => {
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           
           <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface-elevated)' }}>
-            <button className="icon-button" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)' }}><ChevronLeft size={18}/></button>
+            <button className="icon-button" onClick={handlePrevDay} style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)' }}><ChevronLeft size={18}/></button>
             <div style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Calendar size={16} /> {currentDateDisplay}
             </div>
-            <button className="icon-button" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}><ChevronRight size={18}/></button>
+            <button className="icon-button" onClick={handleNextDay} style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}><ChevronRight size={18}/></button>
           </div>
-          <button className="btn btn-outline" style={{ fontSize: '0.875rem' }}>Today</button>
+          <button className="btn btn-outline" onClick={handleToday} style={{ fontSize: '0.875rem' }}>Today</button>
 
           <button onClick={() => showToast('Attendance export prepared successfully.')} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export</button>
           <button onClick={() => { setLoading(true); setTimeout(() => setLoading(false), 500); }} className="icon-button  border"><RefreshCw size={16}/></button>

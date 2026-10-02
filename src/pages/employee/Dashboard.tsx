@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Clock, Calendar, MapPin, Coffee, LogOut, CheckCircle2, 
@@ -29,11 +29,6 @@ const EmployeeDashboard: React.FC = () => {
   const [workTime, setWorkTime] = useState(0); // in seconds
   const [breakTime, setBreakTime] = useState(0); // in seconds
 
-  // Security Simulator States
-  const [simLocation, setSimLocation] = useState<'inside'|'outside'|'error'>('inside');
-  const [simFace, setSimFace] = useState<'success'|'failed'|'not_registered'|'multiple'>('success');
-  const [simWFH, setSimWFH] = useState(false);
-
   // Verification Flow States
   const [clockAction, setClockAction] = useState<'in'|'out'>('in');
   const [secStep, setSecStep] = useState<'init'|'location_check'|'location_failed'|'face_ready'|'face_detecting'|'face_failed'|'override'|'success'>('init');
@@ -41,6 +36,24 @@ const EmployeeDashboard: React.FC = () => {
   const [adminOverrideRequested, setAdminOverrideRequested] = useState(false);
   const [verificationEventId, setVerificationEventId] = useState<string | undefined>(undefined);
   const [locVerificationEventId, setLocVerificationEventId] = useState<string | undefined>(undefined);
+
+  // Camera Refs
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => stopCamera();
+  }, []);
   
   const [attendanceRecord, setAttendanceRecord] = useState<any>(null);
   const [currentShift, setCurrentShift] = useState<any>(null);
@@ -106,6 +119,23 @@ const EmployeeDashboard: React.FC = () => {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  const startCamera = async () => {
+    try {
+      setSecStep('face_ready');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user' },
+        audio: false
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err: any) {
+      alert("Camera permission is required for face verification.");
+      setSecStep('face_failed');
+    }
+  };
+
   const startLocationCheck = async () => {
     setSecStep('location_check');
     
@@ -113,30 +143,27 @@ const EmployeeDashboard: React.FC = () => {
       const { eventId, error } = await locationService.verifyCurrentLocation(clockAction === 'in' ? 'CLOCK_IN' : 'CLOCK_OUT');
       
       if (error) {
-        if (simWFH || simLocation === 'inside') {
-          alert(`REAL DEVICE GPS TESTING PENDING OR FAILED: ${error.message}\nBypassing via UI simulator.`);
-          setLocVerificationEventId(undefined); // No fake trusted verification ID
-          setSecStep('face_ready');
+        if (error.message.includes('outside')) {
+           alert("You are outside the assigned office location.");
         } else {
-          alert(`Location Error: ${error.message}`);
-          setSecStep('location_failed');
+           alert(error.message || "Unable to verify your current location.");
         }
+        setSecStep('location_failed');
       } else {
         setLocVerificationEventId(eventId || undefined);
-        setSecStep('face_ready');
+        startCamera();
       }
     } catch (e: any) {
-      if (simWFH || simLocation === 'inside') {
-        alert(`Location Error Exception: ${e.message}. Bypassing via UI simulator.`);
-        setLocVerificationEventId(undefined);
-        setSecStep('face_ready');
-      } else {
-        setSecStep('location_failed');
-      }
+      alert("Unable to verify your current location.");
+      setSecStep('location_failed');
     }
   };
 
   const handleClockAction = (action: 'in' | 'out') => {
+    if (action === 'in' && !currentShift) {
+      alert("Your shift assignment is not available for the current time.");
+      return;
+    }
     setClockAction(action);
     setFaceAttempts(0);
     setAdminOverrideRequested(false);
@@ -154,37 +181,35 @@ const EmployeeDashboard: React.FC = () => {
   };
 
   const startFaceVerification = async () => {
+    if (!videoRef.current) return;
     setSecStep('face_detecting');
     
-    // Attempt real verification through the backend service boundary
-    const { eventId, error } = await faceService.verifyFaceForAttendance(clockAction === 'in' ? 'CLOCK_IN' : 'CLOCK_OUT', 'data:image/jpeg;base64,dummy');
+    // Capture image
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth || 640;
+    canvas.height = videoRef.current.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(videoRef.current, 0, 0);
+    }
+    const imageBase64 = canvas.toDataURL('image/jpeg', 0.9);
     
-    setTimeout(() => {
-      if (error) {
-        if (error.message.includes('pending')) {
-          alert("Real face provider configuration is pending. (Provider NOT_CONFIGURED). Using UI simulator bypass.");
-          
-          if (simFace === 'success') {
-             setVerificationEventId(undefined); // No fake biometric persistence
-             setSecStep('success');
-             return;
-          }
-        } else {
-          alert(error.message); // e.g. "Face registration is required"
-        }
-        
-        setFaceAttempts(prev => prev + 1);
-        setSecStep('face_failed');
-      } else {
-        // Real provider succeeded
-        setVerificationEventId(eventId || undefined);
-        setSecStep('success');
-      }
-    }, 2000);
+    stopCamera();
+    
+    const { eventId, error } = await faceService.verifyFaceForAttendance(clockAction === 'in' ? 'CLOCK_IN' : 'CLOCK_OUT', imageBase64);
+    
+    if (error) {
+      alert(error.message || "Face verification failed. Please try again.");
+      setFaceAttempts(prev => prev + 1);
+      setSecStep('face_failed');
+    } else {
+      setVerificationEventId(eventId || undefined);
+      setSecStep('success');
+    }
   };
 
   const finalizeClockAction = async () => {
-    setShowSecurityModal(false);
+    closeSecurityModal();
     if (clockAction === 'in') {
       const { data, error } = await attendanceService.clockIn({
         localDateStr: getLocalDateStr(),
@@ -192,15 +217,20 @@ const EmployeeDashboard: React.FC = () => {
         faceVerificationEventId: verificationEventId
       });
       if (error) {
-        alert(error.message);
+        alert(`Attendance could not be created. Please try again.\n${error.message}`);
       } else {
+        locationService.startLiveTracking();
         await fetchTodayAttendance();
       }
     } else {
       if (attendanceRecord) {
         const { error } = await attendanceService.clockOut(attendanceRecord.id);
-        if (error) alert(error.message);
-        else await fetchTodayAttendance();
+        if (error) {
+           alert(error.message);
+        } else {
+           locationService.stopLiveTracking();
+           await fetchTodayAttendance();
+        }
       }
     }
   };
@@ -228,6 +258,11 @@ const EmployeeDashboard: React.FC = () => {
     setShowBreakModal(false);
   };
 
+  const closeSecurityModal = () => {
+    stopCamera();
+    setShowSecurityModal(false);
+  };
+
   // --------------------------------------------------------
   // Reusable Security Status Component
   // --------------------------------------------------------
@@ -248,7 +283,7 @@ const EmployeeDashboard: React.FC = () => {
         {secStep === 'init' ? <span className="badge badge-gray">Pending</span> : 
          secStep === 'location_check' ? <span className="badge badge-warning" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><RefreshCw size={12} className="spin"/> Checking</span> :
          secStep === 'location_failed' ? <span className="badge badge-danger">Failed</span> :
-         <span className="badge badge-success" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><CheckCircle2 size={12}/> Verified {simWFH && '(Bypassed)'}</span>
+         <span className="badge badge-success" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><CheckCircle2 size={12}/> Verified</span>
         }
       </div>
 
@@ -290,41 +325,6 @@ const EmployeeDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Simulator Panel (For Prototype Reviewing) */}
-      <div className="card" style={{ backgroundColor: 'var(--primary-900)', color: 'var(--bg-primary)', border: 'none', padding: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem' }}>
-          <ShieldAlert size={18} color="var(--warning-400)" />
-          <h3 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: 'var(--warning-400)' }}>PROTOTYPE SECURITY SIMULATOR</h3>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
-          <div>
-            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Mock Location State</div>
-            <select className="form-control" value={simLocation} onChange={e => setSimLocation(e.target.value as any)}>
-              <option value="inside" style={{ color: 'var(--text-primary)' }}>Inside Office Geofence</option>
-              <option value="outside" style={{ color: 'var(--text-primary)' }}>Outside Office Geofence</option>
-              <option value="error" style={{ color: 'var(--text-primary)' }}>Location Unavailable / Error</option>
-            </select>
-          </div>
-          <div>
-            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Mock Face Verification State</div>
-            <select className="form-control" value={simFace} onChange={e => setSimFace(e.target.value as any)}>
-              <option value="success" style={{ color: 'var(--text-primary)' }}>Match Successful</option>
-              <option value="failed" style={{ color: 'var(--text-primary)' }}>Match Failed</option>
-              <option value="not_registered" style={{ color: 'var(--text-primary)' }}>Not Registered</option>
-              <option value="multiple" style={{ color: 'var(--text-primary)' }}>Multiple Faces Detected</option>
-            </select>
-          </div>
-          <div>
-            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Work Mode Settings</div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', fontWeight: 500, color: 'var(--text-primary)', cursor: 'pointer' }}>
-              <input type="checkbox" checked={simWFH} onChange={e => setSimWFH(e.target.checked)} />
-              Simulate Approved WFH
-            </label>
-            <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>(Bypasses office geofence)</div>
-          </div>
-        </div>
-      </div>
-
       {/* Main Grid: Shift & Clock Card vs Quick Actions */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
         
@@ -356,15 +356,14 @@ const EmployeeDashboard: React.FC = () => {
               </div>
               <div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Work Mode</div>
-                <div style={{ fontWeight: 600, color: simWFH ? 'var(--primary-600)' : 'var(--gray-900)' }}>{simWFH ? 'WFH (Approved)' : 'OFFICE'}</div>
+                <div style={{ fontWeight: 600, color: 'var(--gray-900)' }}>OFFICE</div>
               </div>
             </div>
 
             <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)', display: 'flex', gap: '1rem', fontSize: '0.75rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--success)' }}><CheckCircle2 size={14}/> Location Configured</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: simFace === 'not_registered' ? 'var(--danger-600)' : 'var(--success)' }}>
-                {simFace === 'not_registered' ? <ShieldAlert size={14}/> : <ShieldCheck size={14}/>} 
-                Face {simFace === 'not_registered' ? 'Not Registered' : 'Registered'}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--success)' }}>
+                <ShieldCheck size={14}/> Face Identity Enabled
               </div>
             </div>
           </div>
@@ -550,7 +549,7 @@ const EmployeeDashboard: React.FC = () => {
                 <ShieldCheck size={20} color="var(--primary-600)"/>
                 Secure {clockAction === 'in' ? 'Clock In' : 'Clock Out'}
               </h2>
-              <button className="icon-button" onClick={() => setShowSecurityModal(false)}><X size={20}/></button>
+              <button className="icon-button" onClick={closeSecurityModal}><X size={20}/></button>
             </div>
 
             <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -564,7 +563,7 @@ const EmployeeDashboard: React.FC = () => {
                 <div style={{ textAlign: 'center', padding: '2rem 0' }}>
                   <Map size={48} color="var(--primary-300)" style={{ margin: '0 auto 1rem auto', animation: 'pulse 2s infinite' }} />
                   <h3 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '0.5rem' }}>Checking Location...</h3>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Verifying you are within the {simWFH ? 'authorized work' : 'assigned office'} area.</p>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Verifying you are within the assigned office area.</p>
                 </div>
               )}
 
@@ -575,23 +574,12 @@ const EmployeeDashboard: React.FC = () => {
                     <MapPin size={32} />
                   </div>
                   <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--danger)' }}>
-                    {simLocation === 'outside' ? 'Outside Assigned Office' : 'Location Unavailable'}
+                    Location Verification Failed
                   </h3>
-                  {simLocation === 'outside' ? (
-                    <>
-                      <p style={{ color: 'var(--gray-700)', fontSize: '0.875rem', marginBottom: '1rem' }}>You are currently outside the allowed office location.</p>
-                      <div style={{ backgroundColor: 'var(--gray-50)', padding: '0.75rem', borderRadius: 'var(--radius-md)', display: 'inline-block', marginBottom: '1rem', textAlign: 'left', border: '1px solid var(--gray-200)' }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Current Distance: <strong style={{ color: 'var(--danger-600)' }}>482m</strong></div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Allowed Radius: <strong>200m</strong></div>
-                      </div>
-                      <p style={{ color: 'var(--danger-600)', fontSize: '0.875rem', fontWeight: 600 }}>Move inside the assigned office location to continue.</p>
-                    </>
-                  ) : (
-                    <p style={{ color: 'var(--gray-700)', fontSize: '0.875rem', marginBottom: '1rem' }}>We could not verify your location. Please check your browser/device permissions.</p>
-                  )}
+                  <p style={{ color: 'var(--gray-700)', fontSize: '0.875rem', marginBottom: '1rem' }}>We could not verify your location. Please check your browser/device permissions or ensure you are inside the assigned office.</p>
                   
                   <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
-                    <button onClick={() => setShowSecurityModal(false)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
+                    <button onClick={closeSecurityModal} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
                     <button onClick={retryLocation} className="btn btn-primary" style={{ flex: 1 }}>Retry Location</button>
                   </div>
                 </div>
@@ -600,21 +588,29 @@ const EmployeeDashboard: React.FC = () => {
               {/* Face Ready */}
               {secStep === 'face_ready' && (
                 <div style={{ textAlign: 'center', padding: '1rem 0' }}>
-                  <div style={{ width: '64px', height: '64px', backgroundColor: 'var(--primary-50)', color: 'var(--primary-600)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem auto' }}>
-                    <User size={32} />
-                  </div>
                   <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>Verify Your Identity</h3>
                   <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>Look at the camera to verify your identity before clocking {clockAction}.</p>
                   
-                  <div style={{ position: 'relative', width: '200px', height: '260px', backgroundColor: 'var(--text-primary)', borderRadius: '50% 50% 40% 40%', margin: '0 auto 1.5rem auto', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                     <div style={{ color: 'var(--bg-primary)', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                       <Camera size={16}/> Camera Ready
-                     </div>
+                  <div style={{ position: 'relative', width: '240px', height: '320px', backgroundColor: '#000', borderRadius: '1rem', margin: '0 auto 1.5rem auto', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                     <video 
+                       ref={videoRef}
+                       autoPlay 
+                       playsInline 
+                       muted
+                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                     />
+                     {!streamRef.current && (
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--gray-400)', fontSize: '0.875rem' }}>
+                          <RefreshCw className="spin" size={24} style={{ marginRight: '0.5rem' }}/> Starting camera...
+                        </div>
+                     )}
+                     <div style={{ position: 'absolute', inset: '10%', border: '2px dashed rgba(255,255,255,0.5)', borderRadius: '50% 50% 40% 40%' }} />
                   </div>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>Position your face inside the frame.</p>
 
                   <div style={{ display: 'flex', gap: '1rem' }}>
-                    <button onClick={() => setShowSecurityModal(false)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
-                    <button onClick={startFaceVerification} className="btn btn-primary" style={{ flex: 1 }}>Verify Face</button>
+                    <button onClick={closeSecurityModal} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
+                    <button onClick={startFaceVerification} disabled={!streamRef.current} className="btn btn-primary" style={{ flex: 1 }}>Verify Face</button>
                   </div>
                 </div>
               )}
@@ -638,22 +634,16 @@ const EmployeeDashboard: React.FC = () => {
                     <ShieldAlert size={32} />
                   </div>
                   <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--danger)' }}>
-                    {simFace === 'not_registered' ? 'Face Profile Not Registered' : 
-                     simFace === 'multiple' ? 'Multiple Faces Detected' : 
-                     'Face Verification Failed'}
+                    Face Verification Failed
                   </h3>
                   
                   <p style={{ color: 'var(--gray-700)', fontSize: '0.875rem', marginBottom: '1rem' }}>
-                    {simFace === 'not_registered' ? 'You must register a face profile with HR before using secure clock in.' : 
-                     simFace === 'multiple' ? 'Ensure only you are visible in the camera frame.' : 
-                     'We could not match your face to the registered profile. Please ensure good lighting and try again.'}
+                    We could not match your face to the registered profile, or verification encountered an error. Please ensure good lighting and try again.
                   </p>
                   
-                  {simFace !== 'not_registered' && (
-                    <div style={{ fontSize: '0.875rem', color: 'var(--danger-600)', fontWeight: 600, marginBottom: '1.5rem' }}>
-                      Attempt {faceAttempts} of 3
-                    </div>
-                  )}
+                  <div style={{ fontSize: '0.875rem', color: 'var(--danger-600)', fontWeight: 600, marginBottom: '1.5rem' }}>
+                    Attempt {faceAttempts} of 3
+                  </div>
 
                   {faceAttempts >= 3 ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -661,12 +651,12 @@ const EmployeeDashboard: React.FC = () => {
                         Verification Temporarily Blocked. Exceeded maximum attempts.
                       </div>
                       <button onClick={() => setSecStep('override')} className="btn btn-outline" style={{ borderColor: 'var(--gray-400)' }}>Request Admin Override</button>
-                      <button onClick={() => setShowSecurityModal(false)} className="btn btn-outline">Close</button>
+                      <button onClick={closeSecurityModal} className="btn btn-outline">Close</button>
                     </div>
                   ) : (
                     <div style={{ display: 'flex', gap: '1rem' }}>
-                      <button onClick={() => setShowSecurityModal(false)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
-                      <button onClick={() => setSecStep('face_ready')} className="btn btn-primary" style={{ flex: 1 }}>Try Again</button>
+                      <button onClick={closeSecurityModal} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
+                      <button onClick={startCamera} className="btn btn-primary" style={{ flex: 1 }}>Try Again</button>
                     </div>
                   )}
                 </div>
@@ -685,7 +675,7 @@ const EmployeeDashboard: React.FC = () => {
                   </div>
 
                   <div style={{ display: 'flex', gap: '1rem' }}>
-                    <button onClick={() => setShowSecurityModal(false)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
+                    <button onClick={closeSecurityModal} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
                     <button onClick={requestAdminOverride} disabled={adminOverrideRequested} className="btn btn-primary" style={{ flex: 1, backgroundColor: 'var(--warning)', color: 'var(--bg-primary)', border: 'none' }}>
                       {adminOverrideRequested ? 'Request Sent' : 'Submit Request'}
                     </button>
@@ -709,7 +699,7 @@ const EmployeeDashboard: React.FC = () => {
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                       <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Office:</span>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{simWFH ? 'WFH' : 'Chennai Office'}</span>
+                      <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>Assigned Office</span>
                     </div>
                     {clockAction === 'out' && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--gray-200)', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
