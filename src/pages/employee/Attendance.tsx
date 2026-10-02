@@ -285,6 +285,40 @@ const EmployeeAttendance: React.FC = () => {
     }
   };
 
+  // Direct clock-in without face verification (when requireFaceVerification is OFF)
+  const handleDirectClockIn = async () => {
+    setClockInFlowStep(2); // Show processing
+    try {
+      // 1. Fresh GPS Check
+      const locResult = await locationService.verifyCurrentLocation('CLOCK_IN');
+      setLocationVerification(locResult);
+      
+      if (locResult.result !== 'INSIDE') {
+        alert("You are outside the office location. Clock In is unavailable.");
+        setClockInFlowStep(0);
+        return;
+      }
+
+      // 2. Clock In directly (no face verification)
+      const localDateStr = new Date().toISOString().split('T')[0];
+      const res = await attendanceService.clockIn({
+        localDateStr,
+        locationVerificationId: locResult.eventId || undefined,
+      });
+
+      if (res.error) {
+        alert(res.error.message);
+      } else {
+        locationService.startLiveTracking();
+      }
+    } catch (e: any) {
+      alert(e.message);
+    }
+
+    setClockInFlowStep(0);
+    fetchData();
+  };
+
   const cancelClockInFlow = () => {
     stopCamera();
     setClockInFlowStep(0);
@@ -292,8 +326,6 @@ const EmployeeAttendance: React.FC = () => {
 
   const captureAndVerify = async () => {
     if (!videoRef.current) return;
-    
-    // In a real provider, we'd draw to canvas and send the dataUrl
     
     const canvas = document.createElement('canvas');
     canvas.width = videoRef.current.videoWidth;
@@ -313,18 +345,16 @@ const EmployeeAttendance: React.FC = () => {
            const { error } = await faceService.registerFaceAdmin(empId, capturedImage);
 
            if (error) {
-             if (error.message.includes('NOT_CONFIGURED')) alert("Face verification provider is not configured.");
-             else alert(error.message);
+             alert(error.message);
            } else {
-             alert("Real face registered!");
+             alert("Face registered successfully!");
            }
         }
       } else if (cameraAction === 'CLOCK_IN') {
         // Perform Face Verification
         const { eventId, error } = await faceService.verifyFaceForAttendance('CLOCK_IN', capturedImage);
         if (error) {
-           if (error.message.includes('NOT_CONFIGURED')) alert("Face verification provider is not configured.");
-           else alert(error.message);
+           alert(error.message);
         } else {
            // Success, call Clock In
            const localDateStr = new Date().toISOString().split('T')[0];
@@ -558,10 +588,16 @@ const EmployeeAttendance: React.FC = () => {
             
             {assignedOffice && locationVerification?.result === 'INSIDE' && (
               <div style={{ display: 'flex', justifyContent: 'center' }}>
-                {!faceRegistration ? (
-                  <button onClick={() => startCameraFlow('REGISTER_FACE')} className="btn btn-primary">Face Registration Required</button>
+                {appSettings?.requireFaceVerification ? (
+                  // Face verification is ON — require registration then face check
+                  !faceRegistration ? (
+                    <button onClick={() => startCameraFlow('REGISTER_FACE')} className="btn btn-primary">Face Registration Required</button>
+                  ) : (
+                    <button onClick={() => startCameraFlow('CLOCK_IN')} className="btn btn-primary" style={{ width: '100%', padding: '0.75rem', fontSize: '1.125rem' }}>Clock In</button>
+                  )
                 ) : (
-                  <button onClick={() => startCameraFlow('CLOCK_IN')} className="btn btn-primary" style={{ width: '100%', padding: '0.75rem', fontSize: '1.125rem' }}>Clock In</button>
+                  // Face verification is OFF — clock in directly
+                  <button onClick={handleDirectClockIn} className="btn btn-primary" style={{ width: '100%', padding: '0.75rem', fontSize: '1.125rem' }}>Clock In</button>
                 )}
               </div>
             )}

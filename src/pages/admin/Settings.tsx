@@ -279,18 +279,67 @@ const AdminSettings: React.FC = () => {
 
   const renderLeave = () => (
     <div className="settings-section">
-      <h3 className="section-title">Leave Policies</h3>
-      <div className="toggle-row">
-        <div><div style={{ fontWeight: 600 }}>Leave Approval Required</div><div className="help-text">Leaves must be approved by HR/Manager before taking effect.</div></div>
-        <input type="checkbox" className="toggle" checked={settings.app.leaveApprovalRequired} onChange={e => handleChangeApp('leaveApprovalRequired', e.target.checked)}/>
+      <h3 className="section-title">Leave Rules</h3>
+      <div className="form-grid">
+        <label className="checkbox-label" style={{ gridColumn: '1 / -1' }}>
+          <input type="checkbox" checked={settings.app.leaveEnabled} onChange={e => handleChangeApp('leaveEnabled', e.target.checked)}/>
+          Leave Module Enabled
+        </label>
+        <label className="checkbox-label" style={{ gridColumn: '1 / -1' }}>
+          <input type="checkbox" checked={settings.app.leaveApprovalRequired} onChange={e => handleChangeApp('leaveApprovalRequired', e.target.checked)}/>
+          Leave Requires Approval
+        </label>
+        <label className="checkbox-label">
+          <input type="checkbox" checked={settings.app.allowPastDateLeave} onChange={e => handleChangeApp('allowPastDateLeave', e.target.checked)}/>
+          Allow Past Date Application
+        </label>
+        <label className="checkbox-label">
+          <input type="checkbox" checked={settings.app.allowNegativeBalance} onChange={e => handleChangeApp('allowNegativeBalance', e.target.checked)}/>
+          Allow Negative Balance
+        </label>
       </div>
-      <div className="toggle-row" style={{ marginTop: '1rem' }}>
-        <div><div style={{ fontWeight: 600 }}>Allow Past Date Leave</div><div className="help-text">Employees can apply for leave on dates that have already passed.</div></div>
-        <input type="checkbox" className="toggle" checked={settings.app.allowPastDateLeave} onChange={e => handleChangeApp('allowPastDateLeave', e.target.checked)}/>
+      
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>Casual Leave</h3>
+      <div className="form-grid">
+        <label className="checkbox-label" style={{ gridColumn: '1 / -1' }}>
+          <input type="checkbox" checked={settings.app.casualLeaveEnabled} onChange={e => handleChangeApp('casualLeaveEnabled', e.target.checked)}/>
+          Casual Leave Enabled
+        </label>
+        <div>
+          <label className="form-label">Casual Leave Days Per Month</label>
+          <input type="number" min="0" className="form-control" value={settings.app.casualLeaveDaysPerMonth} onChange={e => handleChangeApp('casualLeaveDaysPerMonth', parseInt(e.target.value) || 0)}/>
+        </div>
       </div>
-      <div className="toggle-row" style={{ marginTop: '1rem' }}>
-        <div><div style={{ fontWeight: 600 }}>Allow Negative Balance</div><div className="help-text">Employees can apply for leave even if their balance is zero.</div></div>
-        <input type="checkbox" className="toggle" checked={settings.app.allowNegativeBalance} onChange={e => handleChangeApp('allowNegativeBalance', e.target.checked)}/>
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>Sandwich Leave Policy</h3>
+      <div className="form-grid">
+        <label className="checkbox-label" style={{ gridColumn: '1 / -1' }}>
+          <input type="checkbox" checked={settings.app.enableSandwichLeave} onChange={e => handleChangeApp('enableSandwichLeave', e.target.checked)}/>
+          Enable Sandwich Leave
+        </label>
+        {settings.app.enableSandwichLeave && (
+          <>
+            <div>
+              <label className="form-label">Sandwich Treatment</label>
+              <select className="form-control" value={settings.app.sandwichTreatment} onChange={e => handleChangeApp('sandwichTreatment', e.target.value)}>
+                <option value="LOP">Loss of Pay (LOP)</option>
+                <option value="DEDUCT_LEAVE">Deduct Leave Balance</option>
+              </select>
+            </div>
+            <label className="checkbox-label" style={{ gridColumn: '1 / -1' }}>
+              <input type="checkbox" checked={settings.app.applySandwichToWeeklyOff} onChange={e => handleChangeApp('applySandwichToWeeklyOff', e.target.checked)}/>
+              Apply Sandwich Rule to Weekly Off
+            </label>
+            <label className="checkbox-label" style={{ gridColumn: '1 / -1' }}>
+              <input type="checkbox" checked={settings.app.applySandwichToPublicHoliday} onChange={e => handleChangeApp('applySandwichToPublicHoliday', e.target.checked)}/>
+              Apply Sandwich Rule to Public Holidays
+            </label>
+            <label className="checkbox-label" style={{ gridColumn: '1 / -1' }}>
+              <input type="checkbox" checked={settings.app.requireApprovedLeaveOnBothSides} onChange={e => handleChangeApp('requireApprovedLeaveOnBothSides', e.target.checked)}/>
+              Require Approved Leave On Both Sides
+            </label>
+          </>
+        )}
       </div>
     </div>
   );
@@ -318,22 +367,44 @@ const AdminSettings: React.FC = () => {
 
   const renderPermission = () => (
     <div className="settings-section">
-      <h3 className="section-title">Permission Policies (Hourly Time-Off)</h3>
-      <div className="toggle-row">
-        <div><div style={{ fontWeight: 600 }}>Enable Permissions</div><div className="help-text">Allow employees to request a few hours off during a shift.</div></div>
-        <input type="checkbox" className="toggle" checked={settings.app.permissionEnabled} onChange={e => handleChangeApp('permissionEnabled', e.target.checked)}/>
+      <h3 className="section-title">Permission Rules</h3>
+      <div className="form-grid">
+        <label className="checkbox-label" style={{ gridColumn: '1 / -1' }}>
+          <input type="checkbox" checked={settings.app.permissionEnabled} onChange={e => handleChangeApp('permissionEnabled', e.target.checked)}/>
+          Permission Module Enabled
+        </label>
+        <label className="checkbox-label" style={{ gridColumn: '1 / -1' }}>
+          <input type="checkbox" checked={settings.app.permissionApprovalRequired} onChange={e => handleChangeApp('permissionApprovalRequired', e.target.checked)}/>
+          Permission Requires Approval
+        </label>
+        <div>
+          <label className="form-label">Maximum Permission Hours Per Month</label>
+          <input type="number" min="0" className="form-control" value={settings.app.permissionMaxHoursPerMonth} onChange={e => handleChangeApp('permissionMaxHoursPerMonth', parseInt(e.target.value) || 0)}/>
+        </div>
       </div>
-      {settings.app.permissionEnabled && (
-        <>
-          <div className="form-grid" style={{ marginTop: '1.5rem' }}>
-            <div><label className="form-label">Max Hours Per Request</label><input type="number" step="0.5" className="form-control" value={settings.app.permissionMaxHours} onChange={e => handleChangeApp('permissionMaxHours', parseFloat(e.target.value) || 0)}/></div>
-          </div>
-          <div className="toggle-row" style={{ marginTop: '1rem' }}>
-            <div><div style={{ fontWeight: 600 }}>Approval Required</div><div className="help-text">Permissions must be approved before being valid.</div></div>
-            <input type="checkbox" className="toggle" checked={settings.app.permissionApprovalRequired} onChange={e => handleChangeApp('permissionApprovalRequired', e.target.checked)}/>
-          </div>
-        </>
-      )}
+      
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>Exceeding Limits</h3>
+      <div className="form-grid">
+        <label className="checkbox-label" style={{ gridColumn: '1 / -1' }}>
+          <input type="checkbox" checked={settings.app.deductForPermissionExceedingLimit} onChange={e => handleChangeApp('deductForPermissionExceedingLimit', e.target.checked)}/>
+          Deduct for Permissions Exceeding Limit
+        </label>
+        {settings.app.deductForPermissionExceedingLimit && (
+          <>
+            <div>
+              <label className="form-label">Permission Exceeding Limit Method</label>
+              <select className="form-control" value={settings.app.permissionExceedingLimitMethod} onChange={e => handleChangeApp('permissionExceedingLimitMethod', e.target.value)}>
+                <option value="LOP">Loss of Pay (LOP)</option>
+                <option value="DEDUCT_LEAVE">Deduct Leave Balance</option>
+              </select>
+            </div>
+            <div>
+              <label className="form-label">Permission Deduction Amount/Rate</label>
+              <input type="number" min="0" step="0.5" className="form-control" value={settings.app.permissionDeductionAmountRate} onChange={e => handleChangeApp('permissionDeductionAmountRate', parseFloat(e.target.value) || 0)}/>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 

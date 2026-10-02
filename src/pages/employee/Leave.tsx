@@ -28,7 +28,12 @@ const EmployeeLeave: React.FC = () => {
   const [reqReason, setReqReason] = useState('');
   const [reqError, setReqError] = useState('');
 
+
+
+  const [attendance, setAttendance] = useState<any[]>([]);
+  
   const fetchData = async () => {
+
     setLoading(true);
     const [typesRes, balRes, histRes] = await Promise.all([
       leaveService.getLeaveTypes(),
@@ -36,31 +41,85 @@ const EmployeeLeave: React.FC = () => {
       leaveService.getMyLeaveRequests()
     ]);
 
-    if (typesRes.data) {
-      setLeaveTypes(typesRes.data);
-      if (typesRes.data.length > 0) setReqTypeId((typesRes.data as any[])[0].id);
-    }
-    if (balRes.data) {
-      setBalances(balRes.data);
-    }
+    let fetchedHistory: any[] = [];
     if (histRes.data) {
-      setHistory(histRes.data.map((h: any) => ({
+      fetchedHistory = histRes.data.map((h: any) => ({
         id: h.id,
         type: h.leave_types?.name,
+        typeCode: h.leave_types?.code,
         from: new Date(h.start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
         to: new Date(h.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
         rawFrom: h.start_date,
         rawTo: h.end_date,
-        days: `${h.total_days} Day(s)`,
+        daysText: `${h.total_days} Day(s)`,
+        totalDays: h.total_days,
         reason: h.reason,
         status: h.status.charAt(0).toUpperCase() + h.status.slice(1).toLowerCase(),
         requestedOn: new Date(h.requested_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
         approvedBy: h.reviewed_by ? 'Reviewer' : '-',
         rejectReason: h.reviewer_remarks
-      })));
+      }));
+      setHistory(fetchedHistory);
     }
+    
+    if (typesRes.data) {
+      setLeaveTypes(typesRes.data);
+      if (typesRes.data.length > 0) setReqTypeId((typesRes.data as any[])[0].id);
+    }
+    
+    // Fetch attendance for calendar (SANDWICH LOP)
+    const { supabase } = await import('../../lib/supabase');
+    const { data: attData } = await supabase.from('attendance').select('*').eq('status', 'SANDWICH LOP');
+    if (attData) {
+        setAttendance(attData);
+    }
+    
+    // Process balances and inject Casual Leave rules
+    let currentBalances: any[] = balRes.data || [];
+    
+    // Find CL type
+    const clType: any = typesRes.data?.find((t: any) => t.code === 'CL' || t.name?.toLowerCase().includes('casual'));
+    
+    if (clType && appSettings?.casualLeaveEnabled) {
+       // Calculate approved CL usage for the current month
+       let clUsedThisMonth = 0;
+       const now = new Date();
+       fetchedHistory.forEach(h => {
+          if (h.typeCode === 'CL' || h.type?.toLowerCase().includes('casual')) {
+             if (h.status.toUpperCase() === 'APPROVED') {
+                 const d = new Date(h.rawFrom);
+                 if (d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()) {
+                     clUsedThisMonth += h.totalDays;
+                 }
+             }
+          }
+       });
+       
+       const maxCl = appSettings?.casualLeaveDaysPerMonth || 2;
+       const remainingCl = Math.max(0, maxCl - clUsedThisMonth);
+       
+       // Ensure CL exists in balances
+       const existingClIdx = currentBalances.findIndex((b: any) => b.leave_type_id === clType.id);
+       if (existingClIdx >= 0) {
+           currentBalances[existingClIdx].remaining_days = remainingCl;
+           currentBalances[existingClIdx].used_days = clUsedThisMonth;
+           currentBalances[existingClIdx].total_allowance = maxCl;
+       } else {
+           currentBalances.push({
+               id: 'virtual-cl',
+               leave_type_id: clType.id,
+               leave_types: { name: clType.name, code: clType.code },
+               remaining_days: remainingCl,
+               used_days: clUsedThisMonth,
+               total_allowance: maxCl
+           });
+       }
+    }
+    
+    setBalances(currentBalances);
     setLoading(false);
   };
+
 
   useEffect(() => {
     fetchData();
@@ -93,6 +152,20 @@ const EmployeeLeave: React.FC = () => {
     if (new Date(reqTo) < new Date(reqFrom)) { setReqError('To date cannot be before From date.'); return; }
     if (!reqReason) { setReqError('Please provide a reason.'); return; }
     
+
+    // Add Casual Leave limit validation
+    const clType: any = leaveTypes.find(t => t.id === reqTypeId);
+    if (clType && (clType.code === 'CL' || clType.name.toLowerCase().includes('casual'))) {
+        const bal = balances.find(b => b.leave_type_id === reqTypeId);
+        if (bal) {
+            const requestedDays = leaveService.calculateTotalDays(reqFrom, reqTo, !!reqHalf);
+            if (bal.remaining_days < requestedDays && !appSettings?.allowNegativeBalance) {
+                setReqError(`You only have ${bal.remaining_days} Casual Leave(s) remaining for this month.`);
+                return;
+            }
+        }
+    }
+
     const { error } = await leaveService.createLeaveRequest({
       leave_type_id: reqTypeId,
       start_date: reqFrom,
@@ -217,7 +290,7 @@ const EmployeeLeave: React.FC = () => {
                         <strong style={{ fontSize: '0.875rem' }}>{row.from} - {row.to}</strong>
                         <span className={`badge ${getStatusBadge(row.status)}`}>{row.status}</span>
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>{row.type} • {row.days}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>{row.type} • {row.daysText}</div>
                       <div style={{ fontSize: '0.875rem' }}>{row.reason}</div>
                     </div>
                   ))}
@@ -243,7 +316,7 @@ const EmployeeLeave: React.FC = () => {
                           <td style={{ whiteSpace: 'nowrap' }}>
                             {row.from === row.to ? row.from : `${row.from} to ${row.to}`}
                           </td>
-                          <td>{row.days}</td>
+                          <td>{row.daysText}</td>
                           <td><span className={`badge ${getStatusBadge(row.status)}`}>{row.status}</span></td>
                           <td><ArrowRight size={16} color="var(--gray-400)" /></td>
                         </tr>
@@ -268,31 +341,61 @@ const EmployeeLeave: React.FC = () => {
                 <div className="cal-legend"><span style={{ backgroundColor: 'var(--warning)' }}/> Pend</div>
               </div>
             </div>
+
             {loading ? (
               <div className="skeleton" style={{ height: '200px' }} />
             ) : (
               <div className="calendar-grid">
-                {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => (
+                {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(d => (
                   <div key={d} className="cal-head">{d}</div>
                 ))}
-                <div className="cal-day empty"></div>
-                {calendarDays.map(day => {
-                  const dayStr = `2026-09-${day.toString().padStart(2, '0')}`;
-                  const req = history.find(h => {
-                    const start = new Date(h.rawFrom).getTime();
-                    const end = new Date(h.rawTo).getTime();
-                    const current = new Date(dayStr).getTime();
-                    return current >= start && current <= end;
-                  });
+                {(() => {
+                  const now = new Date();
+                  const year = now.getFullYear();
+                  const month = now.getMonth();
+                  const firstDay = new Date(year, month, 1).getDay();
+                  const daysInMonth = new Date(year, month + 1, 0).getDate();
+                  const blanks = Array.from({length: firstDay}, (_, i) => i);
+                  const days = Array.from({length: daysInMonth}, (_, i) => i + 1);
+                  
                   return (
-                    <div key={day} onClick={() => req && setSelectedDetail(req)} className={`cal-day ${!req ? 'future' : ''}`} style={{ cursor: req ? 'pointer' : 'default' }}>
-                      <span className="cal-date">{day}</span>
-                      {req && <div className="cal-dot" style={{ backgroundColor: req.status === 'Approved' ? 'var(--success)' : req.status === 'Pending' ? 'var(--warning)' : 'var(--danger)' }} />}
-                    </div>
+                    <>
+                      {blanks.map(b => <div key={`blank-${b}`} className="cal-day empty"></div>)}
+                      {days.map(day => {
+                        const dayStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                        const current = new Date(dayStr).getTime();
+                        
+                        const req = history.find(h => {
+                          const start = new Date(h.rawFrom).getTime();
+                          const end = new Date(h.rawTo).getTime();
+                          return current >= start && current <= end && h.status !== 'Cancelled' && h.status !== 'Rejected';
+                        });
+                        
+                        const isSandwich = attendance.find(a => a.attendance_date === dayStr);
+                        
+                        let dotColor = null;
+                        let tooltip = '';
+                        if (isSandwich) {
+                            dotColor = 'var(--danger)';
+                            tooltip = 'SANDWICH LOP';
+                        } else if (req) {
+                            dotColor = req.status === 'Approved' ? 'var(--success)' : 'var(--warning)';
+                            tooltip = `${req.type} (${req.status})`;
+                        }
+                        
+                        return (
+                          <div key={day} title={tooltip} onClick={() => req && setSelectedDetail(req)} className={`cal-day ${!req && !isSandwich ? 'future' : ''}`} style={{ cursor: req ? 'pointer' : 'default', position: 'relative' }}>
+                            <span className="cal-date">{day}</span>
+                            {dotColor && <div className="cal-dot" style={{ backgroundColor: dotColor, width: '6px', height: '6px', borderRadius: '50%', position: 'absolute', bottom: '4px', left: '50%', transform: 'translateX(-50%)' }} />}
+                          </div>
+                        );
+                      })}
+                    </>
                   );
-                })}
+                })()}
               </div>
             )}
+
           </div>
 
           {/* Rules info */}
@@ -429,7 +532,7 @@ const EmployeeLeave: React.FC = () => {
                 </div>
                 <div className="detail-item">
                   <span className="detail-label">Duration</span>
-                  <span className="detail-value">{selectedDetail.days}</span>
+                  <span className="detail-value">{selectedDetail.daysText}</span>
                 </div>
                 <div className="detail-item">
                   <span className="detail-label">Requested On</span>

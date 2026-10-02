@@ -173,6 +173,7 @@ export const payrollService = {
     let lopDeduction = 0;
     const deductionItems: { name: string; amount: number }[] = [];
 
+
     // LOP Deduction
     if (settings.enableLopDeductions && empData.attendance.lopDays > 0) {
       if (settings.lopMethod === 'fixed') {
@@ -186,13 +187,44 @@ export const payrollService = {
       const leaveLop = empData.leave.lopLeave;
       
       const parts = [];
-      if (unauthAbs > 0) parts.push(`${unauthAbs}d unauthorized absence`);
+      if (unauthAbs > 0) parts.push(`${unauthAbs}d unauthorized absence / sandwich`);
       if (leaveLop > 0) parts.push(`${leaveLop}d unpaid leave`);
       
       deductionItems.push({ 
         name: `LOP Deduction (${parts.join(', ')})`, 
         amount: lopDeduction 
       });
+    }
+
+    // Permission Exceeding Limit Deduction
+    const appSettings = globalSettings.app;
+    if (appSettings?.deductForPermissionExceedingLimit) {
+      const maxMins = (appSettings.permissionMaxHoursPerMonth || 3) * 60;
+      if (empData.permission.totalMinutes > maxMins) {
+        const excessMins = empData.permission.totalMinutes - maxMins;
+        
+        let permDeduction = 0;
+        if (appSettings.permissionExceedingLimitMethod === 'LOP') {
+          // Typically rate is per hour or fractional day
+          // Standard: dailyRate / 8 for hourly rate, multiplied by hours, or based on permissionDeductionAmountRate
+          const rate = appSettings.permissionDeductionAmountRate || 1; 
+          // If rate means amount, it could be a fixed amount, but let's assume it's days or hours multiplier. Let's use hourly rate for now.
+          const hourlyRate = dailyRate / 8;
+          permDeduction = payrollSettingsService.applyRounding((excessMins / 60) * hourlyRate * rate, settings);
+        } else {
+          // Fixed amount or other
+          const rate = appSettings.permissionDeductionAmountRate || 1;
+          permDeduction = payrollSettingsService.applyRounding((excessMins / 60) * rate, settings);
+        }
+        
+        if (permDeduction > 0) {
+          totalDeductions += permDeduction;
+          deductionItems.push({
+            name: `Excess Permission LOP (${Math.floor(excessMins/60)}h ${excessMins%60}m)`,
+            amount: permDeduction
+          });
+        }
+      }
     }
 
     // Half-Day Deduction

@@ -51,10 +51,7 @@ export interface AppSettings {
   defaultShift: string;
   shiftGracePeriodMins: number;
 
-  // Leave
-  leaveApprovalRequired: boolean;
-  allowPastDateLeave: boolean;
-  allowNegativeBalance: boolean;
+
 
   // WFH
   wfhEnabled: boolean;
@@ -63,8 +60,27 @@ export interface AppSettings {
 
   // Permission
   permissionEnabled: boolean;
-  permissionMaxHours: number;
   permissionApprovalRequired: boolean;
+  permissionMaxHoursPerMonth: number;
+  deductForPermissionExceedingLimit: boolean;
+  permissionExceedingLimitMethod: 'LOP' | string;
+  permissionDeductionAmountRate: number;
+
+  // Leave
+  leaveEnabled: boolean;
+  leaveApprovalRequired: boolean;
+  allowPastDateLeave: boolean;
+  allowNegativeBalance: boolean;
+  casualLeaveEnabled: boolean;
+  casualLeaveDaysPerMonth: number;
+  
+  // Sandwich Leave
+  enableSandwichLeave: boolean;
+  sandwichRuleAppliesTo: string[];
+  sandwichTreatment: 'LOP' | string;
+  applySandwichToWeeklyOff: boolean;
+  applySandwichToPublicHoliday: boolean;
+  requireApprovedLeaveOnBothSides: boolean;
 
   // Geofencing
   geofenceEnabled: boolean;
@@ -102,15 +118,27 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   maxBreakDurationMins: 90,
   defaultShift: 'General Shift',
   shiftGracePeriodMins: 0,
+  leaveEnabled: true,
   leaveApprovalRequired: true,
   allowPastDateLeave: false,
   allowNegativeBalance: false,
+  casualLeaveEnabled: true,
+  casualLeaveDaysPerMonth: 2,
   wfhEnabled: true,
   wfhMaxDaysPerMonth: 4,
   wfhApprovalRequired: true,
   permissionEnabled: true,
-  permissionMaxHours: 2,
   permissionApprovalRequired: true,
+  permissionMaxHoursPerMonth: 3,
+  deductForPermissionExceedingLimit: false,
+  permissionExceedingLimitMethod: 'LOP',
+  permissionDeductionAmountRate: 1,
+  enableSandwichLeave: false,
+  sandwichRuleAppliesTo: ['Casual Leave'],
+  sandwichTreatment: 'LOP',
+  applySandwichToWeeklyOff: true,
+  applySandwichToPublicHoliday: true,
+  requireApprovedLeaveOnBothSides: true,
   geofenceEnabled: true,
   defaultRadiusMeters: 200,
   locationAccuracy: 'High',

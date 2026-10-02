@@ -135,7 +135,6 @@ const FaceRegistration: React.FC = () => {
       if (reg) await faceService.revokeFaceRegistration(reg.id);
     }
     
-    // In a real flow, the capturedImage would be sent to the provider.
     if (!capturedImage) {
       alert('No image captured.');
       return;
@@ -143,11 +142,7 @@ const FaceRegistration: React.FC = () => {
     const { error } = await faceService.registerFaceAdmin(selectedEmp.id, capturedImage);
     
     if (error) {
-      if (error.message.includes('pending') || error.message.includes('NOT_CONFIGURED')) {
-        alert("Face verification provider is NOT configured. Cannot complete registration.");
-      } else {
-        alert(error.message);
-      }
+      alert(error.message);
       setStep(0);
       return;
     }

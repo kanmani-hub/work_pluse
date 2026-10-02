@@ -25,11 +25,35 @@ const EmployeePermission: React.FC = () => {
   const [reqReason, setReqReason] = useState('');
   const [reqError, setReqError] = useState('');
 
+
+  const [usedThisMonthMins, setUsedThisMonthMins] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [approvedCount, setApprovedCount] = useState(0);
+
   const fetchPermissions = async () => {
     setLoading(true);
     const { data, error } = await permissionService.getMyPermissionRequests();
     if (data) {
+      let usedMins = 0;
+      let pending = 0;
+      let approved = 0;
+      
+      const now = new Date();
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+
       setHistory(data.map((h: any) => {
+        const d = new Date(h.permission_date);
+        
+        if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
+           if (h.status.toUpperCase() === 'APPROVED') {
+               usedMins += h.duration_minutes;
+               approved++;
+           } else if (h.status.toUpperCase() === 'PENDING') {
+               pending++;
+           }
+        }
+
         const hDur = Math.floor(h.duration_minutes / 60);
         const mDur = h.duration_minutes % 60;
         
@@ -58,6 +82,9 @@ const EmployeePermission: React.FC = () => {
           rejectReason: h.reviewer_remarks
         };
       }));
+      setUsedThisMonthMins(usedMins);
+      setPendingCount(pending);
+      setApprovedCount(approved);
     }
     setLoading(false);
   };
@@ -100,6 +127,29 @@ const EmployeePermission: React.FC = () => {
     if (durationText === 'Invalid Time' || durationText === '0h 0m') { setReqError('End time must be after start time.'); return; }
     if (!reqReason) { setReqError('Please provide a reason.'); return; }
     
+
+    const { data: hist } = await permissionService.getMyPermissionRequests();
+    let usedMins = 0;
+    if (hist) {
+       const now = new Date();
+       hist.forEach((h: any) => {
+          const d = new Date(h.permission_date);
+          if (d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() && h.status.toUpperCase() === 'APPROVED') {
+             usedMins += h.duration_minutes;
+          }
+       });
+    }
+    
+    const maxMins = (appSettings?.permissionMaxHoursPerMonth ?? 3) * 60;
+    const [startH, startM] = reqStart.split(':').map(Number);
+    const [endH, endM] = reqEnd.split(':').map(Number);
+    let diffMins = (endH * 60 + endM) - (startH * 60 + startM);
+    
+    if (usedMins + diffMins > maxMins && !appSettings?.deductForPermissionExceedingLimit) {
+        setReqError(`This request exceeds your monthly limit of ${appSettings?.permissionMaxHoursPerMonth} hours.`);
+        return;
+    }
+
     const { error } = await permissionService.createPermissionRequest({
       permission_date: reqDate,
       start_time: reqStart,
@@ -179,20 +229,20 @@ const EmployeePermission: React.FC = () => {
             <div className="tracking-kpi-card">
               <div className="sc-title">Available Permission</div>
               <div className="sc-val" style={{ color: 'var(--primary-700)' }}>
-                {`${appSettings?.permissionMaxHours ?? 2}h 0m`}
+                {`${appSettings?.permissionMaxHoursPerMonth ?? 3}h 0m`}
               </div>
             </div>
             <div className="tracking-kpi-card">
               <div className="sc-title">Used This Month</div>
-              <div className="sc-val">1h 30m</div>
+              <div className="sc-val">{`${Math.floor(usedThisMonthMins/60)}h ${usedThisMonthMins%60}m`}</div>
             </div>
             <div className="tracking-kpi-card">
               <div className="sc-title">Pending</div>
-              <div className="sc-val" style={{ color: 'var(--warning)' }}>1</div>
+              <div className="sc-val" style={{ color: 'var(--warning)' }}>{pendingCount}</div>
             </div>
             <div className="tracking-kpi-card">
               <div className="sc-title">Approved</div>
-              <div className="sc-val" style={{ color: 'var(--success)' }}>3</div>
+              <div className="sc-val" style={{ color: 'var(--success)' }}>{approvedCount}</div>
             </div>
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '-1rem' }}>
