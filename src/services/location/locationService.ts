@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase';
 import { calculateHaversineDistance } from '../../utils/geofence';
+import { notificationService } from '../notifications/notificationService';
 
 export interface GeolocationResult {
   latitude: number | null;
@@ -114,6 +115,8 @@ export const locationService = {
     const { data: employeeData, error: empErr } = await supabase
       .from('employees')
       .select(`
+        first_name,
+        employee_code,
         office_id,
         offices(id, name, latitude, longitude, geofence_radius, is_active)
       `)
@@ -214,15 +217,7 @@ export const locationService = {
       return { eventId: null, result: 'ERROR', error: new Error(insertErr.message) };
     }
 
-    if (result === 'OUTSIDE' || result === 'LOCATION_DENIED' || result === 'LOW_ACCURACY' || result === 'ERROR' || result === 'LOCATION_UNAVAILABLE') {
-      let msg = failureReason || 'Location verification failed.';
-      if (result === 'LOCATION_DENIED') msg = 'Location permission is required for office attendance. Please enable location access and try again.';
-      if (result === 'OUTSIDE') msg = `You are outside the assigned office geofence. ${failureReason}`;
-      if (result === 'LOW_ACCURACY') msg = 'GPS accuracy is too low to verify location.';
-      return { eventId: eventResult.id, result, distance, radius, error: new Error(msg) };
-    }
-
-    // 7. Update Live Location (only if GPS successful and INSIDE or WFH)
+    // 7. Update Live Location (if GPS successful)
     if (geo.status === 'SUCCESS') {
       const locContext = isWfh ? 'WFH' : 'OFFICE';
       
@@ -236,17 +231,60 @@ export const locationService = {
         .maybeSingle() as any;
         
       if (existingLiveLoc) {
+        const oldStatus = existingLiveLoc.location_status;
+        const newStatus = result === 'WFH' ? 'WFH' : (result === 'OUTSIDE' ? 'OUTSIDE_GEOFENCE' : 'INSIDE_GEOFENCE');
+
         // @ts-ignore
         await (supabase.from('employee_live_locations') as any).update({
           latitude: geo.latitude,
           longitude: geo.longitude,
           accuracy_meters: geo.accuracy,
           distance_from_office_meters: distance || null,
-          location_status: result === 'WFH' ? 'WFH' : 'INSIDE_GEOFENCE',
+          location_status: newStatus,
           location_context: locContext,
           last_seen_at: nowIso,
           source: 'WEB'
         }).eq('id', existingLiveLoc.id);
+
+        if ((oldStatus === 'INSIDE_GEOFENCE' && newStatus === 'OUTSIDE_GEOFENCE') || (oldStatus === 'OUTSIDE_GEOFENCE' && newStatus === 'INSIDE_GEOFENCE')) {
+          const eventType = newStatus === 'INSIDE_GEOFENCE' ? 'ENTERED' : 'EXITED';
+          // Insert into geofence_events
+          const { data: eventData } = await (supabase.from('geofence_events') as any).insert({
+            employee_id: empId,
+            office_id: employeeData?.offices?.id || null,
+            event_type: eventType,
+            latitude: geo.latitude,
+            longitude: geo.longitude,
+            distance_from_office_meters: distance || null,
+            geofence_radius_meters: radius,
+            occurred_at: nowIso,
+            source: 'WEB'
+          }).select('id').single();
+
+          if (eventData) {
+            notificationService.notifyGeofenceEvent({
+              event_type: eventType,
+              employeeName: employeeData?.first_name || 'Employee',
+              employeeCode: employeeData?.employee_code || 'Unknown',
+              distance: distance || null,
+              empId: empId,
+              eventId: eventData.id
+            });
+          }
+          // Also insert into location_history
+          await (supabase.from('employee_location_history') as any).insert({
+             employee_id: empId,
+             office_id: employeeData?.offices?.id || null,
+             latitude: geo.latitude,
+             longitude: geo.longitude,
+             accuracy_meters: geo.accuracy,
+             distance_from_office_meters: distance || null,
+             location_status: newStatus,
+             location_context: locContext,
+             recorded_at: nowIso,
+             source: 'WEB'
+          });
+        }
       } else {
         // @ts-ignore
         await (supabase.from('employee_live_locations') as any).insert({
@@ -256,16 +294,73 @@ export const locationService = {
           longitude: geo.longitude,
           accuracy_meters: geo.accuracy,
           distance_from_office_meters: distance || null,
-          location_status: result === 'WFH' ? 'WFH' : 'INSIDE_GEOFENCE',
+          location_status: result === 'WFH' ? 'WFH' : (result === 'OUTSIDE' ? 'OUTSIDE_GEOFENCE' : 'INSIDE_GEOFENCE'),
           location_context: locContext,
           is_tracking: false,
           last_seen_at: nowIso,
           source: 'WEB'
         });
+
+        // Insert initial history
+        await (supabase.from('employee_location_history') as any).insert({
+          employee_id: empId,
+          office_id: employeeData?.offices?.id || null,
+          latitude: geo.latitude,
+          longitude: geo.longitude,
+          accuracy_meters: geo.accuracy,
+          distance_from_office_meters: distance || null,
+          location_status: result === 'WFH' ? 'WFH' : (result === 'OUTSIDE' ? 'OUTSIDE_GEOFENCE' : 'INSIDE_GEOFENCE'),
+          location_context: locContext,
+          recorded_at: nowIso,
+          source: 'WEB'
+        });
+
+        // Geofence event
+        if (result === 'INSIDE') {
+          const { data: eventData } = await (supabase.from('geofence_events') as any).insert({
+            employee_id: empId,
+            office_id: employeeData?.offices?.id || null,
+            event_type: 'ENTERED',
+            latitude: geo.latitude,
+            longitude: geo.longitude,
+            distance_from_office_meters: distance || null,
+            geofence_radius_meters: radius,
+            occurred_at: nowIso,
+            source: 'WEB'
+          }).select('id').single();
+
+          if (eventData) {
+            notificationService.notifyGeofenceEvent({
+              event_type: 'ENTERED',
+              employeeName: employeeData?.first_name || 'Employee',
+              employeeCode: employeeData?.employee_code || 'Unknown',
+              distance: distance || null,
+              empId: empId,
+              eventId: eventData.id
+            });
+          }
+        }
       }
     }
 
-    return { eventId: eventResult.id, result, distance, radius, error: undefined };
+    if (result === 'OUTSIDE' || result === 'LOCATION_DENIED' || result === 'LOW_ACCURACY' || result === 'ERROR' || result === 'LOCATION_UNAVAILABLE') {
+      let msg = failureReason || 'Location verification failed.';
+      if (result === 'LOCATION_DENIED') {
+        msg = 'Location permission is required for office attendance. Please enable location access and try again.';
+        notificationService.notifyGeofenceEvent({
+          event_type: 'LOCATION_DENIED',
+          employeeName: employeeData?.first_name || 'Employee',
+          employeeCode: employeeData?.employee_code || 'Unknown',
+          empId: empId,
+          eventId: eventResult?.id
+        });
+      }
+      if (result === 'OUTSIDE') msg = `You are outside the assigned office geofence. ${failureReason}`;
+      if (result === 'LOW_ACCURACY') msg = 'GPS accuracy is too low to verify location.';
+      return { eventId: eventResult?.id || null, result, distance, radius, error: new Error(msg) };
+    }
+
+    return { eventId: eventResult?.id || null, result, distance, radius, error: undefined };
   },
 
   _watchId: null as number | null,

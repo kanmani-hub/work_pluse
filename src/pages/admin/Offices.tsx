@@ -155,7 +155,7 @@ const AdminOffices: React.FC = () => {
           <h1 className="page-title">Offices</h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>Manage company offices, locations and attendance geofencing rules.</p>
         </div>
-        <button onClick={() => { setFormData({ geofence: true, radius: 200, lat: 13.0827, lng: 80.2707 }); setFormError(''); setShowForm(true); }} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Plus size={16}/> Add Office</button>
+        <button onClick={() => { setFormData({ geofence: true, radius: 200, lat: '', lng: '' }); setFormError(''); setShowForm(true); }} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Plus size={16}/> Add Office</button>
       </div>
 
       {loading ? (
@@ -576,7 +576,7 @@ const AdminOffices: React.FC = () => {
                 {showDetail.employees > 0 ? (
                   <div className="table-container" style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
                     <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                      Employees view will be implemented using real data.
+                      Detailed employee records are available in the <button className="btn btn-outline" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem', marginLeft: '0.5rem' }} onClick={() => { setShowDetail(null); navigate('/admin/employees'); }}>Employees</button> module.
                     </div>
                   </div>
                 ) : (

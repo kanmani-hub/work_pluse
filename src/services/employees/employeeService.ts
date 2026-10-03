@@ -10,6 +10,7 @@ export interface EmployeeWithRelations extends EmployeeRow {
   office: { name: string } | null;
   role: { name: string } | null;
   shift_assignments?: any[];
+  salary_structures?: any[];
 }
 
 export const employeeService = {
@@ -25,7 +26,8 @@ export const employeeService = {
           department:department_id (name),
           office:office_id (name),
           role:role_id (name),
-          shift_assignments!shift_assignments_employee_id_fkey(effective_date, shift_templates(name, start_time, end_time))
+          shift_assignments!shift_assignments_employee_id_fkey(effective_date, shift_templates(name, start_time, end_time)),
+          salary_structures(id, is_active, basic_salary)
         `)
         .order('first_name', { ascending: true });
 

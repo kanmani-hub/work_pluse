@@ -94,26 +94,40 @@ const AdminLiveTracking: React.FC = () => {
     setLoading(true);
     const { data } = await locationService.getAllLiveLocations();
     if (data) {
-      setEmployees(data.map((l: any) => ({
-        id: l.id,
-        empId: l.employees?.employee_code || '-',
-        name: l.employees ? `${l.employees.first_name} ${l.employees.last_name}` : 'Unknown',
-        department: l.employees?.departments?.name || '-',
-        shift: 'General', 
-        workMode: l.location_context === 'WFH' ? 'WFH' : 'Office',
-        status: l.location_status === 'OUTSIDE_GEOFENCE' ? 'Outside Geofence' : (l.location_context === 'WFH' ? 'WFH' : 'Working'),
-        locationStatus: l.location_status === 'INSIDE_GEOFENCE' ? 'Inside Geofence' : (l.location_status === 'OUTSIDE_GEOFENCE' ? 'Outside Geofence' : l.location_status),
-        distance: l.distance_from_office_meters ? `${Math.round(l.distance_from_office_meters)}m` : 'N/A',
-        lastUpdated: new Date(l.last_seen_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        workingSince: '-', 
-        office: l.employees?.offices?.name || '-',
-        officeId: l.employees?.offices?.id || null,
-        officeLat: l.employees?.offices?.latitude || 13.0827,
-        officeLng: l.employees?.offices?.longitude || 80.2707,
-        officeRadius: l.employees?.offices?.geofence_radius || 200,
-        x: l.longitude && l.employees?.offices?.longitude ? 50 + ((l.longitude - l.employees.offices.longitude) * 10000) : 50,
-        y: l.latitude && l.employees?.offices?.latitude ? 50 - ((l.latitude - l.employees.offices.latitude) * 10000) : 50
-      })));
+      const now = new Date();
+      setEmployees(data.map((l: any) => {
+        const lastSeen = new Date(l.last_seen_at);
+        const diffMins = (now.getTime() - lastSeen.getTime()) / 60000;
+        let status = 'Working';
+        if (diffMins > 15) {
+           status = 'Location Unavailable';
+        } else if (l.location_status === 'OUTSIDE_GEOFENCE') {
+           status = 'Outside Geofence';
+        } else if (l.location_context === 'WFH') {
+           status = 'WFH';
+        }
+
+        return {
+          id: l.id,
+          empId: l.employees?.employee_code || '-',
+          name: l.employees ? `${l.employees.first_name} ${l.employees.last_name}` : 'Unknown',
+          department: l.employees?.departments?.name || '-',
+          shift: 'General', 
+          workMode: l.location_context === 'WFH' ? 'WFH' : 'Office',
+          status: status as EmployeeStatus,
+          locationStatus: l.location_status === 'INSIDE_GEOFENCE' ? 'Inside Geofence' : (l.location_status === 'OUTSIDE_GEOFENCE' ? 'Outside Geofence' : l.location_status),
+          distance: l.distance_from_office_meters ? `${Math.round(l.distance_from_office_meters)}m` : 'N/A',
+          lastUpdated: new Date(l.last_seen_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          workingSince: '-', 
+          office: l.employees?.offices?.name || '-',
+          officeId: l.employees?.offices?.id || null,
+          officeLat: l.employees?.offices?.latitude || 13.0827,
+          officeLng: l.employees?.offices?.longitude || 80.2707,
+          officeRadius: l.employees?.offices?.geofence_radius || 200,
+          x: l.longitude && l.employees?.offices?.longitude ? 50 + ((l.longitude - l.employees.offices.longitude) * 10000) : 50,
+          y: l.latitude && l.employees?.offices?.latitude ? 50 - ((l.latitude - l.employees.offices.latitude) * 10000) : 50
+        };
+      }));
       setLastUpdatedTime(new Date().toLocaleTimeString('en-US'));
     }
     setLoading(false);

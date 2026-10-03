@@ -61,7 +61,7 @@ const AdminPayroll: React.FC = () => {
   const [departments, setDepartments] = useState<string[]>([]);
 
   // Filter payrolls for selected month
-  const monthPayrolls = payrolls.filter(p => p.payroll_year === selectedYear && p.payroll_month === selectedMonth);
+  const monthPayrolls = payrolls.filter(p => Number(p.payroll_year) === selectedYear && Number(p.payroll_month) === selectedMonth);
 
   const fetchPayrolls = useCallback(async () => {
     setLoading(true);
@@ -87,7 +87,7 @@ const AdminPayroll: React.FC = () => {
         setPayrolls(payrollRes.data);
         
         // Compute global status from month data
-        const monthData = payrollRes.data.filter((p: any) => p.payroll_year === selectedYear && p.payroll_month === selectedMonth);
+        const monthData = payrollRes.data.filter((p: any) => Number(p.payroll_year) === selectedYear && Number(p.payroll_month) === selectedMonth);
         if (monthData.length > 0) {
           if (monthData.every((p: any) => p.status === 'CLOSED')) setGlobalStatus('CLOSED');
           else if (monthData.every((p: any) => p.status === 'PAID')) setGlobalStatus('PAID');
@@ -142,7 +142,7 @@ const AdminPayroll: React.FC = () => {
 
   const getKPIs = () => {
     return {
-      total: monthPayrolls.length,
+      total: employees.filter(e => e.status?.toUpperCase() === 'ACTIVE').length,
       generated: monthPayrolls.filter(p => p.status !== 'DRAFT').length,
       underReview: monthPayrolls.filter(p => p.status === 'UNDER_REVIEW').length,
       approved: monthPayrolls.filter(p => p.status === 'APPROVED').length,
@@ -196,6 +196,27 @@ const AdminPayroll: React.FC = () => {
     } else {
       showToast(result.error || 'Failed to generate payroll');
     }
+  };
+
+  const handleExport = async () => {
+    if (monthPayrolls.length === 0) {
+      showToast('No payroll data to export for this month.');
+      return;
+    }
+    const headers = ['Employee Name', 'Employee Code', 'Department', 'Status', 'Gross Salary', 'Total Deductions', 'Net Salary'];
+    const keys = ['name', 'code', 'department', 'status', 'gross', 'deductions', 'net'];
+    const rows = monthPayrolls.map(p => ({
+      name: p.employees ? `${p.employees.first_name} ${p.employees.last_name}` : 'Unknown',
+      code: p.employees?.employee_code || '-',
+      department: p.employees?.departments?.name || '-',
+      status: p.status,
+      gross: p.gross_salary,
+      deductions: p.total_deductions,
+      net: p.net_salary
+    }));
+    const { exportToCSV } = await import('../../utils/exportCsv');
+    exportToCSV(`Payroll_${MONTH_NAMES[selectedMonth - 1]}_${selectedYear}`, rows, headers, keys);
+    showToast('Payroll export generated.');
   };
 
   const handleApprove = async (e: React.FormEvent) => {
@@ -368,7 +389,7 @@ const AdminPayroll: React.FC = () => {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => { setSettingsForm(globalSettingsService.getSettings().payroll); setSettingsDrawer(true); }} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Settings size={16}/> Payroll Settings</button>
-          <button onClick={() => showToast('Payroll export prepared.')} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export</button>
+          <button onClick={handleExport} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export</button>
           <button onClick={() => setGenerateModal(true)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Activity size={16}/> Generate</button>
         </div>
       </div>
@@ -515,18 +536,21 @@ const AdminPayroll: React.FC = () => {
               <tbody>
                 {filteredData.map(({ emp, payroll }) => {
                   if (!payroll) {
+                    const hasActiveSalary = emp.salary_structures && emp.salary_structures.some((s: any) => s.is_active);
                     return (
                       <tr key={emp.id}>
                         <td>
                           <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{emp.first_name} {emp.last_name}</div>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.employee_code} • {emp.department?.name || 'Unknown'}</div>
                         </td>
-                        <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>
-                          Employee exists, but no payroll record exists for this period.
+                        <td colSpan={7} style={{ textAlign: 'center', color: hasActiveSalary ? 'var(--text-secondary)' : 'var(--danger)' }}>
+                          {hasActiveSalary ? 'Employee exists, but no payroll record exists for this period.' : 'Salary not configured'}
                         </td>
                         <td>{getStatusBadge('NOT_GENERATED')}</td>
                         <td style={{ textAlign: 'right' }}>
-                          <button onClick={() => setGenerateModal(true)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>Generate</button>
+                          <button onClick={() => hasActiveSalary ? setGenerateModal(true) : setShowSalaryEditor(emp.id)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>
+                            {hasActiveSalary ? 'Generate' : 'Configure'}
+                          </button>
                         </td>
                       </tr>
                     );
@@ -587,10 +611,12 @@ const AdminPayroll: React.FC = () => {
                   </>
                 ) : (
                   <>
-                    <div style={{ textAlign: 'center', color: 'var(--text-secondary)', margin: '1rem 0' }}>
-                      Employee exists, but no payroll record exists for this period.
+                    <div style={{ textAlign: 'center', color: emp.salary_structures?.some((s:any)=>s.is_active) ? 'var(--text-secondary)' : 'var(--danger)', margin: '1rem 0' }}>
+                      {emp.salary_structures?.some((s:any)=>s.is_active) ? 'Employee exists, but no payroll record exists for this period.' : 'Salary not configured'}
                     </div>
-                    <button onClick={() => setGenerateModal(true)} className="btn btn-outline" style={{ width: '100%', marginTop: '1rem', fontSize: '0.875rem' }}>Generate Payroll</button>
+                    <button onClick={() => emp.salary_structures?.some((s:any)=>s.is_active) ? setGenerateModal(true) : setShowSalaryEditor(emp.id)} className="btn btn-outline" style={{ width: '100%', marginTop: '1rem', fontSize: '0.875rem' }}>
+                      {emp.salary_structures?.some((s:any)=>s.is_active) ? 'Generate Payroll' : 'Configure Salary'}
+                    </button>
                   </>
                 )}
               </div>

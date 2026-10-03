@@ -156,6 +156,14 @@ export const leaveService = {
     return { data, error };
   },
 
+  async getAllLeaveBalances() {
+    const { data, error } = await supabase
+      .from('leave_balances')
+      .select('*, employees!inner(first_name, last_name, employee_code, departments(name)), leave_types!inner(name, code)')
+      .eq('year', new Date().getFullYear());
+    return { data, error };
+  },
+
 
   async reviewLeaveRequest(id: string, status: 'APPROVED' | 'REJECTED' | 'CANCELLED', remarks?: string) {
     const adminId = await this.getCurrentEmployeeId();
@@ -171,6 +179,18 @@ export const leaveService = {
       .eq('id', id);
 
     if (error) return { error };
+
+    // --- AUDIT LOG ---
+    import('../audit/auditService').then(({ auditService }) => {
+      auditService.recordAuditLog({
+        action: status,
+        module: 'Leave',
+        entity_type: 'leave_requests',
+        entity_id: id,
+        description: `Leave request ${status.toLowerCase()}`,
+        metadata: { remarks }
+      });
+    });
 
     if (status === 'APPROVED') {
        // --- SANDWICH LEAVE CALCULATION ---

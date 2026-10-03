@@ -96,6 +96,9 @@ const AdminRoster: React.FC = () => {
   };
 
   useEffect(() => {
+
+    
+    
     fetchData();
   }, []);
 
@@ -346,10 +349,11 @@ const AdminRoster: React.FC = () => {
             </div>
             <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
               <option value="All">All Departments</option>
-              <option>Development</option>
-              <option>HR</option>
-              <option>Finance</option>
-              <option>Support</option>
+              
+              
+              
+              
+              
             </select>
             <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem' }}><Filter size={14} style={{ marginRight: '0.25rem' }}/> More Filters</button>
             {(search || filterDept !== 'All') && (

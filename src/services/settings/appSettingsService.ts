@@ -168,7 +168,8 @@ export const appSettingsService = {
         },
         (payload: any) => {
           if (payload.new && payload.new.settings) {
-            const newSettings = { ...DEFAULT_APP_SETTINGS, ...payload.new.settings };
+            const incoming = payload.new.settings.app || payload.new.settings;
+            const newSettings = { ...DEFAULT_APP_SETTINGS, ...incoming };
             this._settingsCache = newSettings;
             this._listeners.forEach(cb => cb(newSettings));
           }
@@ -201,7 +202,11 @@ export const appSettingsService = {
       
       let finalSettings = { ...DEFAULT_APP_SETTINGS };
       if (data && data.settings) {
-        finalSettings = { ...finalSettings, ...data.settings };
+        if (data.settings.app) {
+          finalSettings = { ...finalSettings, ...data.settings.app };
+        } else {
+          finalSettings = { ...finalSettings, ...data.settings };
+        }
       }
       
       this._settingsCache = finalSettings;

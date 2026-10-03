@@ -50,7 +50,8 @@ const AdminAttendance: React.FC = () => {
     setLoading(true);
     
     // 1. Fetch total employees
-    const { count } = await supabase.from('employees').select('*', { count: 'exact', head: true }).eq('is_active', true);
+    const { count, error: countErr } = await supabase.from('employees').select('*', { count: 'exact', head: true }).eq('status', 'ACTIVE');
+    if (countErr) console.error('Error fetching total employees:', countErr);
     if (count !== null) setTotalEmployees(count);
 
     // 2. Fetch Live Working status
@@ -65,7 +66,10 @@ const AdminAttendance: React.FC = () => {
             emp: l.employees ? `${l.employees.first_name} ${l.employees.last_name}` : 'Unknown',
             shift: 'Working',
             status: 'Working',
-            since: new Date(l.last_seen_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            since: new Date(l.last_seen_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            rawLastSeen: l.last_seen_at,
+            locationStatus: l.location_status,
+            distance: l.distance_from_office_meters
           });
         }
       });
@@ -82,6 +86,7 @@ const AdminAttendance: React.FC = () => {
     if (data) {
       const mapped = data.map((a: any) => ({
         id: a.id,
+        employee_uuid: a.employee_id,
         empId: a.employees?.employee_code || '-',
         name: a.employees ? `${a.employees.first_name} ${a.employees.last_name}` : 'Unknown',
         dept: a.employees?.departments?.name || '-',
@@ -126,14 +131,28 @@ const AdminAttendance: React.FC = () => {
 
 
   useEffect(() => {
+
+    
+    
     fetchAttendance();
 
     const channel = realtimeService.subscribeToAdminAttendance((payload) => {
       fetchAttendance();
     });
 
+    const channelGeofence = realtimeService.subscribeToGeofenceEvents((payload) => {
+      if (payload.new) {
+        if (payload.new.event_type === 'EXITED') {
+          showToast(`🔴 Geofence Alert: Employee went outside office.`);
+        } else if (payload.new.event_type === 'ENTERED') {
+          showToast(`🟢 Geofence Update: Employee returned to office.`);
+        }
+      }
+    });
+
     return () => {
       realtimeService.unsubscribe(channel);
+      realtimeService.unsubscribe(channelGeofence);
     };
   }, [selectedDate]);
 
@@ -174,6 +193,30 @@ const AdminAttendance: React.FC = () => {
     working: liveStatus.length
   };
 
+  const handleViewDetail = async (a: any) => {
+    try {
+      const { data: events } = await supabase
+        .from('geofence_events')
+        .select('*')
+        .eq('employee_id', a.employee_uuid)
+        .gte('occurred_at', localDateStr + 'T00:00:00')
+        .lte('occurred_at', localDateStr + 'T23:59:59')
+        .order('occurred_at', { ascending: true });
+        
+      let history: any[] = [];
+      if (events && events.length > 0) {
+        history = events.map((e: any) => ({
+          date: new Date(e.occurred_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          action: e.event_type === 'ENTERED' ? '🟢 Returned' : '🔴 Left Office',
+          reason: e.distance_from_office_meters ? `Dist: ${Math.round(e.distance_from_office_meters)}m` : '',
+          by: 'System'
+        }));
+      }
+      setDetailDrawer({ ...a, history: [...a.history, ...history] });
+    } catch (err) {
+      setDetailDrawer(a); // fallback
+    }
+  };
 
   const handleSaveCorrection = (e: React.FormEvent) => {
     e.preventDefault();
@@ -187,7 +230,7 @@ const AdminAttendance: React.FC = () => {
         clockOut: cForm.clockOut,
         history: [
           {
-            date: '24 Sep 03:45 PM',
+            date: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }),
             action: `HR changed attendance`,
             reason: cForm.reason,
             by: 'Admin User'
@@ -302,18 +345,33 @@ const AdminAttendance: React.FC = () => {
             <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No live tracking data available.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {liveStatus.map((ls, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0', borderBottom: i !== liveStatus.length-1 ? '1px solid var(--gray-200)' : 'none' }}>
-                  <div>
-                    <div style={{ fontWeight: 500, fontSize: '0.875rem' }}>{ls.emp}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{ls.shift}</div>
+              {liveStatus.map((ls, i) => {
+                const diffMins = Math.floor((Date.now() - new Date(ls.rawLastSeen).getTime()) / 60000);
+                const isStale = diffMins > 5;
+                let locBadge = 'badge-gray';
+                let locText = 'LOCATION STALE';
+                if (!isStale) {
+                  if (ls.locationStatus === 'INSIDE_GEOFENCE') { locBadge = 'badge-success'; locText = 'Inside Office'; }
+                  else if (ls.locationStatus === 'OUTSIDE_GEOFENCE') { locBadge = 'badge-danger'; locText = 'Outside Office'; }
+                  else if (ls.locationStatus === 'WFH') { locBadge = 'badge-primary'; locText = 'WFH'; }
+                }
+
+                return (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 0', borderBottom: i !== liveStatus.length-1 ? '1px solid var(--gray-200)' : 'none' }}>
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: '0.875rem' }}>{ls.emp}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <span className={`badge ${locBadge}`} style={{ fontSize: '0.65rem' }}>{locText}</span>
+                        {ls.distance !== null && !isStale && <span>Dist: {Math.round(ls.distance)}m</span>}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <span className={`badge ${ls.status === 'Working' ? 'badge-success' : 'badge-warning'}`}>{ls.status}</span>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Updated: {diffMins === 0 ? 'Just now' : `${diffMins}m ago`}</div>
+                    </div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <span className={`badge ${ls.status === 'Working' ? 'badge-success' : 'badge-warning'}`}>{ls.status}</span>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Since {ls.since}</div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -332,10 +390,11 @@ const AdminAttendance: React.FC = () => {
           
           <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
             <option value="All">All Departments</option>
-            <option>Development</option>
-            <option>HR</option>
-            <option>Finance</option>
-            <option>Support</option>
+              
+            
+            
+            
+            
           </select>
 
           <select value={filterMode} onChange={e => setFilterMode(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
@@ -426,7 +485,7 @@ const AdminAttendance: React.FC = () => {
                       )}
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <button onClick={() => setDetailDrawer(a)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>View</button>
+                      <button onClick={() => handleViewDetail(a)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>View</button>
                     </td>
                   </tr>
                 ))}
@@ -466,7 +525,7 @@ const AdminAttendance: React.FC = () => {
                   </div>
                 </div>
 
-                <button onClick={() => setDetailDrawer(a)} className="btn btn-outline" style={{ width: '100%', fontSize: '0.875rem' }}>View Details</button>
+                <button onClick={() => handleViewDetail(a)} className="btn btn-outline" style={{ width: '100%', fontSize: '0.875rem' }}>View Details</button>
               </div>
             ))}
           </div>

@@ -66,18 +66,35 @@ export const payrollService = {
     const { data: structures } = await supabase.from('salary_structures').select('employee_id').eq('is_active', true) as any;
     if (!structures || structures.length === 0) return { success: false, error: 'No active employees with salary structures found' };
 
-    // Set dates for the month
-    const startDate = new Date(year, month - 1, 1).toISOString();
-    const endDate = new Date(year, month, 0).toISOString();
+    // Set dates for the month (UTC to avoid local timezone offset shifting the day back)
+    const startDate = new Date(Date.UTC(year, month - 1, 1)).toISOString();
+    const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59)).toISOString();
 
     let successCount = 0;
     for (const s of structures) {
       if (s.employee_id) {
-        const res = await this.calculatePayroll(s.employee_id, year, month, startDate, endDate);
-        if (!res.error) {
+        const { data: existing } = await supabase
+          .from('payroll')
+          .select('id, status')
+          .eq('employee_id', s.employee_id)
+          .eq('payroll_year', year)
+          .eq('payroll_month', month)
+          .single<any>();
+
+        let res;
+        if (existing) {
+          if (['APPROVED', 'PAYMENT_PENDING', 'PAID', 'CLOSED'].includes(existing.status)) {
+            continue; // Skip locked payrolls
+          }
+          res = await this.recalculatePayroll(s.employee_id, year, month, startDate, endDate);
+        } else {
+          res = await this.calculatePayroll(s.employee_id, year, month, startDate, endDate);
+        }
+
+        if (res && !res.error) {
           successCount++;
-          // Auto submit to UNDER_REVIEW
-          if (res.data?.id) {
+          // Auto submit to UNDER_REVIEW if newly created or still in DRAFT/CALCULATED
+          if (res.data?.id && (!existing || ['DRAFT', 'CALCULATED'].includes(existing.status))) {
             await this.submitPayrollForReview(res.data.id);
           }
         }

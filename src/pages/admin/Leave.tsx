@@ -9,7 +9,6 @@ import {
 import { leaveService } from '../../services/leave/leaveService';
 import { realtimeService } from '../../services/realtime/realtimeService';
 
-const mockBalances: any[] = [];
 
 const AdminLeave: React.FC = () => {
   const navigate = useNavigate();
@@ -35,6 +34,7 @@ const AdminLeave: React.FC = () => {
   // Forms
   const [reasonForm, setReasonForm] = useState('');
   const [requests, setRequests] = useState<any[]>([]);
+  const [balances, setBalances] = useState<any[]>([]);
 
   const fetchRequests = async () => {
     setLoading(true);
@@ -60,10 +60,28 @@ const AdminLeave: React.FC = () => {
         reviewer_remarks: r.reviewer_remarks
       })));
     }
+    
+    const { data: balData } = await leaveService.getAllLeaveBalances();
+    if (balData) {
+      setBalances(balData.map((b: any) => ({
+        name: b.employees ? `${b.employees.first_name} ${b.employees.last_name}` : 'Unknown',
+        dept: b.employees?.departments?.name || '-',
+        empId: b.employees?.employee_code || '-',
+        type: b.leave_types?.name || '-',
+        allocated: b.total_days,
+        used: b.used_days,
+        pending: b.pending_days,
+        remaining: Math.max(0, b.total_days - b.used_days - b.pending_days)
+      })));
+    }
+    
     setLoading(false);
   };
 
   useEffect(() => {
+
+    
+    
     fetchRequests();
 
     const channel = realtimeService.subscribeToAdminLeave((payload) => {
@@ -277,10 +295,11 @@ const AdminLeave: React.FC = () => {
               
               <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
                 <option value="All">All Departments</option>
-                <option>Engineering</option>
-                <option>HR</option>
-                <option>Finance</option>
-                <option>Support</option>
+              
+                
+                
+                
+                
               </select>
 
               <select value={filterType} onChange={e => setFilterType(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
@@ -409,14 +428,14 @@ EmpC     AL  AL   —    —    —`}
                 </tr>
               </thead>
               <tbody>
-                {mockBalances.length === 0 ? (
-                  <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>No balance data available</td></tr>
+                {balances.length === 0 ? (
+                  <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>No records found</td></tr>
                 ) : (
-                  mockBalances.map((b, i) => (
+                  balances.map((b, i) => (
                     <tr key={i}>
                       <td>
                         <div style={{ fontWeight: 600 }}>{b.name}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{b.dept}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{b.dept} • {b.empId}</div>
                       </td>
                       <td style={{ fontWeight: 500 }}>{b.type}</td>
                       <td style={{ textAlign: 'right' }}>{b.allocated}</td>

@@ -116,6 +116,20 @@ export const permissionService = {
       })
       .eq('id', id);
 
+    if (error) return { error };
+
+    // --- AUDIT LOG ---
+    import('../audit/auditService').then(({ auditService }) => {
+      auditService.recordAuditLog({
+        action: status,
+        module: 'Permission',
+        entity_type: 'permission_requests',
+        entity_id: id,
+        description: `Permission request ${status.toLowerCase()}`,
+        metadata: { remarks }
+      });
+    });
+
     return { error };
   }
 };

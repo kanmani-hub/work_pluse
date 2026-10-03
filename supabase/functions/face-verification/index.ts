@@ -240,15 +240,44 @@ serve(async (req) => {
 
         console.log('[face-verification] REGISTER SUCCESS, FaceId:', faceId);
 
+        const serviceClient = createClient(
+          Deno.env.get('SUPABASE_URL') ?? '',
+          Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+        );
+
+        const nowIso = new Date().toISOString();
+        const { error: insertErr } = await serviceClient
+          .from('face_registrations')
+          .insert({
+            employee_id: employeeId,
+            registration_status: 'REGISTERED',
+            registered_at: nowIso,
+            registered_by: currentEmployeeId,
+            provider: 'AWS_REKOGNITION',
+            provider_reference: faceId,
+            consent_recorded_at: nowIso,
+            consent_version: 'v1.0',
+            is_active: true
+          });
+
+        if (insertErr) {
+          console.error('[face-verification] Database Save Error:', insertErr.message);
+          return jsonResponse({
+            status: 'DATABASE_ERROR',
+            failureReason: 'Face registration succeeded with provider but database save failed.',
+          }, 500);
+        }
+
         return jsonResponse({
           status: 'SUCCESS',
           providerReference: faceId,
+          employeeId: employeeId
         });
 
       } catch (err: any) {
         console.error('[face-verification] IndexFaces error:', err.name, err.message);
         return jsonResponse(
-          { status: mapAwsError(err), failureReason: mapAwsMessage(err) },
+          { status: mapAwsError(err), failureReason: mapAwsMessage(err), _debugError: err.message, _debugName: err.name },
           mapAwsStatus(err)
         );
       }
@@ -279,15 +308,32 @@ serve(async (req) => {
         }
 
         const match = response.FaceMatches[0];
+        const matchedFaceId = match.Face?.FaceId;
 
         // Identity verification: ensure the matched face belongs to this employee
-        const externalId = match.Face?.ExternalImageId;
-        const expectedExternalId = (employeeId as string).replace(/[^a-zA-Z0-9_.\-:]/g, '_');
+        const serviceClient = createClient(
+          Deno.env.get('SUPABASE_URL') ?? '',
+          Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+        );
 
-        if (externalId !== expectedExternalId) {
-          console.warn('[face-verification] ExternalImageId mismatch:', {
-            expected: expectedExternalId,
-            got: externalId,
+        const { data: registration } = await serviceClient
+          .from('face_registrations')
+          .select('provider_reference')
+          .eq('employee_id', employeeId)
+          .eq('is_active', true)
+          .single();
+
+        if (!registration || !registration.provider_reference) {
+          return jsonResponse({
+            status: 'FACE_REGISTRATION_NOT_FOUND',
+            failureReason: 'No active face registration found for this employee.',
+          });
+        }
+
+        if (registration.provider_reference !== matchedFaceId) {
+          console.warn('[face-verification] FaceId mismatch:', {
+            expected: registration.provider_reference,
+            got: matchedFaceId,
           });
           return jsonResponse({
             status: 'FACE_NOT_MATCHED',
@@ -300,6 +346,7 @@ serve(async (req) => {
         return jsonResponse({
           status: 'SUCCESS',
           confidenceScore: match.Similarity,
+          verified: true
         });
 
       } catch (err: any) {

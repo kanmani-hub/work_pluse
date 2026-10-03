@@ -24,9 +24,9 @@ const Attendance: React.FC = () => {
           <input type="date" className="btn btn-outline" defaultValue="2024-10-24" style={{ outline: 'none' }} />
           <select className="btn btn-outline" style={{ outline: 'none' }}>
             <option>All Departments</option>
-            <option>Engineering</option>
+            
             <option>Design</option>
-            <option>HR</option>
+            
           </select>
         </div>
         

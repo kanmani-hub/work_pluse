@@ -56,7 +56,7 @@ const AdminReports: React.FC = () => {
     const startDateStr = start.toISOString().split('T')[0];
     const endDateStr = end.toISOString().split('T')[0];
 
-    const dashMetrics = await reportService.getDashboardMetrics(startDateStr, endDateStr);
+    const dashMetrics = await reportService.getDashboardMetrics(startDateStr, endDateStr, filters.dept, filters.office);
     setMetrics(dashMetrics);
 
     if (activeTab === 'Attendance') {
@@ -68,6 +68,12 @@ const AdminReports: React.FC = () => {
   };
 
   useEffect(() => {
+
+    
+    
+
+    
+    
     fetchData();
   }, [filters, activeTab]);
 
@@ -134,10 +140,7 @@ const AdminReports: React.FC = () => {
             <h3 className="section-title" style={{ borderBottom: 'none', margin: 0 }}>Attendance Trend</h3>
             <select className="form-control" style={{ width: 'auto', padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}><option>Weekly</option><option>Monthly</option></select>
           </div>
-          <SimpleBarChart data={metrics.totalEmployees > 0 ? [
-            { label: 'Mon', val: 95 }, { label: 'Tue', val: 92 }, { label: 'Wed', val: 96 }, 
-            { label: 'Thu', val: 94 }, { label: 'Fri', val: 89 }
-          ] : [
+          <SimpleBarChart data={metrics.attendanceTrend?.length > 0 ? metrics.attendanceTrend : [
             { label: 'Mon', val: 0 }, { label: 'Tue', val: 0 }, { label: 'Wed', val: 0 }, 
             { label: 'Thu', val: 0 }, { label: 'Fri', val: 0 }
           ]} />
@@ -147,14 +150,14 @@ const AdminReports: React.FC = () => {
         <div className="card">
           <h3 className="section-title" style={{ borderBottom: 'none', margin: 0 }}>Workforce Distribution Today</h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', marginTop: '1rem' }}>
-            <div style={{ position: 'relative', width: '150px', height: '150px', borderRadius: '50%', background: 'conic-gradient(var(--primary-500) 0% 70%, var(--purple-500) 70% 85%, var(--warning) 85% 95%, var(--danger) 95% 100%)' }}>
+            <div style={{ position: 'relative', width: '150px', height: '150px', borderRadius: '50%', background: `conic-gradient(var(--primary-500) 0% ${Math.round(((metrics.workforceDistribution?.present || 0) / ((metrics.totalEmployees || 1))) * 100)}%, var(--purple-500) ${Math.round(((metrics.workforceDistribution?.present || 0) / ((metrics.totalEmployees || 1))) * 100)}% ${Math.round((((metrics.workforceDistribution?.present || 0) + (metrics.workforceDistribution?.wfh || 0)) / ((metrics.totalEmployees || 1))) * 100)}%, var(--warning) ${Math.round((((metrics.workforceDistribution?.present || 0) + (metrics.workforceDistribution?.wfh || 0)) / ((metrics.totalEmployees || 1))) * 100)}% ${Math.round((((metrics.workforceDistribution?.present || 0) + (metrics.workforceDistribution?.wfh || 0) + (metrics.workforceDistribution?.leave || 0)) / ((metrics.totalEmployees || 1))) * 100)}%, var(--danger) ${Math.round((((metrics.workforceDistribution?.present || 0) + (metrics.workforceDistribution?.wfh || 0) + (metrics.workforceDistribution?.leave || 0)) / ((metrics.totalEmployees || 1))) * 100)}% 100%)` }}>
               <div style={{ position: 'absolute', top: '25%', left: '25%', right: '25%', bottom: '25%', backgroundColor: 'var(--bg-surface-elevated)', borderRadius: '50%' }}></div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--primary-500)', borderRadius: '2px' }}></div> Present (70%)</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--purple-500)', borderRadius: '2px' }}></div> WFH (15%)</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--warning)', borderRadius: '2px' }}></div> Leave (10%)</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--danger)', borderRadius: '2px' }}></div> Absent (5%)</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--primary-500)', borderRadius: '2px' }}></div> Present ({metrics.workforceDistribution?.present || 0})</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--purple-500)', borderRadius: '2px' }}></div> WFH ({metrics.workforceDistribution?.wfh || 0})</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--warning)', borderRadius: '2px' }}></div> Leave ({metrics.workforceDistribution?.leave || 0})</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--danger)', borderRadius: '2px' }}></div> Absent ({metrics.workforceDistribution?.absent || 0})</div>
             </div>
           </div>
         </div>
@@ -163,23 +166,15 @@ const AdminReports: React.FC = () => {
         <div className="card">
           <h3 className="section-title" style={{ borderBottom: 'none', margin: 0 }}>Department Attendance %</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1.5rem' }}>
-            {(metrics.totalEmployees > 0 ? [
-              { dept: 'Engineering', val: 96, color: 'var(--primary-500)' },
-              { dept: 'HR', val: 98, color: 'var(--success)' },
-              { dept: 'Finance', val: 92, color: 'var(--warning)' },
-              { dept: 'Sales', val: 88, color: 'var(--danger)' }
-            ] : [
-              { dept: 'Engineering', val: 0, color: 'var(--primary-500)' },
-              { dept: 'HR', val: 0, color: 'var(--success)' },
-              { dept: 'Finance', val: 0, color: 'var(--warning)' },
-              { dept: 'Sales', val: 0, color: 'var(--danger)' }
-            ]).map(d => (
+            {((metrics.departmentAttendance || []).length > 0 ? metrics.departmentAttendance : [
+              { dept: 'No Data', val: 0, color: 'var(--gray-300)' }
+            ]).map((d: any) => (
               <div key={d.dept} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', cursor: 'pointer' }} onClick={() => setDeptDrawer(d.dept)}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', fontWeight: 500 }}>
                   <span>{d.dept}</span><span>{d.val}%</span>
                 </div>
                 <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--gray-100)', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{ width: `${d.val}%`, height: '100%', backgroundColor: d.color }}></div>
+                  <div style={{ width: `${d.val}%`, height: '100%', backgroundColor: d.color || 'var(--primary-500)' }}></div>
                 </div>
               </div>
             ))}
@@ -196,12 +191,12 @@ const AdminReports: React.FC = () => {
             </div>
             <div style={{ flex: 1, backgroundColor: 'var(--success-50)', padding: '1rem', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--success)' }}>Actual Avg</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--success-800)' }}>8h 12m</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--success-800)' }}>{metrics.avgWorkingHours || '0h 0m'}</div>
             </div>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem', fontSize: '0.875rem' }}>
-            <span style={{ color: 'var(--text-secondary)' }}>Overtime: <strong style={{ color: 'var(--text-primary)' }}>+12m avg</strong></span>
-            <span style={{ color: 'var(--text-secondary)' }}>Shortfall: <strong style={{ color: 'var(--text-primary)' }}>0m avg</strong></span>
+            <span style={{ color: 'var(--text-secondary)' }}>Overtime Avg: <strong style={{ color: 'var(--text-primary)' }}>—</strong></span>
+            <span style={{ color: 'var(--text-secondary)' }}>Shortfall Avg: <strong style={{ color: 'var(--text-primary)' }}>—</strong></span>
           </div>
         </div>
 
@@ -214,19 +209,19 @@ const AdminReports: React.FC = () => {
           <div>
             <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '1rem' }}>Location Verification (Geofence)</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Verified Inside Office</span><span style={{ fontWeight: 600 }}>{metrics.totalEmployees > 0 ? '88%' : '0%'}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Outside Geofence Attempts</span><span style={{ fontWeight: 600, color: 'var(--warning)' }}>{metrics.totalEmployees > 0 ? '3%' : '0%'}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>WFH Bypass (Authorized)</span><span style={{ fontWeight: 600 }}>{metrics.totalEmployees > 0 ? '8%' : '0%'}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Location Unavailable</span><span style={{ fontWeight: 600, color: 'var(--danger)' }}>{metrics.totalEmployees > 0 ? '1%' : '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Verified Inside Office</span><span style={{ fontWeight: 600 }}>{metrics.securityAnalytics?.verifiedInside || '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Outside Geofence Attempts</span><span style={{ fontWeight: 600, color: 'var(--warning)' }}>{metrics.securityAnalytics?.outsideAttempts || '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>WFH Bypass (Authorized)</span><span style={{ fontWeight: 600 }}>{metrics.securityAnalytics?.wfhBypass || '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Location Unavailable</span><span style={{ fontWeight: 600, color: 'var(--danger)' }}>{metrics.securityAnalytics?.locationUnavailable || '0%'}</span></div>
             </div>
           </div>
           <div>
             <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '1rem' }}>Face Verification (Biometrics)</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Verified Successfully</span><span style={{ fontWeight: 600 }}>{metrics.totalEmployees > 0 ? '92%' : '0%'}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Failed Match Attempts</span><span style={{ fontWeight: 600, color: 'var(--danger)' }}>{metrics.totalEmployees > 0 ? '2%' : '0%'}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Face Not Registered</span><span style={{ fontWeight: 600, color: 'var(--warning)' }}>{metrics.totalEmployees > 0 ? '5%' : '0%'}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Not Required (Policy)</span><span style={{ fontWeight: 600 }}>{metrics.totalEmployees > 0 ? '1%' : '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Verified Successfully</span><span style={{ fontWeight: 600 }}>{metrics.securityAnalytics?.faceVerified || '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Failed Match Attempts</span><span style={{ fontWeight: 600, color: 'var(--danger)' }}>{metrics.securityAnalytics?.faceFailed || '0%'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Face Not Registered</span><span style={{ fontWeight: 600, color: 'var(--warning)' }}>{metrics.securityAnalytics?.faceNotRegistered || '0 emp'}</span></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Not Required (Policy)</span><span style={{ fontWeight: 600 }}>{metrics.securityAnalytics?.faceNotRequired || '0%'}</span></div>
             </div>
           </div>
         </div>
@@ -297,11 +292,13 @@ const AdminReports: React.FC = () => {
         </select>
         
         <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.dept} onChange={e => setFilters({...filters, dept: e.target.value})}>
-          <option value="All">All Departments</option><option>Engineering</option><option>HR</option><option>Finance</option>
+          <option value="All">All Departments</option>
+              
         </select>
         
         <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.office} onChange={e => setFilters({...filters, office: e.target.value})}>
-          <option value="All">All Offices</option><option>Chennai Office</option><option>Bangalore Office</option><option>Remote</option>
+          <option value="All">All Offices</option>
+              
         </select>
 
         <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.shift} onChange={e => setFilters({...filters, shift: e.target.value})}>

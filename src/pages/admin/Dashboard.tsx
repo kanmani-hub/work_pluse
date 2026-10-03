@@ -20,37 +20,55 @@ const AdminDashboard: React.FC = () => {
   const [rejectReason, setRejectReason] = useState('');
 
   // Real state
-  const [stats, setStats] = useState({ employees: 0, wfhPending: 0, leavePending: 0, permPending: 0, working: 0 });
+  const [stats, setStats] = useState({ employees: 0, wfhPending: 0, leavePending: 0, permPending: 0, working: 0, fullTime: 0, partTime: 0, intern: 0, activeWfh: 0 });
   const [wfhReqs, setWfhReqs] = useState<any[]>([]);
   const [leaveReqs, setLeaveReqs] = useState<any[]>([]);
   const [permReqs, setPermReqs] = useState<any[]>([]);
   const [liveStatus, setLiveStatus] = useState<any[]>([]);
+  const [shifts, setShifts] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
       setLoading(true);
       try {
         const [
-          { count: empCount },
+          { data: empCountData },
           { data: wfhData },
           { data: leaveData },
           { data: permData },
-          { count: workingCount }
+          { count: workingCount },
+          { data: shiftsData },
+          { count: activeWfhCount }
         ] = await Promise.all([
-          supabase.from('employees').select('*', { count: 'exact', head: true }),
+          supabase.from('employees').select('id, employment_type').eq('status', 'ACTIVE'),
           supabase.from('wfh_requests').select(`*, employees(first_name, last_name, employee_code, departments(name))`).eq('status', 'PENDING').limit(5),
           supabase.from('leave_requests').select(`*, employees(first_name, last_name, employee_code, departments(name)), leave_types(name)`).eq('status', 'PENDING').limit(5),
           supabase.from('permission_requests').select(`*, employees(first_name, last_name, employee_code, departments(name))`).eq('status', 'PENDING').limit(5),
-          supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('date', new Date().toISOString().split('T')[0]).not('clock_in', 'is', null).is('clock_out', null)
+          supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('date', new Date().toISOString().split('T')[0]).not('clock_in', 'is', null).is('clock_out', null),
+          supabase.from('shift_templates').select('*').eq('is_active', true).order('start_time'),
+          supabase.from('wfh_requests').select('*', { count: 'exact', head: true }).eq('status', 'APPROVED').eq('request_date', new Date().toISOString().split('T')[0])
         ]);
         
+        const allEmps = empCountData || [];
+        const fullTime = (allEmps as any[]).filter(e => e.employment_type === 'Full-time' || e.employment_type === 'Full Time').length;
+        const partTime = (allEmps as any[]).filter(e => e.employment_type === 'Part-time' || e.employment_type === 'Part Time').length;
+        const intern = (allEmps as any[]).filter(e => e.employment_type === 'Intern').length;
+
         setStats({
-          employees: empCount || 0,
+          employees: allEmps.length || 0,
           wfhPending: wfhData?.length || 0,
           leavePending: leaveData?.length || 0,
           permPending: permData?.length || 0,
-          working: workingCount || 0
+          working: workingCount || 0,
+          fullTime,
+          partTime,
+          intern,
+          activeWfh: activeWfhCount || 0
         });
+        
+        if (shiftsData) {
+          setShifts(shiftsData);
+        }
 
         if (wfhData) {
           setWfhReqs(wfhData.map((r: any) => ({
@@ -236,22 +254,22 @@ const AdminDashboard: React.FC = () => {
             </div>
             <div style={{ marginTop: '1rem' }}>
               <div style={{ display: 'flex', gap: '4px', height: '40px', borderRadius: 'var(--radius-sm)', overflow: 'hidden', marginBottom: '1.5rem' }}>
-                <div style={{ flex: 7, background: 'var(--info)' }}></div>
-                <div style={{ flex: 2, background: 'var(--accent-secondary)' }}></div>
-                <div style={{ flex: 1, background: 'var(--bg-glass)' }}></div>
+                <div style={{ flex: stats.fullTime || 1, background: 'var(--info)' }}></div>
+                <div style={{ flex: stats.partTime || 0, background: 'var(--accent-secondary)' }}></div>
+                <div style={{ flex: stats.intern || 0, background: 'var(--bg-glass)' }}></div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.875rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--info)' }}></div> Full Time Employees</div>
-                  <div style={{ fontWeight: 600 }}>{Math.floor(stats.employees * 0.7)} <span style={{ color: 'var(--info)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>70%</span></div>
+                  <div style={{ fontWeight: 600 }}>{stats.fullTime} <span style={{ color: 'var(--info)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>{stats.employees ? Math.round((stats.fullTime/stats.employees)*100) : 0}%</span></div>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.875rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-secondary)' }}></div> Part Time</div>
-                  <div style={{ fontWeight: 600 }}>{Math.floor(stats.employees * 0.2)} <span style={{ color: 'var(--accent-secondary)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>20%</span></div>
+                  <div style={{ fontWeight: 600 }}>{stats.partTime} <span style={{ color: 'var(--accent-secondary)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>{stats.employees ? Math.round((stats.partTime/stats.employees)*100) : 0}%</span></div>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.875rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--bg-glass)' }}></div> Interns</div>
-                  <div style={{ fontWeight: 600 }}>{Math.floor(stats.employees * 0.1)} <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>10%</span></div>
+                  <div style={{ fontWeight: 600 }}>{stats.intern} <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>{stats.employees ? Math.round((stats.intern/stats.employees)*100) : 0}%</span></div>
                 </div>
               </div>
             </div>
@@ -263,35 +281,17 @@ const AdminDashboard: React.FC = () => {
               <button className="icon-button"><Filter size={16}/></button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginTop: '1rem' }}>
-              <div className="timeline-item">
-                <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--accent-primary)', border: '2px solid var(--bg-surface)', zIndex: 1, marginTop: '4px' }}></div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Morning Shift</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>09:00 - 18:00 • All Departments</div>
-                </div>
-              </div>
-              <div className="timeline-item">
-                <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--info)', border: '2px solid var(--bg-surface)', zIndex: 1, marginTop: '4px' }}></div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Payroll Review</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>11:00 - 12:00 • HR Team</div>
-                </div>
-              </div>
-              <div className="timeline-item">
-                <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--warning)', border: '2px solid var(--bg-surface)', zIndex: 1, marginTop: '4px' }}></div>
-                <div style={{ flex: 1, background: 'var(--bg-glass)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-strong)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                      <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--accent-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}><Activity size={16}/></div>
-                      <div>
-                        <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Team Alignment</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>14:00 - 15:00 • Zoom</div>
-                      </div>
-                    </div>
+              {shifts.length > 0 ? shifts.map((s, idx) => (
+                <div key={s.id} className="timeline-item">
+                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: idx % 2 === 0 ? 'var(--accent-primary)' : 'var(--info)', border: '2px solid var(--bg-surface)', zIndex: 1, marginTop: '4px' }}></div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>{s.name}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{s.start_time.substring(0, 5)} - {s.end_time.substring(0, 5)} • {s.required_hours}h required</div>
                   </div>
-                  <button className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', justifyContent: 'center' }}>Join Now <ArrowRight size={14}/></button>
                 </div>
-              </div>
+              )) : (
+                <div style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>No active shifts found.</div>
+              )}
             </div>
           </div>
           
@@ -307,7 +307,7 @@ const AdminDashboard: React.FC = () => {
                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Onsite</span>
                  </div>
                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-                   <span style={{ fontSize: '1.5rem', fontWeight: 700 }}>{stats.wfhPending}</span>
+                   <span style={{ fontSize: '1.5rem', fontWeight: 700 }}>{stats.activeWfh}</span>
                    <div style={{ width: '40px', height: '50px', borderRadius: '20px 20px 0 0', background: 'linear-gradient(to top, var(--accent-secondary), var(--pink-400))' }}></div>
                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Remote</span>
                  </div>

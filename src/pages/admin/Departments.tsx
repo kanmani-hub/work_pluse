@@ -13,6 +13,7 @@ const AdminDepartments: React.FC = () => {
   const [toast, setToast] = useState('');
   
   const [departments, setDepartments] = useState<any[]>([]);
+  const [unassignedCount, setUnassignedCount] = useState(0);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   
@@ -29,9 +30,12 @@ const AdminDepartments: React.FC = () => {
 
   const fetchDepartments = async () => {
     setLoading(true);
-    const { data, error } = await departmentService.getDepartments();
+    const { data, unassigned, error } = await departmentService.getDepartments();
     if (data) {
       setDepartments(data);
+    }
+    if (unassigned !== undefined) {
+      setUnassignedCount(unassigned);
     }
     setLoading(false);
   };
@@ -170,7 +174,7 @@ const AdminDepartments: React.FC = () => {
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-100)', color: 'var(--warning)' }}><AlertTriangle size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>0</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>{unassignedCount}</div>
             <div className="sc-title">Unassigned Employees</div>
           </div>
         </div>

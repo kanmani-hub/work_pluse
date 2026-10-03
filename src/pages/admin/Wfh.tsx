@@ -63,6 +63,9 @@ const AdminWfh: React.FC = () => {
   };
 
   useEffect(() => {
+
+    
+    
     fetchRequests();
     
     // Subscribe to realtime changes
@@ -274,10 +277,11 @@ const AdminWfh: React.FC = () => {
               
               <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
                 <option value="All">All Departments</option>
-                <option>Engineering</option>
-                <option>HR</option>
-                <option>Finance</option>
-                <option>Support</option>
+              
+                
+                
+                
+                
               </select>
 
               <select value={filterType} onChange={e => setFilterType(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>

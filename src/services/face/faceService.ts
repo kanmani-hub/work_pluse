@@ -75,26 +75,20 @@ export const faceService = {
     }
 
     // 3. Store registration metadata (no raw biometrics)
-    const nowIso = new Date().toISOString();
-    // @ts-ignore
-    const { data: newReg, error: insertErr } = await supabase
-      .from('face_registrations')
-      .insert({
-        employee_id: employeeId,
-        registration_status: 'REGISTERED',
-        registered_at: nowIso,
-        registered_by: adminEmpId,
-        provider: 'DEFAULT_PROVIDER',
-        provider_reference: providerResult.providerReference || null,
-        consent_recorded_at: nowIso,
-        consent_version: 'v1.0',
-        is_active: true
-      } as any)
-      .select()
-      .single() as any;
+    // Removed: The Supabase Edge Function 'face-verification' now securely handles the DB insert 
+    // using the service_role key to prevent RLS violations and spoofing.
 
-    if (insertErr) return { data: null, error: new Error(insertErr.message) };
-    return { data: newReg, error: null };
+    return { 
+      data: {
+        id: 'handled-by-backend', // Dummy ID since we don't query the created record back immediately
+        employee_id: employeeId,
+        provider: 'AWS_REKOGNITION',
+        provider_reference: providerResult.providerReference || null,
+        registration_status: 'REGISTERED',
+        is_active: true
+      } as any, 
+      error: null 
+    };
   },
 
   /**

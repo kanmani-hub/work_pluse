@@ -154,16 +154,33 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
               display: 'flex', flexDirection: 'column', overflow: 'hidden',
               animation: 'fadeIn var(--transition-fast)'
             }}>
-              <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ fontSize: '0.875rem', fontWeight: 600, margin: 0, color: 'var(--text-primary)' }}>Notifications</h3>
-                <button onClick={async () => {
-                  await notificationService.markAllNotificationsAsRead();
-                  setUnreadCount(0);
-                  const { data } = await notificationService.getMyNotifications();
-                  if (data) setNotifications(data.slice(0, 5));
-                }} style={{ background: 'none', border: 'none', color: 'var(--primary-400)', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                  <CheckCircle2 size={14}/> Mark all as read
-                </button>
+              <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                  <h3 style={{ fontSize: '0.875rem', fontWeight: 600, margin: 0, color: 'var(--text-primary)' }}>Notifications</h3>
+                  <button onClick={() => {
+                    setShowDropdown(false);
+                    navigate(role === 'admin' ? '/admin/settings' : '/employee/profile');
+                  }} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                    Settings
+                  </button>
+                </div>
+                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                  <button onClick={async () => {
+                    await notificationService.markAllNotificationsAsRead();
+                    setUnreadCount(0);
+                    const { data } = await notificationService.getMyNotifications();
+                    if (data) setNotifications(data.slice(0, 5));
+                  }} style={{ background: 'none', border: 'none', color: 'var(--primary-400)', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', padding: 0 }}>
+                    <CheckCircle2 size={14}/> Mark all as read
+                  </button>
+                  <button onClick={async () => {
+                    await notificationService.clearReadNotifications();
+                    const { data } = await notificationService.getMyNotifications();
+                    if (data) setNotifications(data.slice(0, 5));
+                  }} style={{ background: 'none', border: 'none', color: 'var(--danger)', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', padding: 0 }}>
+                    Clear Read
+                  </button>
+                </div>
               </div>
               <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
                 {notifications.length === 0 ? (

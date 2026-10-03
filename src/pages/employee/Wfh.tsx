@@ -26,7 +26,10 @@ const EmployeeWfh: React.FC = () => {
   const [reqError, setReqError] = useState('');
   
   // Attendance Prototype State (If today is WFH)
-  const [isWfhToday] = useState(true); // Mocking today is WFH
+  const [isWfhToday, setIsWfhToday] = useState(false);
+  const [metrics, setMetrics] = useState({ used: 0, pending: 0, approved: 0, rejected: 0, remaining: 0 });
+  const [upcomingWfh, setUpcomingWfh] = useState<any[]>([]);
+  
   const [todayAttendanceState, setTodayAttendanceState] = useState<'not_started' | 'working' | 'on_break' | 'clocked_out'>('not_started');
   const [showWfhClockModal, setShowWfhClockModal] = useState(false);
   const [workTime, setWorkTime] = useState(0);
@@ -34,28 +37,75 @@ const EmployeeWfh: React.FC = () => {
   const fetchWfh = async () => {
     if (!employee?.id) return;
     setLoading(true);
+    
+
     const { data, error } = await wfhService.getMyWFHRequests(employee.id);
+    
     if (data) {
-      setHistory(data.map((h: any) => ({
+      const mapped = data.map((h: any) => ({
         id: h.id,
         date: new Date(h.request_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
         rawDate: h.request_date,
-        type: 'Full Day', // Assuming Full day for now as schema doesn't specify half day WFH
-        shift: '-',
+        type: h.is_half_day ? 'Half Day' : 'Full Day',
+        shift: (employee as any)?.shifts?.name || 'General Shift',
         hours: '-',
         reason: h.reason,
         requestedOn: new Date(h.requested_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
         status: h.status.charAt(0).toUpperCase() + h.status.slice(1).toLowerCase(),
         approvedBy: h.reviewed_by ? 'Reviewer' : '-',
         rejectReason: h.reviewer_remarks
-      })));
+      }));
+      setHistory(mapped);
+
+      const now = new Date();
+      // Ensure YYYY-MM-DD format regardless of locale
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const currentMonthStr = todayStr.substring(0, 7);
+      
+      let used = 0;
+      let pending = 0;
+      let approvedTotal = 0;
+      let rejected = 0;
+      
+      const upcoming: any[] = [];
+      let todayWfh: any = null;
+
+      mapped.forEach((h: any) => {
+        if (h.status === 'Pending') pending++;
+        if (h.status === 'Rejected') rejected++;
+        if (h.status === 'Approved') approvedTotal++;
+        
+        if (h.status === 'Approved') {
+          // Used in current calendar month AND date has occurred (<= today)
+          if (h.rawDate.substring(0, 7) === currentMonthStr && h.rawDate <= todayStr) {
+            used += (h.type === 'Half Day' ? 0.5 : 1);
+          }
+          // Today's WFH
+          if (h.rawDate === todayStr) {
+            todayWfh = h;
+          }
+          // Upcoming
+          if (h.rawDate > todayStr) {
+            upcoming.push(h);
+          }
+        }
+      });
+
+      upcoming.sort((a, b) => a.rawDate.localeCompare(b.rawDate));
+      
+      const maxMonthlyWfhDays = parseInt(appSettings?.wfhMaxDaysPerMonth as any) || 2;
+      const remaining = Math.max(0, maxMonthlyWfhDays - used);
+      
+      setMetrics({ used, pending, approved: approvedTotal, rejected, remaining });
+      setUpcomingWfh(upcoming);
+      setIsWfhToday(!!todayWfh);
     }
     setLoading(false);
   };
 
   useEffect(() => {
     fetchWfh();
-  }, []);
+  }, [employee?.id, appSettings?.wfhMaxDaysPerMonth]);
 
   useEffect(() => {
     let interval: any;
@@ -88,6 +138,12 @@ const EmployeeWfh: React.FC = () => {
     if (!reqDate) { setReqError('Please select a date.'); return; }
     if (!reqReason) { setReqError('Please provide a reason.'); return; }
     if (!employee?.id) { setReqError('Unauthorized session.'); return; }
+    
+    const maxMonthlyWfhDays = parseInt(appSettings?.wfhMaxDaysPerMonth as any) || 2;
+    if (metrics.used + metrics.pending >= maxMonthlyWfhDays) {
+      setReqError(`You have reached the maximum WFH limit of ${maxMonthlyWfhDays} days per month.`);
+      return;
+    }
     
     // Disable submit implicitly by showing loading / closing modal later
     const { error } = await wfhService.createWFHRequest({
@@ -144,7 +200,16 @@ const EmployeeWfh: React.FC = () => {
     setTimeout(() => setToastMessage(''), 3000);
   };
 
-  const calendarDays = Array.from({length: 30}, (_, i) => i + 1);
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+  const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+  const startEmptyCells = (firstDay + 6) % 7;
+  const currentMonthStr = `${currentYear}-${(currentMonth + 1).toString().padStart(2, '0')}`;
+  
+  const calendarDays = Array.from({length: daysInMonth}, (_, i) => i + 1);
+  const emptyCells = Array.from({length: startEmptyCells}, (_, i) => i);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', position: 'relative' }}>
@@ -176,23 +241,23 @@ const EmployeeWfh: React.FC = () => {
           <div className="tracking-kpi-grid">
             <div className="tracking-kpi-card">
               <div className="sc-title">WFH Used</div>
-              <div className="sc-val">4 Days</div>
+              <div className="sc-val">{metrics.used} Days</div>
             </div>
             <div className="tracking-kpi-card">
               <div className="sc-title">WFH Remaining</div>
-              <div className="sc-val">6 Days</div>
+              <div className="sc-val">{metrics.remaining} Days</div>
             </div>
             <div className="tracking-kpi-card">
               <div className="sc-title">Pending Requests</div>
-              <div className="sc-val" style={{ color: 'var(--warning)' }}>1</div>
+              <div className="sc-val" style={{ color: 'var(--warning)' }}>{metrics.pending}</div>
             </div>
             <div className="tracking-kpi-card">
               <div className="sc-title">Approved</div>
-              <div className="sc-val" style={{ color: 'var(--success)' }}>3</div>
+              <div className="sc-val" style={{ color: 'var(--success)' }}>{metrics.approved}</div>
             </div>
             <div className="tracking-kpi-card">
               <div className="sc-title">Rejected</div>
-              <div className="sc-val" style={{ color: 'var(--danger)' }}>0</div>
+              <div className="sc-val" style={{ color: 'var(--danger)' }}>{metrics.rejected}</div>
             </div>
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '-1rem' }}>
@@ -206,75 +271,91 @@ const EmployeeWfh: React.FC = () => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           
           {/* Today WFH Attendance Proto */}
-          {isWfhToday && (
-            <div className="card" style={{ borderTop: '4px solid var(--primary-600)' }}>
-              <h3 className="card-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                Today's Work Mode: WFH
-                <span className="badge badge-primary">WFH</span>
-              </h3>
-              
-              <div style={{ margin: '1.5rem 0', textAlign: 'center' }}>
-                {todayAttendanceState === 'not_started' && (
-                  <button onClick={() => setShowWfhClockModal(true)} className="btn btn-primary" style={{ padding: '1rem 2rem', fontSize: '1.125rem', borderRadius: 'var(--radius-full)' }}>
-                    Start Work
-                  </button>
-                )}
-                
-                {todayAttendanceState === 'working' && (
-                  <>
-                    <div style={{ color: 'var(--success)', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                      <div className="pulse-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--success)' }} />
-                      Working from Home
-                    </div>
-                    <div style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', marginBottom: '1.5rem' }}>
-                      {formatTime(workTime)}
-                    </div>
-                    <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-                      <button onClick={() => setTodayAttendanceState('on_break')} className="btn btn-outline" style={{ borderRadius: 'var(--radius-full)' }}><Coffee size={18}/> Start Break</button>
-                      <button onClick={() => setTodayAttendanceState('clocked_out')} className="btn" style={{ backgroundColor: 'var(--danger)', color: 'var(--bg-primary)', borderRadius: 'var(--radius-full)' }}><LogOut size={18}/> Clock Out</button>
-                    </div>
-                  </>
-                )}
+          {/* Today Work Mode */}
+          <div className="card" style={{ borderTop: `4px solid ${isWfhToday ? 'var(--primary-600)' : 'var(--gray-400)'}` }}>
+            <h3 className="card-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              Today's Work Mode: {isWfhToday ? 'WFH' : 'OFFICE'}
+              <span className={`badge ${isWfhToday ? 'badge-primary' : 'badge-gray'}`}>{isWfhToday ? 'WFH' : 'OFFICE'}</span>
+            </h3>
+            
+            {isWfhToday ? (
+              <>
+                <div style={{ margin: '1.5rem 0', textAlign: 'center' }}>
+                  {todayAttendanceState === 'not_started' && (
+                    <button onClick={() => setShowWfhClockModal(true)} className="btn btn-primary" style={{ padding: '1rem 2rem', fontSize: '1.125rem', borderRadius: 'var(--radius-full)' }}>
+                      Start Work
+                    </button>
+                  )}
+                  
+                  {todayAttendanceState === 'working' && (
+                    <>
+                      <div style={{ color: 'var(--success)', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                        <div className="pulse-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--success)' }} />
+                        Working from Home
+                      </div>
+                      <div style={{ fontSize: '2rem', fontWeight: 700, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums', marginBottom: '1.5rem' }}>
+                        {formatTime(workTime)}
+                      </div>
+                      <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+                        <button onClick={() => setTodayAttendanceState('on_break')} className="btn btn-outline" style={{ borderRadius: 'var(--radius-full)' }}><Coffee size={18}/> Start Break</button>
+                        <button onClick={() => setTodayAttendanceState('clocked_out')} className="btn" style={{ backgroundColor: 'var(--danger)', color: 'var(--bg-primary)', borderRadius: 'var(--radius-full)' }}><LogOut size={18}/> Clock Out</button>
+                      </div>
+                    </>
+                  )}
 
-                {todayAttendanceState === 'on_break' && (
-                  <>
-                    <div style={{ color: 'var(--warning)', fontWeight: 600, marginBottom: '1rem' }}>ON BREAK</div>
-                    <button onClick={() => setTodayAttendanceState('working')} className="btn btn-primary" style={{ borderRadius: 'var(--radius-full)' }}>Resume Work</button>
-                  </>
-                )}
+                  {todayAttendanceState === 'on_break' && (
+                    <>
+                      <div style={{ color: 'var(--warning)', fontWeight: 600, marginBottom: '1rem' }}>ON BREAK</div>
+                      <button onClick={() => setTodayAttendanceState('working')} className="btn btn-primary" style={{ borderRadius: 'var(--radius-full)' }}>Resume Work</button>
+                    </>
+                  )}
 
-                {todayAttendanceState === 'clocked_out' && (
-                  <div style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Clocked Out. Shift Completed.</div>
-                )}
+                  {todayAttendanceState === 'clocked_out' && (
+                    <div style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Clocked Out. Shift Completed.</div>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', color: 'var(--text-secondary)', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                  <div>Clock In: <strong>{todayAttendanceState !== 'not_started' ? new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}</strong></div>
+                  <div>Shift: <strong>{(employee as any)?.shifts?.name || 'General Shift'}</strong></div>
+                </div>
+              </>
+            ) : (
+              <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                You are scheduled for Office today.<br/>
+                Please use the standard Attendance dashboard to Clock In.
               </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', color: 'var(--text-secondary)', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
-                <div>Clock In: <strong>{todayAttendanceState !== 'not_started' ? '09:02 AM' : '--:--'}</strong></div>
-                <div>Shift: <strong>09:00 AM — 06:00 PM</strong></div>
-              </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Upcoming WFH */}
           <div className="card">
             <h3 className="card-title" style={{ marginBottom: '1rem' }}>Upcoming WFH</h3>
             {loading ? (
               <div className="skeleton" style={{ height: '100px' }} />
+            ) : upcomingWfh.length === 0 ? (
+              <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                No upcoming WFH
+              </div>
             ) : (
-              <div style={{ backgroundColor: 'var(--gray-50)', padding: '1.25rem', borderRadius: 'var(--radius-md)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                  <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>26 September 2026</div>
-                  <span className="badge badge-success">APPROVED</span>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.875rem' }}>
-                  <div><span style={{ color: 'var(--text-secondary)' }}>Duration:</span> <strong>Full Day</strong></div>
-                  <div><span style={{ color: 'var(--text-secondary)' }}>Assigned Shift:</span> <strong>General Shift</strong></div>
-                  <div><span style={{ color: 'var(--text-secondary)' }}>Timing:</span> <strong>9:00 AM — 6:00 PM</strong></div>
-                  <div><span style={{ color: 'var(--text-secondary)' }}>Required:</span> <strong>8 Hours</strong></div>
-                </div>
-                <button onClick={() => setSelectedDetail(history.find(h => h.id === 'WFH-2026-004'))} className="btn btn-outline" style={{ marginTop: '1rem', width: '100%', fontSize: '0.875rem' }}>
-                  View Details
-                </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {upcomingWfh.map(u => (
+                  <div key={u.id} style={{ backgroundColor: 'var(--gray-50)', padding: '1.25rem', borderRadius: 'var(--radius-md)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                      <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>{u.date}</div>
+                      <span className="badge badge-success">APPROVED</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.875rem' }}>
+                      <div><span style={{ color: 'var(--text-secondary)' }}>Duration:</span> <strong>{u.type}</strong></div>
+                      <div><span style={{ color: 'var(--text-secondary)' }}>Assigned Shift:</span> <strong>{u.shift}</strong></div>
+                      <div><span style={{ color: 'var(--text-secondary)' }}>Timing:</span> <strong>9:00 AM — 6:00 PM</strong></div>
+                      <div><span style={{ color: 'var(--text-secondary)' }}>Required:</span> <strong>8 Hours</strong></div>
+                    </div>
+                    <button onClick={() => setSelectedDetail(u)} className="btn btn-outline" style={{ marginTop: '1rem', width: '100%', fontSize: '0.875rem' }}>
+                      View Details
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -295,7 +376,7 @@ const EmployeeWfh: React.FC = () => {
               WFH Policy <span className="badge badge-gray" style={{ fontSize: '0.75rem' }}>COMPANY-CONFIGURED</span>
             </h3>
             <ul style={{ fontSize: '0.875rem', color: 'var(--gray-700)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Maximum WFH:</span> <strong>{appSettings?.wfhMaxDaysPerMonth ?? 10} days/month</strong></li>
+              <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Maximum WFH:</span> <strong>{parseInt(appSettings?.wfhMaxDaysPerMonth as any) || 2} days/month</strong></li>
               <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Maximum Consecutive:</span> <strong>3 days</strong></li>
               <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Half-Day WFH:</span> <strong>Allowed</strong></li>
               <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Approval:</span> <strong>Required</strong></li>
@@ -322,9 +403,9 @@ const EmployeeWfh: React.FC = () => {
                 {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => (
                   <div key={d} className="cal-head">{d}</div>
                 ))}
-                <div className="cal-day empty"></div>
+                {emptyCells.map(i => <div key={`empty-${i}`} className="cal-day empty"></div>)}
                 {calendarDays.map(day => {
-                  const req = history.find(h => h.rawDate === `2026-09-${day.toString().padStart(2, '0')}`);
+                  const req = history.find(h => h.rawDate === `${currentMonthStr}-${day.toString().padStart(2, '0')}`);
                   return (
                     <div key={day} onClick={() => req && setSelectedDetail(req)} className={`cal-day ${!req ? 'future' : ''}`} style={{ cursor: req ? 'pointer' : 'default' }}>
                       <span className="cal-date">{day}</span>

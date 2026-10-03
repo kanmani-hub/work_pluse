@@ -313,10 +313,11 @@ const AdminEmployees: React.FC = () => {
             
             <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto' }}>
               <option value="All">All Departments</option>
-              <option>Development</option>
-              <option>HR</option>
-              <option>Marketing</option>
-              <option>Sales</option>
+              
+              
+              
+              
+              
             </select>
             
             <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto' }}>
@@ -656,10 +657,9 @@ const AdminEmployees: React.FC = () => {
               )}
               {profileTab === 'Attendance' && (
                 <div className="card">
-                  <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>September 2026 Snapshot</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                    <div style={{ padding: '1rem', backgroundColor: 'var(--success-50)', borderRadius: 'var(--radius-md)' }}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Present Days</div><div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--success)' }}>18</div></div>
-                    <div style={{ padding: '1rem', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)' }}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Late Logins</div><div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--danger)' }}>3</div></div>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>Recent Attendance</h3>
+                  <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-secondary)' }}>
+                    Detailed attendance records are available in the Attendance module.
                   </div>
                   <button onClick={() => { setShowProfile(null); navigate('/admin/attendance'); }} className="btn btn-outline" style={{ width: '100%', marginTop: '1.5rem' }}>View Full Attendance</button>
                 </div>
@@ -743,10 +743,11 @@ const AdminEmployees: React.FC = () => {
             <form onSubmit={handleAssignOffice} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="form-label">Office</label>
-                <select className="form-control" value={formData.office || assignOfficeModal.office} onChange={e => setFormData({...formData, office: e.target.value})}>
-                  <option>Chennai Main Office</option>
-                  <option>Chennai Branch</option>
-                  <option>Remote</option>
+                <select className="form-control" value={formData.office_id || assignOfficeModal.office_id || ''} onChange={e => setFormData({...formData, office_id: e.target.value})}>
+                  <option value="">Select an office...</option>
+                  {offices.map(o => (
+                    <option key={o.id} value={o.id}>{o.name}</option>
+                  ))}
                 </select>
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>

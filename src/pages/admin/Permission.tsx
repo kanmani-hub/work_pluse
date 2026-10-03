@@ -75,6 +75,9 @@ const AdminPermission: React.FC = () => {
   };
 
   useEffect(() => {
+
+    
+    
     fetchRequests();
 
     const channel = realtimeService.subscribeToAdminPermission((payload) => {
@@ -324,7 +327,8 @@ const AdminPermission: React.FC = () => {
               </div>
               
               <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
-                <option value="All">All Departments</option><option>Engineering</option><option>HR</option><option>Finance</option>
+                <option value="All">All Departments</option>
+              
               </select>
 
               <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
@@ -535,10 +539,10 @@ const AdminPermission: React.FC = () => {
               <div>
                 <h3 className="section-title">Usage & Limits (Monthly)</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
-                  <div className="balance-card"><div className="bc-label">Allowed</div><div className="bc-val">10h</div></div>
-                  <div className="balance-card"><div className="bc-label">Used</div><div className="bc-val">6h</div></div>
-                  <div className="balance-card"><div className="bc-label">Pending</div><div className="bc-val">1h 30m</div></div>
-                  <div className="balance-card" style={{ backgroundColor: 'var(--primary-50)', border: '1px solid var(--primary-200)' }}><div className="bc-label" style={{ color: 'var(--primary-700)' }}>Remaining</div><div className="bc-val" style={{ color: 'var(--primary-800)' }}>2h 30m</div></div>
+                  <div className="balance-card"><div className="bc-label">Allowed</div><div className="bc-val">Policy</div></div>
+                  <div className="balance-card"><div className="bc-label">Used</div><div className="bc-val">-</div></div>
+                  <div className="balance-card"><div className="bc-label">Pending</div><div className="bc-val">-</div></div>
+                  <div className="balance-card" style={{ backgroundColor: 'var(--primary-50)', border: '1px solid var(--primary-200)' }}><div className="bc-label" style={{ color: 'var(--primary-700)' }}>Remaining</div><div className="bc-val" style={{ color: 'var(--primary-800)' }}>-</div></div>
                 </div>
               </div>
 

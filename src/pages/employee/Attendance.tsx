@@ -262,7 +262,7 @@ const EmployeeAttendance: React.FC = () => {
     const locResult = await locationService.verifyCurrentLocation(action === 'CLOCK_IN' ? 'CLOCK_IN' : 'LOCATION_CHECK');
     setLocationVerification(locResult);
     
-    if (locResult.result !== 'INSIDE') {
+    if (appSettings?.requireGeolocation && locResult.result !== 'INSIDE') {
       alert("You are outside the office location. " + (action === 'CLOCK_IN' ? "Clock In" : "Face Registration") + " is unavailable.");
       setClockInFlowStep(0);
       return;
@@ -294,7 +294,7 @@ const EmployeeAttendance: React.FC = () => {
       const locResult = await locationService.verifyCurrentLocation('CLOCK_IN');
       setLocationVerification(locResult);
       
-      if (locResult.result !== 'INSIDE') {
+      if (appSettings?.requireGeolocation && locResult.result !== 'INSIDE') {
         alert("You are outside the office location. Clock In is unavailable.");
         setClockInFlowStep(0);
         return;
@@ -585,7 +585,7 @@ const EmployeeAttendance: React.FC = () => {
               )}
             </div>
             
-            {assignedOffice && locationVerification?.result === 'INSIDE' && (
+            {assignedOffice && (!appSettings?.requireGeolocation || locationVerification?.result === 'INSIDE') && (
               <div style={{ display: 'flex', justifyContent: 'center' }}>
                 {appSettings?.requireFaceVerification ? (
                   // Face verification is ON — require registration then face check

@@ -19,6 +19,9 @@ export const departmentService = {
       `)
       .order('name');
       
+    // Fetch unassigned count
+    const { count: unassigned } = await supabase.from('employees').select('*', { count: 'exact', head: true }).is('department_id', null).eq('status', 'ACTIVE');
+      
     if (error) {
       console.error('Error fetching departments:', error);
       return { data: null, error };
@@ -30,7 +33,7 @@ export const departmentService = {
       employeeCount: d.employees ? d.employees.length : 0
     })) || [];
     
-    return { data: mapped, error: null };
+    return { data: mapped, error: null, unassigned: unassigned || 0 };
   },
 
   async createDepartment(department: { name: string; description: string | null; is_active: boolean }) {

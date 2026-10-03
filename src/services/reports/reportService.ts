@@ -4,38 +4,82 @@ export const reportService = {
   /**
    * KPI Dashboard Metrics
    */
-  async getDashboardMetrics(startDate: string, endDate: string) {
-    // Basic employee count
-    const { count: totalEmployees } = await supabase.from('employees').select('id', { count: 'exact', head: true });
+  async getDashboardMetrics(startDate: string, endDate: string, departmentId?: string, officeId?: string) {
+    // Basic employee count and filter IDs
+    let empQuery = supabase.from('employees').select('id', { count: 'exact' }).eq('status', 'ACTIVE');
+    if (departmentId && departmentId !== 'All') empQuery = empQuery.eq('department_id', departmentId);
+    if (officeId && officeId !== 'All') empQuery = empQuery.eq('office_id', officeId);
+    
+    const { data: emps, count: totalEmployees } = await empQuery;
+    const hasFilter = (departmentId && departmentId !== 'All') || (officeId && officeId !== 'All');
+    const empIds = emps ? (emps as any[]).map(e => e.id) : [];
+
+    if (hasFilter && empIds.length === 0) {
+      // Return zeroed metrics if filter yields no employees
+      return {
+        totalEmployees: 0, attendanceRate: '0.0%', presentToday: 0, lateArrivals: 0,
+        earlyLogouts: 0, wfhEmployees: 0, onLeave: 0, avgWorkingHours: '0h 0m',
+        payrollProcessed: '₹0.0L', departmentAttendance: [], attendanceTrend: [],
+        workforceDistribution: { present: 0, wfh: 0, leave: 0, absent: 0 },
+        securityAnalytics: { verifiedInside: '0%', outsideAttempts: '0%', wfhBypass: '0%', locationUnavailable: '0%', faceVerified: '0%', faceFailed: '0%', faceNotRegistered: '0 emp', faceNotRequired: '0%' }
+      };
+    }
 
     // Fetch attendance for the range
-    const { data: attendanceLogs } = await supabase.from('attendance')
-      .select('id, status, clock_in, late_minutes, early_logout_minutes, work_minutes, date')
-      .gte('date', startDate)
-      .lte('date', endDate);
+    let attQuery = supabase.from('attendance')
+      .select('id, employee_id, status, clock_in_at, late_minutes, early_logout_minutes, worked_hours, attendance_date, employees!inner(departments(name))')
+      .gte('attendance_date', startDate)
+      .lte('attendance_date', endDate);
+    if (hasFilter) attQuery = attQuery.in('employee_id', empIds);
+    const { data: attendanceLogs } = await attQuery;
 
     // Fetch WFH for the range
-    const { count: wfhCount } = await supabase.from('wfh_requests')
+    let wfhQuery = supabase.from('wfh_requests')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'APPROVED')
       .gte('request_date', startDate)
       .lte('request_date', endDate);
+    if (hasFilter) wfhQuery = wfhQuery.in('employee_id', empIds);
+    const { count: wfhCount } = await wfhQuery;
 
     // Fetch Leave for the range
-    const { count: leaveCount } = await supabase.from('leave_requests')
+    let leaveQuery = supabase.from('leave_requests')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'APPROVED')
       .gte('start_date', startDate)
       .lte('end_date', endDate);
+    if (hasFilter) leaveQuery = leaveQuery.in('employee_id', empIds);
+    const { count: leaveCount } = await leaveQuery;
 
     // Fetch Payroll for the range
     const startMonth = new Date(startDate).getMonth() + 1;
     const startYear = new Date(startDate).getFullYear();
-    const { data: payrollData } = await supabase.from('payroll')
+    let payrollQuery = supabase.from('payroll')
       .select('net_salary')
       .in('status', ['APPROVED', 'PAYMENT_PENDING', 'PAID'])
       .eq('payroll_month', startMonth)
       .eq('payroll_year', startYear);
+    if (hasFilter) payrollQuery = payrollQuery.in('employee_id', empIds);
+    const { data: payrollData } = await payrollQuery;
+
+    // Fetch Security Analytics Data
+    let locQuery = supabase.from('location_verification_events')
+      .select('result')
+      .gte('verified_at', startDate + 'T00:00:00Z')
+      .lte('verified_at', endDate + 'T23:59:59Z');
+    if (hasFilter) locQuery = locQuery.in('employee_id', empIds);
+    const { data: locVerifications } = await locQuery;
+
+    let faceQuery = supabase.from('face_verification_events')
+      .select('result')
+      .gte('verified_at', startDate + 'T00:00:00Z')
+      .lte('verified_at', endDate + 'T23:59:59Z');
+    if (hasFilter) faceQuery = faceQuery.in('employee_id', empIds);
+    const { data: faceVerifications } = await faceQuery;
+
+    let faceRegQuery = supabase.from('face_registrations').select('registration_status');
+    if (hasFilter) faceRegQuery = faceRegQuery.in('employee_id', empIds);
+    const { data: faceRegs } = await faceRegQuery;
 
     let totalPayroll = 0;
     if (payrollData) {
@@ -50,22 +94,60 @@ export const reportService = {
     let totalWorkMinutes = 0;
     let presentDays = 0;
 
+    let deptStats: any = {};
+    let dailyStats: Record<string, { total: number; present: number }> = {};
     if (attendanceLogs) {
       for (const log of (attendanceLogs as any[])) {
         if (log.status === 'PRESENT' || log.status === 'HALF_DAY') present++;
         if (log.late_minutes && log.late_minutes > 0) late++;
         if (log.early_logout_minutes && log.early_logout_minutes > 0) earlyLogout++;
-        if (log.work_minutes) {
-          totalWorkMinutes += log.work_minutes;
+        if (log.worked_hours) {
+          totalWorkMinutes += (log.worked_hours * 60);
           presentDays++;
         }
+        
+        const deptName = log.employees?.departments?.name || 'Unassigned';
+        if (!deptStats[deptName]) deptStats[deptName] = { total: 0, present: 0 };
+        deptStats[deptName].total++;
+        if (log.status === 'PRESENT' || log.status === 'HALF_DAY') deptStats[deptName].present++;
+        
+        const dStr = log.attendance_date.split('T')[0];
+        if (!dailyStats[dStr]) dailyStats[dStr] = { total: 0, present: 0 };
+        dailyStats[dStr].total++;
+        if (log.status === 'PRESENT' || log.status === 'HALF_DAY') dailyStats[dStr].present++;
       }
     }
+
+    const attendanceTrend = Object.keys(dailyStats)
+      .sort()
+      .slice(-5)
+      .map(dateStr => {
+        const d = new Date(dateStr);
+        const label = d.toLocaleDateString('en-US', { weekday: 'short' });
+        const val = dailyStats[dateStr].total > 0 ? Math.round((dailyStats[dateStr].present / dailyStats[dateStr].total) * 100) : 0;
+        return { label, val };
+      });
 
     const attendanceRate = totalEmployees && totalEmployees > 0 && attendanceLogs ? (present / (totalEmployees * (attendanceLogs.length ? (attendanceLogs.length/totalEmployees) : 1))) * 100 : 0;
     const avgWorkMin = presentDays > 0 ? totalWorkMinutes / presentDays : 0;
     const avgHours = Math.floor(avgWorkMin / 60);
     const avgMins = Math.floor(avgWorkMin % 60);
+
+    const departmentAttendance = Object.keys(deptStats).map(dept => {
+      const rate = deptStats[dept].total > 0 ? Math.round((deptStats[dept].present / deptStats[dept].total) * 100) : 0;
+      return { dept, val: rate };
+    });
+
+    const locTotal = locVerifications?.length || 1;
+    const locVerified = (locVerifications as any[])?.filter(v => v.result === 'SUCCESS').length || 0;
+    const locFailed = (locVerifications as any[])?.filter(v => v.result === 'FAILED' || v.result === 'OUTSIDE_GEOFENCE').length || 0;
+    const locWfh = (locVerifications as any[])?.filter(v => v.result === 'WFH').length || 0;
+    const locUnavailable = (locVerifications as any[])?.filter(v => v.result === 'ERROR').length || 0;
+
+    const faceTotal = faceVerifications?.length || 1;
+    const faceVerified = (faceVerifications as any[])?.filter(v => v.result === 'SUCCESS').length || 0;
+    const faceFailed = (faceVerifications as any[])?.filter(v => v.result === 'FAILED').length || 0;
+    const faceNotRegistered = (faceRegs as any[])?.filter(r => r.registration_status !== 'COMPLETED').length || 0;
 
     return {
       totalEmployees: totalEmployees || 0,
@@ -76,7 +158,26 @@ export const reportService = {
       wfhEmployees: wfhCount || 0,
       onLeave: leaveCount || 0,
       avgWorkingHours: `${avgHours}h ${avgMins}m`,
-      payrollProcessed: `₹${(totalPayroll / 100000).toFixed(1)}L`
+      payrollProcessed: `₹${(totalPayroll / 100000).toFixed(1)}L`,
+      departmentAttendance,
+      attendanceTrend,
+      // For actual reporting we can use the exact queries, but these variables give us a good base
+      workforceDistribution: {
+        present: present,
+        wfh: wfhCount || 0,
+        leave: leaveCount || 0,
+        absent: (totalEmployees || 0) - present - (wfhCount || 0) - (leaveCount || 0)
+      },
+      securityAnalytics: {
+        verifiedInside: Math.round((locVerified / locTotal) * 100) + '%',
+        outsideAttempts: Math.round((locFailed / locTotal) * 100) + '%',
+        wfhBypass: Math.round((locWfh / locTotal) * 100) + '%',
+        locationUnavailable: Math.round((locUnavailable / locTotal) * 100) + '%',
+        faceVerified: Math.round((faceVerified / faceTotal) * 100) + '%',
+        faceFailed: Math.round((faceFailed / faceTotal) * 100) + '%',
+        faceNotRegistered: faceNotRegistered + ' emp',
+        faceNotRequired: '0%' // Handled by policy, placeholder for now
+      }
     };
   },
 
@@ -85,10 +186,10 @@ export const reportService = {
    */
   async getAttendanceReport(startDate: string, endDate: string, departmentId?: string) {
     let query = supabase.from('attendance')
-      .select('*, employees!inner(first_name, last_name, employee_code, departments(id, name)), offices(name), shift_templates(name)')
-      .gte('date', startDate)
-      .lte('date', endDate)
-      .order('date', { ascending: false });
+      .select('*, employees!inner(first_name, last_name, employee_code, department_id, departments(id, name)), shift_templates(name)')
+      .gte('attendance_date', startDate)
+      .lte('attendance_date', endDate)
+      .order('attendance_date', { ascending: false });
 
     if (departmentId && departmentId !== 'All') {
       query = query.eq('employees.department_id', departmentId);

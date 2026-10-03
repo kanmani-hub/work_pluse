@@ -212,28 +212,23 @@ const AdminShifts: React.FC = () => {
         <div className="kpi-grid">
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon"><Clock size={18} /></div></div>
-            <div className="sc-val">5</div>
+            <div className="sc-val">{shifts.length}</div>
             <div className="sc-title">Total Shifts</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-100)', color: 'var(--success)' }}><CheckCircle2 size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--success)' }}>4</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{shifts.filter(s => s.status === 'Active').length}</div>
             <div className="sc-title">Active Shifts</div>
           </div>
           <div className="tracking-kpi-card" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}><Users size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>128</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{shifts.reduce((acc, s) => acc + s.employees, 0)}</div>
             <div className="sc-title">Employees Assigned</div>
           </div>
           <div className="tracking-kpi-card" onClick={() => setFilterOvernight('Overnight')} style={{ cursor: 'pointer' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--purple-100)', color: 'var(--purple-700)' }}><Moon size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--purple-700)' }}>1</div>
+            <div className="sc-val" style={{ color: 'var(--purple-700)' }}>{shifts.filter(s => s.overnight).length}</div>
             <div className="sc-title">Overnight Shifts</div>
-          </div>
-          <div className="tracking-kpi-card" onClick={() => navigate('/admin/roster')} style={{ cursor: 'pointer' }}>
-            <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-100)', color: 'var(--warning)' }}><Activity size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>64</div>
-            <div className="sc-title">Rotational Employees</div>
           </div>
         </div>
       )}
@@ -614,21 +609,8 @@ const AdminShifts: React.FC = () => {
               
               <div>
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>Shift History (Audit)</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem' }}>
-                    <div style={{ color: 'var(--text-secondary)', width: '60px' }}>24 Sep</div>
-                    <div>
-                      <div style={{ fontWeight: 500 }}>Grace period changed from 10m to 15m</div>
-                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>By Admin User</div>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem' }}>
-                    <div style={{ color: 'var(--text-secondary)', width: '60px' }}>20 Sep</div>
-                    <div>
-                      <div style={{ fontWeight: 500 }}>Shift created</div>
-                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>By Admin User</div>
-                    </div>
-                  </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                  Detailed audit logs will be available here using real event data.
                 </div>
               </div>
 
@@ -655,32 +637,11 @@ const AdminShifts: React.FC = () => {
                 <input type="text" className="form-control" placeholder="Search employees..." style={{ paddingLeft: '2.25rem' }} />
               </div>
               
-              <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', maxHeight: '150px', overflowY: 'auto' }}>
-                {[
-                  { id: 'EMP044', name: 'Vivek Sharma', dept: 'Marketing' },
-                  { id: 'EMP045', name: 'Kavitha N', dept: 'Sales' }
-                ].map((emp, i) => (
-                  <label key={emp.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-color)', cursor: 'pointer' }}>
-                    <input type="checkbox" defaultChecked={i===0} style={{ width: '16px', height: '16px' }} />
-                    <div>
-                      <div style={{ fontWeight: 500, fontSize: '0.875rem' }}>{emp.name} ({emp.id})</div>
-                    </div>
-                  </label>
-                ))}
+              <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                Please manage individual and bulk shift assignments in the <button type="button" className="btn btn-outline" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem', marginLeft: '0.5rem' }} onClick={() => { setAssignModal(null); navigate('/admin/employees'); }}>Employees</button> module.
               </div>
-
-              <div>
-                <label className="form-label">Work Mode Override</label>
-                <select className="form-control" defaultValue="Use Default">
-                  <option>Use Default ({assignModal.mode})</option>
-                  <option>Office</option>
-                  <option>WFH</option>
-                </select>
-              </div>
-
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-                <button type="button" onClick={() => setAssignModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Assign Shift</button>
+                <button type="button" onClick={() => setAssignModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Close</button>
               </div>
             </form>
           </div>
@@ -695,7 +656,7 @@ const AdminShifts: React.FC = () => {
               <AlertTriangle size={20} color="var(--warning-600)" /> Shift Conflict Detected
             </h3>
             <div style={{ backgroundColor: 'var(--warning-50)', padding: '1rem', borderRadius: 'var(--radius-md)', color: 'var(--warning-800)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
-              <strong>Vivek Sharma</strong> already has <strong>Morning Shift</strong> assigned for <strong>25 September 2026</strong>.
+              
             </div>
             <div style={{ display: 'flex', gap: '1rem' }}>
               <button type="button" onClick={() => setConflictModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel Assignment</button>

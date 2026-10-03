@@ -327,6 +327,11 @@ input, select, textarea {
   width: 100%;
 }
 
+[data-theme="dark"] select option {
+  background-color: var(--bg-surface-solid);
+  color: var(--text-primary);
+}
+
 input:focus, select:focus, textarea:focus {
   border-color: var(--accent-primary);
   box-shadow: 0 0 0 3px var(--primary-100);
@@ -508,6 +513,8 @@ input:focus, select:focus, textarea:focus {
 /* Tables */
 .table-container {
   overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
   border-radius: var(--radius-lg);
   background: var(--bg-surface);
   backdrop-filter: blur(20px);
@@ -1005,4 +1012,9 @@ input, select, textarea {
         flex: 1;
         min-width: 0;
     }
+}
+
+.table-container {
+    overflow-x: auto;
+    width: 100%;
 }

@@ -4,7 +4,7 @@ export const shiftService = {
   async getShifts() {
     const { data, error } = await supabase
       .from('shift_templates')
-      .select('*')
+      .select('*, shift_assignments(id)')
       .order('created_at', { ascending: false });
     if (error) return { data: null, error };
     return { data, error: null };
