@@ -114,7 +114,6 @@ serve(async (req: Request) => {
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
     console.log('SUPABASE_URL_PRESENT:', !!supabaseUrl);
     console.log('SERVICE_ROLE_KEY_PRESENT:', !!serviceRoleKey);
-    console.log('SERVICE_ROLE_KEY_LENGTH:', serviceRoleKey.length);
 
     const supabaseAdmin = createClient(
       supabaseUrl,
@@ -144,7 +143,6 @@ serve(async (req: Request) => {
         diagnostics: {
           SUPABASE_URL_PRESENT: !!supabaseUrl,
           SERVICE_ROLE_KEY_PRESENT: !!serviceRoleKey,
-          SERVICE_ROLE_KEY_LENGTH: serviceRoleKey.length,
           ADMIN_CLIENT_SELECT_ERROR: testError.message
         }
       }), {
@@ -233,7 +231,6 @@ serve(async (req: Request) => {
         details: employeeError.message,
         diagnostics: {
           SERVICE_ROLE_KEY_PRESENT: !!serviceRoleKey,
-          SERVICE_ROLE_KEY_LENGTH: serviceRoleKey.length,
           ADMIN_CLIENT_SELECT: 'PASS',
           INSERT_ERROR_CODE: employeeError.code,
           INSERT_ERROR_HINT: employeeError.hint,

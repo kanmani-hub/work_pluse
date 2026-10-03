@@ -21,13 +21,16 @@ serve(async (req) => {
 
   try {
     // ── 1. AUTH ──────────────────────────────────────────────────────────
+    const authHeader = req.headers.get('Authorization');
+    const token = authHeader ? authHeader.replace('Bearer ', '') : undefined;
+    
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+      { global: { headers: { Authorization: authHeader || '' } } }
     );
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser();
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(token);
     if (userError || !user) {
       console.error('[face-verification] Auth failed:', userError?.message);
       return jsonResponse({ status: 'AUTHENTICATION_ERROR', failureReason: 'Unauthorized. Please log in again.' }, 401);

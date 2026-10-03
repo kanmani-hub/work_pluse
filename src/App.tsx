@@ -44,7 +44,7 @@ function App() {
           <Route path="/" element={<Navigate to="/login" replace />} />
           
           {/* Admin/HR Routes (Prefix /admin) */}
-          <Route element={<ProtectedRoute allowedRoles={['Admin', 'HR/Staff']} />}>
+          <Route element={<ProtectedRoute allowedRoles={['Admin', 'HR', 'HR/Staff']} />}>
             <Route path="/admin" element={<AppLayout role="admin" />}>
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<AdminDashboard />} />

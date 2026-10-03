@@ -46,7 +46,7 @@ const EmployeeAttendance: React.FC = () => {
 
 
   useEffect(() => {
-    let workingDays = 0, present = 0, late = 0, halfDay = 0, leave = 0, wfh = 0;
+    let workingDays = 0, present = 0, late = 0, halfDay = 0, leave = 0;
     let totalSeconds = 0;
     let totalLateMins = 0;
 
@@ -64,7 +64,6 @@ const EmployeeAttendance: React.FC = () => {
       }
       if (row.originalStatus === 'HALF DAY' || row.is_half_day) halfDay++;
       if (row.originalStatus === 'LEAVE' || row.status === 'LEAVE') leave++;
-      if (row.originalStatus === 'WFH' || row.status === 'WFH') wfh++;
 
       if (row.worked_hours) {
          totalSeconds += Math.floor(row.worked_hours * 3600);
@@ -79,7 +78,8 @@ const EmployeeAttendance: React.FC = () => {
     const totalH = Math.floor(totalSeconds / 3600);
     const totalM = Math.floor((totalSeconds % 3600) / 60);
     
-    setSummaryStats({ workingDays, present, late, halfDay, leave, wfh, totalHours: `${totalH}h ${totalM}m`, totalLateMinutes: totalLateMins } as any);
+    // eslint-disable-next-line react-compiler/react-compiler
+    setSummaryStats({ workingDays, present, late, halfDay, leave, totalHours: `${totalH}h ${totalM}m`, totalLateMinutes: totalLateMins } as any);
   }, [history, currentDate]);
 
   const currentMonthStr = currentDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
@@ -94,8 +94,10 @@ const EmployeeAttendance: React.FC = () => {
   const monthDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
   useEffect(() => {
+    // eslint-disable-next-line react-compiler/react-compiler
     fetchData();
     return () => {
+      // eslint-disable-next-line react-compiler/react-compiler
       stopCamera();
       locationService.stopLiveTracking();
     };
@@ -169,7 +171,7 @@ const EmployeeAttendance: React.FC = () => {
     }
 
     if (allData) {
-      let workingDays = 0, present = 0, late = 0, halfDay = 0, leave = 0, wfh = 0;
+      let workingDays = 0, present = 0, late = 0, halfDay = 0, leave = 0;
       let totalSeconds = 0;
       let totalLateMins = 0;
 
@@ -194,7 +196,6 @@ const EmployeeAttendance: React.FC = () => {
         }
         if (row.is_half_day) halfDay++;
         if (row.status === 'LEAVE') leave++;
-        if (row.status === 'WFH') wfh++;
 
         let displayStatus = row.status;
         if (row.late_minutes > 0 && (row.status === 'WORKING' || row.status === 'COMPLETED' || row.status === 'PRESENT')) {
@@ -483,8 +484,6 @@ const EmployeeAttendance: React.FC = () => {
   if (currentShift?.end_time) {
     timelineEvents.push({ time: currentShift.end_time, desc: 'Scheduled Shift End', type: 'outline' });
   }
-
-  const calendarDays = Array.from({length: 30}, (_, i) => i + 1);
 
   const renderTodayAttendanceCard = () => {
     if (clockInFlowStep === 1) {
