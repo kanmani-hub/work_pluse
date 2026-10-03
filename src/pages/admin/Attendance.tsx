@@ -10,6 +10,7 @@ import { attendanceService } from '../../services/attendance/attendanceService';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { locationService } from '../../services/location/locationService';
 import { supabase } from '../../lib/supabase';
+import { useDepartments } from '../../hooks/useDepartments';
 
 
 
@@ -23,6 +24,7 @@ const AdminAttendance: React.FC = () => {
   const [filterDept, setFilterDept] = useState('All');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterMode, setFilterMode] = useState('All');
+  const { departments, loading: deptLoading } = useDepartments();
   
   // Drawers & Modals
   const [detailDrawer, setDetailDrawer] = useState<any>(null);
@@ -90,10 +92,11 @@ const AdminAttendance: React.FC = () => {
         empId: a.employees?.employee_code || '-',
         name: a.employees ? `${a.employees.first_name} ${a.employees.last_name}` : 'Unknown',
         dept: a.employees?.departments?.name || '-',
+        department_id: a.employees?.department_id || null,
         office: '-',
-        shift: a.shift_template_id || '-',
-        shiftTime: '-',
-        overnight: false,
+        shift: a.shift_templates?.name || 'Shift Not Assigned',
+          shiftTime: a.shift_templates ? (a.shift_templates.start_time.substring(0, 5) + ' - ' + a.shift_templates.end_time.substring(0, 5)) : '-',
+          overnight: a.shift_templates?.is_overnight || false,
         mode: a.work_mode || 'Office',
         clockIn: a.clock_in_at ? new Date(a.clock_in_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--',
         clockOut: a.clock_out_at ? new Date(a.clock_out_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--',
@@ -163,7 +166,7 @@ const AdminAttendance: React.FC = () => {
 
   const filteredData = attendanceData.filter(a => {
     const matchSearch = a.name.toLowerCase().includes(search.toLowerCase()) || a.empId.toLowerCase().includes(search.toLowerCase());
-    const matchDept = filterDept === 'All' || a.dept === filterDept;
+    const matchDept = filterDept === 'All' ? true : filterDept === 'Unassigned' ? a.department_id === null : a.department_id === filterDept;
     const matchStatus = filterStatus === 'All' || a.status === filterStatus;
     const matchMode = filterMode === 'All' || a.mode === filterMode;
     return matchSearch && matchDept && matchStatus && matchMode;
@@ -390,11 +393,16 @@ const AdminAttendance: React.FC = () => {
           
           <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
             <option value="All">All Departments</option>
-              
-            
-            
-            
-            
+            {deptLoading ? (
+              <option disabled>Loading...</option>
+            ) : (
+              <>
+                {departments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+                <option value="Unassigned">Unassigned</option>
+              </>
+            )}
           </select>
 
           <select value={filterMode} onChange={e => setFilterMode(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
@@ -433,17 +441,17 @@ const AdminAttendance: React.FC = () => {
             <table className="table" style={{ width: '100%', minWidth: '1000px' }}>
               <thead>
                 <tr>
-                  <th>Employee</th>
-                  <th>Shift</th>
-                  <th>Work Mode</th>
-                  <th>Clock In</th>
-                  <th>Clock Out</th>
-                  <th>Working Hrs</th>
-                  <th>Late</th>
-                  <th>Early</th>
-                  <th>Status</th>
-                  <th>Verification</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
+                  <th style={{ textAlign: 'left' }}>Employee</th>
+                    <th style={{ textAlign: 'left' }}>Shift</th>
+                    <th style={{ textAlign: 'center' }}>Work Mode</th>
+                    <th style={{ textAlign: 'center' }}>Clock In</th>
+                    <th style={{ textAlign: 'center' }}>Clock Out</th>
+                    <th style={{ textAlign: 'center' }}>Working Hrs</th>
+                    <th style={{ textAlign: 'center' }}>Late</th>
+                    <th style={{ textAlign: 'center' }}>Early</th>
+                    <th style={{ textAlign: 'center' }}>Status</th>
+                    <th style={{ textAlign: 'center' }}>Verification</th>
+                    <th style={{ textAlign: 'center' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -460,18 +468,18 @@ const AdminAttendance: React.FC = () => {
                         {a.overnight && <span style={{ color: 'var(--purple-700)', fontWeight: 600 }}> +1d</span>}
                       </div>
                     </td>
-                    <td><span className="badge badge-gray">{a.mode}</span></td>
-                    <td style={{ fontWeight: 500 }}>{a.clockIn}</td>
-                    <td style={{ fontWeight: 500 }}>
-                      {a.clockOut}
+                    <td style={{ textAlign: 'center' }}><span className="badge badge-gray">{a.mode}</span></td>
+                    <td style={{ fontWeight: 500, textAlign: 'center' }}>{a.clockIn}</td>
+                    <td style={{ fontWeight: 500, textAlign: 'center' }}>
+                        {a.clockOut}
                       {a.missingOut && <div style={{ fontSize: '0.75rem', color: 'var(--danger)', fontWeight: 600 }}>MISSING</div>}
                     </td>
-                    <td style={{ fontWeight: 600, color: 'var(--primary-700)' }}>{a.workHours}</td>
-                    <td style={{ color: 'var(--warning)', fontSize: '0.875rem' }}>{a.late}</td>
-                    <td style={{ color: 'var(--warning)', fontSize: '0.875rem' }}>{a.early}</td>
-                    <td>{getStatusBadge(a.status)}</td>
-                    <td>
-                      {a.mode === 'Office' ? (
+                    <td style={{ fontWeight: 600, color: 'var(--primary-700)', textAlign: 'center' }}>{a.workHours}</td>
+                    <td style={{ color: 'var(--warning)', fontSize: '0.875rem', textAlign: 'center' }}>{a.late}</td>
+                    <td style={{ color: 'var(--warning)', fontSize: '0.875rem', textAlign: 'center' }}>{a.early}</td>
+                    <td style={{ textAlign: 'center' }}>{getStatusBadge(a.status)}</td>
+                    <td style={{ textAlign: 'center' }}>
+                        {a.mode === 'Office' ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem' }}>
                           <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: a.locationVerified ? 'var(--success)' : 'var(--danger)' }}>
                             <MapPin size={12}/> Loc {a.locationVerified ? '✓' : '✕'}

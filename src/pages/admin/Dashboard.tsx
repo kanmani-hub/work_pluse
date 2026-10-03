@@ -7,10 +7,12 @@ import {
 } from 'lucide-react';
 
 import { supabase } from '../../lib/supabase';
+import { realtimeService } from '../../services/realtime/realtimeService';
 
 const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [errorState, setErrorState] = useState<string | null>(null);
   const [period, setPeriod] = useState('Today');
   const [toast, setToast] = useState('');
   
@@ -19,8 +21,11 @@ const AdminDashboard: React.FC = () => {
   const [rejectModal, setRejectModal] = useState<{type: string, id: number} | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
-  // Real state
-  const [stats, setStats] = useState({ employees: 0, wfhPending: 0, leavePending: 0, permPending: 0, working: 0, fullTime: 0, partTime: 0, intern: 0, activeWfh: 0 });
+  const [stats, setStats] = useState({ 
+    employees: 0, wfhPending: 0, leavePending: 0, permPending: 0, 
+    working: 0, fullTime: 0, partTime: 0, intern: 0, activeWfh: 0,
+    onsite: 0, present: 0, attendanceExists: false 
+  });
   const [wfhReqs, setWfhReqs] = useState<any[]>([]);
   const [leaveReqs, setLeaveReqs] = useState<any[]>([]);
   const [permReqs, setPermReqs] = useState<any[]>([]);
@@ -30,88 +35,98 @@ const AdminDashboard: React.FC = () => {
   useEffect(() => {
     const fetchDashboardData = async () => {
       setLoading(true);
+      setErrorState(null);
       try {
-        const [
-          { data: empCountData },
-          { data: wfhData },
-          { data: leaveData },
-          { data: permData },
-          { count: workingCount },
-          { data: shiftsData },
-          { count: activeWfhCount }
-        ] = await Promise.all([
-          supabase.from('employees').select('id, employment_type').eq('status', 'ACTIVE'),
-          supabase.from('wfh_requests').select(`*, employees(first_name, last_name, employee_code, departments(name))`).eq('status', 'PENDING').limit(5),
-          supabase.from('leave_requests').select(`*, employees(first_name, last_name, employee_code, departments(name)), leave_types(name)`).eq('status', 'PENDING').limit(5),
-          supabase.from('permission_requests').select(`*, employees(first_name, last_name, employee_code, departments(name))`).eq('status', 'PENDING').limit(5),
-          supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('date', new Date().toISOString().split('T')[0]).not('clock_in', 'is', null).is('clock_out', null),
+        const queries = await Promise.all([
+          supabase.from('employees').select('id, employment_type, office_id').eq('status', 'ACTIVE'),
+          supabase.from('wfh_requests').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
+          supabase.from('leave_requests').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
+          supabase.from('permission_requests').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
+          supabase.from('attendance').select('status, clock_in_at, clock_out_at').eq('attendance_date', new Date().toISOString().split('T')[0]),
           supabase.from('shift_templates').select('*').eq('is_active', true).order('start_time'),
           supabase.from('wfh_requests').select('*', { count: 'exact', head: true }).eq('status', 'APPROVED').eq('request_date', new Date().toISOString().split('T')[0])
         ]);
+
+        if (queries.some(q => q.error)) {
+          throw new Error('Failed to fetch dashboard metrics from the database.');
+        }
+
+        const [
+          { data: empCountData },
+          { count: wfhCount },
+          { count: leaveCount },
+          { count: permCount },
+          { data: attendanceData },
+          { data: shiftsData },
+          { count: activeWfhCount }
+        ] = queries;
         
+        const attendanceRecords = (attendanceData as any[]) || [];
+        const workingCount = attendanceRecords.filter(a => a.clock_in_at && !a.clock_out_at).length;
+        const presentCount = attendanceRecords.filter(a => ['PRESENT', 'LATE', 'EARLY LOGOUT', 'WORKING', 'AUTO LOGOUT'].includes(a.status?.toUpperCase() || '')).length;
+        const attendanceExists = attendanceRecords.length > 0;
+
         const allEmps = empCountData || [];
-        const fullTime = (allEmps as any[]).filter(e => e.employment_type === 'Full-time' || e.employment_type === 'Full Time').length;
-        const partTime = (allEmps as any[]).filter(e => e.employment_type === 'Part-time' || e.employment_type === 'Part Time').length;
-        const intern = (allEmps as any[]).filter(e => e.employment_type === 'Intern').length;
+        const fullTime = (allEmps as any[]).filter(e => {
+          const t = e.employment_type?.toLowerCase();
+          return t === 'full-time' || t === 'full time' || !t; 
+        }).length;
+        const partTime = (allEmps as any[]).filter(e => {
+          const t = e.employment_type?.toLowerCase();
+          return t === 'part-time' || t === 'part time';
+        }).length;
+        const contract = (allEmps as any[]).filter(e => {
+          const t = e.employment_type?.toLowerCase();
+          return t === 'contract';
+        }).length;
+
+        // Remote vs Onsite
+        const activeWfh = activeWfhCount || 0;
+        const onsite = Math.max(0, (allEmps as any[]).filter(e => e.office_id != null).length - activeWfh);
 
         setStats({
           employees: allEmps.length || 0,
-          wfhPending: wfhData?.length || 0,
-          leavePending: leaveData?.length || 0,
-          permPending: permData?.length || 0,
+          wfhPending: wfhCount || 0,
+          leavePending: leaveCount || 0,
+          permPending: permCount || 0,
           working: workingCount || 0,
+          present: presentCount || 0,
+          attendanceExists,
           fullTime,
           partTime,
-          intern,
-          activeWfh: activeWfhCount || 0
+          intern: contract,
+          activeWfh,
+          onsite
         });
         
         if (shiftsData) {
           setShifts(shiftsData);
         }
 
-        if (wfhData) {
-          setWfhReqs(wfhData.map((r: any) => ({
-            id: r.id,
-            emp: `${r.employees?.first_name} ${r.employees?.last_name}`,
-            type: r.is_half_day ? 'Half Day' : 'Full Day',
-            date: new Date(r.start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-            reason: r.reason,
-            requested: new Date(r.requested_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
-          })));
-        }
+        // We'll skip the UI list variables because we only want the counts for the dashboard
+        // We aren't displaying the individual requests in this page anyway, just the counts.
 
-        if (leaveData) {
-          setLeaveReqs(leaveData.map((r: any) => ({
-            id: r.id,
-            emp: `${r.employees?.first_name} ${r.employees?.last_name}`,
-            type: r.leave_types?.name,
-            days: r.total_days,
-            from: new Date(r.start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
-            to: new Date(r.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
-            reason: r.reason
-          })));
-        }
-
-        if (permData) {
-          setPermReqs(permData.map((r: any) => ({
-            id: r.id,
-            emp: `${r.employees?.first_name} ${r.employees?.last_name}`,
-            type: 'Permission',
-            date: new Date(r.permission_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
-            start: r.start_time,
-            end: r.end_time,
-            duration: `${Math.floor(r.duration_minutes / 60)}h ${r.duration_minutes % 60}m`
-          })));
-        }
-
-      } catch (e) {
+      } catch (e: any) {
         console.error(e);
+        setErrorState(e.message || 'An unexpected error occurred while loading dashboard data.');
       } finally {
         setLoading(false);
       }
     };
+    
     fetchDashboardData();
+
+    const wfhSub = realtimeService.subscribeToAdminWFH(() => fetchDashboardData());
+    const leaveSub = realtimeService.subscribeToAdminLeave(() => fetchDashboardData());
+    const permSub = realtimeService.subscribeToAdminPermission(() => fetchDashboardData());
+    const attSub = realtimeService.subscribeToAdminAttendance(() => fetchDashboardData());
+
+    return () => {
+      realtimeService.unsubscribe(wfhSub);
+      realtimeService.unsubscribe(leaveSub);
+      realtimeService.unsubscribe(permSub);
+      realtimeService.unsubscribe(attSub);
+    };
   }, [period]);
 
   const showToast = (msg: string) => {
@@ -179,7 +194,14 @@ const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {loading ? (
+      {errorState ? (
+        <div style={{ padding: '3rem', textAlign: 'center', background: 'var(--danger-50)', borderRadius: 'var(--radius-lg)', color: 'var(--danger)' }}>
+          <AlertTriangle size={48} style={{ margin: '0 auto 1rem auto', color: 'var(--danger)' }} />
+          <h2 style={{ marginBottom: '0.5rem', fontWeight: 600 }}>Unable to load dashboard</h2>
+          <p>{errorState}</p>
+          <button onClick={() => setPeriod('Today')} className="btn btn-primary" style={{ marginTop: '1.5rem' }}>Retry</button>
+        </div>
+      ) : loading ? (
         <div className="skeleton-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
           {[...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ height: '90px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
@@ -240,11 +262,15 @@ const AdminDashboard: React.FC = () => {
             <div style={{ position: 'relative', width: '200px', height: '100px', overflow: 'hidden', marginTop: '1rem' }}>
               <div style={{ width: '200px', height: '200px', borderRadius: '50%', border: '20px solid var(--bg-glass)', borderTopColor: 'var(--accent-primary)', borderRightColor: 'var(--accent-primary)', transform: 'rotate(-45deg)', position: 'absolute', top: 0, left: 0 }}></div>
               <div style={{ position: 'absolute', bottom: 0, left: '50%', transform: 'translateX(-50%)', textAlign: 'center' }}>
-                <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>{stats.employees ? Math.round((stats.working / stats.employees) * 100) : 0}%</div>
+                <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                  {stats.attendanceExists ? `${stats.employees ? Math.round((stats.present / stats.employees) * 100) : 0}%` : 'N/A'}
+                </div>
               </div>
             </div>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: '2rem' }}>
-              Positive vibes! Attendance reached {stats.employees ? Math.round((stats.working / stats.employees) * 100) : 0}%. Let's keep it going.
+              {stats.attendanceExists
+                ? `Positive vibes! Attendance reached ${stats.employees ? Math.round((stats.present / stats.employees) * 100) : 0}%. Let's keep it going.`
+                : 'No attendance data'}
             </p>
           </div>
 
@@ -302,7 +328,7 @@ const AdminDashboard: React.FC = () => {
                <h3 className="card-title" style={{ marginBottom: 'auto' }}>Remote vs Onsite</h3>
                <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around', height: '120px', marginTop: '1rem' }}>
                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-                   <span style={{ fontSize: '1.5rem', fontWeight: 700 }}>{stats.working}</span>
+                   <span style={{ fontSize: '1.5rem', fontWeight: 700 }}>{stats.onsite}</span>
                    <div style={{ width: '40px', height: '80px', borderRadius: '20px 20px 0 0', background: 'linear-gradient(to top, var(--info), var(--cyan-400))' }}></div>
                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Onsite</span>
                  </div>

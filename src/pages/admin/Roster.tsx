@@ -1,3 +1,4 @@
+import { useDepartments } from '../../hooks/useDepartments';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { employeeService } from '../../services/employees/employeeService';
@@ -23,6 +24,7 @@ const AdminRoster: React.FC = () => {
   
   const [search, setSearch] = useState('');
   const [filterDept, setFilterDept] = useState('All');
+  const { departments, loading: deptLoading } = useDepartments();
   
   // Modals & Drawers
   const [assignModal, setAssignModal] = useState<any>(null); 
@@ -55,6 +57,7 @@ const AdminRoster: React.FC = () => {
         empCode: e.employee_code || '-',
         name: `${e.first_name} ${e.last_name}`,
         dept: e.department?.name || 'Unassigned',
+          department_id: e.department_id || null,
         office: e.office?.name || '-'
       })));
     }
@@ -109,7 +112,7 @@ const AdminRoster: React.FC = () => {
 
   const filteredEmployees = useMemo(() => employees.filter(emp => {
     const matchesSearch = emp.name.toLowerCase().includes(search.toLowerCase()) || emp.empCode.toLowerCase().includes(search.toLowerCase());
-    const matchesDept = filterDept === 'All' || emp.dept === filterDept;
+    const matchesDept = filterDept === 'All' ? true : filterDept === 'Unassigned' ? emp.department_id === null : emp.department_id === filterDept;
     return matchesSearch && matchesDept;
   }), [employees, search, filterDept]);
 
@@ -349,11 +352,16 @@ const AdminRoster: React.FC = () => {
             </div>
             <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
               <option value="All">All Departments</option>
-              
-              
-              
-              
-              
+              {deptLoading ? (
+                <option disabled>Loading...</option>
+              ) : (
+                <>
+                  {departments.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                  <option value="Unassigned">Unassigned</option>
+                </>
+              )}
             </select>
             <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem' }}><Filter size={14} style={{ marginRight: '0.25rem' }}/> More Filters</button>
             {(search || filterDept !== 'All') && (

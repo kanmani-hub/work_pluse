@@ -61,12 +61,18 @@ const AdminDepartments: React.FC = () => {
     switch(action) {
       case 'view': setShowDetail(dept); break;
       case 'edit': {
-        let parsedDesc = { desc: dept.description || '', code: '', manager: '' };
-        try {
-          const parsed = JSON.parse(dept.description || '{}');
-          if (parsed.desc !== undefined) parsedDesc = parsed;
-        } catch (e) {
-          // ignore
+        let parsedDesc = { desc: '', code: '', manager: '' };
+        if (dept.description) {
+          try {
+            const parsed = JSON.parse(dept.description);
+            parsedDesc = {
+              desc: parsed.desc || '',
+              code: parsed.code || '',
+              manager: parsed.manager || ''
+            };
+          } catch (e) {
+            parsedDesc.desc = dept.description;
+          }
         }
         setFormData({ 
           name: dept.name, 
@@ -226,18 +232,27 @@ const AdminDepartments: React.FC = () => {
               </thead>
               <tbody>
                 {filteredDepts.map(dept => {
-                  let parsedDesc = { desc: dept.description || '', code: '-', manager: '-' };
-                  try {
-                    const parsed = JSON.parse(dept.description || '{}');
-                    if (parsed.desc !== undefined) parsedDesc = parsed;
-                  } catch (e) {
-                    // Not JSON, ignore
+                  let parsedDesc = { desc: '-', code: '-', manager: '-' };
+                  if (dept.description) {
+                    try {
+                      const parsed = JSON.parse(dept.description);
+                      parsedDesc = {
+                        desc: parsed.desc || '-',
+                        code: parsed.code || '-',
+                        manager: parsed.manager || '-'
+                      };
+                    } catch (e) {
+                      parsedDesc.desc = dept.description;
+                    }
                   }
+                  
                   return (
                   <tr key={dept.id}>
                     <td>
                       <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{dept.name}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{parsedDesc.desc}</div>
+                      {parsedDesc.desc !== '-' && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{parsedDesc.desc}</div>
+                      )}
                     </td>
                     <td style={{ fontWeight: 600, fontFamily: 'monospace' }}>{parsedDesc.code}</td>
                     <td>{parsedDesc.manager}</td>
@@ -352,7 +367,17 @@ const AdminDepartments: React.FC = () => {
               
               <div className="card" style={{ padding: '1rem' }}>
                 <h3 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--gray-700)', marginBottom: '0.5rem' }}>Description</h3>
-                <p style={{ fontSize: '0.875rem', color: 'var(--text-primary)' }}>{showDetail.desc || 'No description provided.'}</p>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-primary)' }}>
+                  {(() => {
+                    if (!showDetail.description) return 'No description provided.';
+                    try {
+                      const parsed = JSON.parse(showDetail.description);
+                      return parsed.desc || 'No description provided.';
+                    } catch (e) {
+                      return showDetail.description;
+                    }
+                  })()}
+                </p>
               </div>
 
               <div>

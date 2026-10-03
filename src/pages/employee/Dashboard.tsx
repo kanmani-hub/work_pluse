@@ -91,14 +91,33 @@ const EmployeeDashboard: React.FC = () => {
     const { data, error } = await attendanceService.getTodayAttendance(dateStr);
     if (data) {
       setAttendanceRecord(data);
-      if (data.status === 'WORKING') setAttendanceState('working');
-      else if (data.status === 'ON_BREAK') setAttendanceState('on_break');
-      else setAttendanceState('clocked_out');
+      if (data.clock_in_at && !data.clock_out_at) {
+        if (data.status === 'ON_BREAK') {
+          setAttendanceState('on_break');
+        } else {
+          setAttendanceState('working');
+        }
+      } else {
+        setAttendanceState('clocked_out');
+      }
       
       if (data.clock_in_at) {
         const inTime = new Date(data.clock_in_at).getTime();
         let currentWorkSecs = Math.floor((new Date().getTime() - inTime) / 1000);
         if (data.break_minutes) currentWorkSecs -= data.break_minutes * 60;
+        
+        if (data.status === 'ON_BREAK') {
+          const { data: breaks } = await breakService.getAttendanceBreaks(data.id);
+          if (breaks && breaks.length > 0) {
+            const activeBreak = breaks.find(b => b.ended_at === null);
+            if (activeBreak) {
+              const breakStart = new Date(activeBreak.started_at).getTime();
+              const currentBreakSecs = Math.floor((new Date().getTime() - breakStart) / 1000);
+              setBreakTime(currentBreakSecs);
+              currentWorkSecs -= currentBreakSecs;
+            }
+          }
+        }
         setWorkTime(Math.max(0, currentWorkSecs));
       }
     } else {
@@ -433,14 +452,21 @@ const EmployeeDashboard: React.FC = () => {
                     <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--success)', animation: 'pulse 2s infinite' }} />
                     WORKING
                   </div>
-                  <div style={{ color: 'var(--text-primary)', fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem', fontVariantNumeric: 'tabular-nums' }}>
+                  <div style={{ color: 'var(--text-primary)', fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem', fontVariantNumeric: 'tabular-nums' }}>
                     {formatTime(workTime)}
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                    <button onClick={() => setShowBreakModal(true)} className="btn btn-outline" style={{ padding: '0.75rem', borderRadius: 'var(--radius-full)' }}>
-                      <Coffee size={18} />
-                      Start Break
-                    </button>
+                  {appSettings?.breakEnabled && attendanceRecord?.break_minutes > 0 && (
+                    <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                      Total Break Time: {formatTime(attendanceRecord.break_minutes * 60)}
+                    </div>
+                  )}
+                  <div style={{ display: 'grid', gridTemplateColumns: appSettings?.breakEnabled ? '1fr 1fr' : '1fr', gap: '1rem', marginTop: '1rem' }}>
+                    {appSettings?.breakEnabled && (
+                      <button onClick={() => setShowBreakModal(true)} className="btn btn-outline" style={{ padding: '0.75rem', borderRadius: 'var(--radius-full)' }}>
+                        <Coffee size={18} />
+                        Start Break
+                      </button>
+                    )}
                     <button onClick={() => handleClockAction('out')} className="btn" style={{ padding: '0.75rem', borderRadius: 'var(--radius-full)', backgroundColor: 'var(--danger)', color: 'var(--bg-primary)' }}>
                       <ShieldCheck size={18} />
                       Secure Clock Out
@@ -450,17 +476,20 @@ const EmployeeDashboard: React.FC = () => {
               )}
 
               {/* On Break */}
-              {attendanceState === 'on_break' && (
+              {attendanceState === 'on_break' && appSettings?.breakEnabled && (
                 <>
                   <div style={{ color: 'var(--warning)', marginBottom: '0.5rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
                     <Coffee size={16} />
                     ON BREAK
                   </div>
-                  <div style={{ color: 'var(--text-primary)', fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem', fontVariantNumeric: 'tabular-nums' }}>
-                    {formatTime(breakTime)}
+                  <div style={{ color: 'var(--text-primary)', fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.25rem', fontVariantNumeric: 'tabular-nums' }}>
+                    Break Duration: {formatTime(breakTime)}
+                  </div>
+                  <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                    {appSettings.maxBreakDurationMins ? `Max Allowed: ${appSettings.maxBreakDurationMins} mins` : ''}
                   </div>
                   <button onClick={confirmBreak} className="btn btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1.125rem', borderRadius: 'var(--radius-full)' }}>
-                    Resume Work
+                    End Break
                   </button>
                 </>
               )}

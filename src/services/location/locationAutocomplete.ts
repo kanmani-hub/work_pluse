@@ -156,4 +156,72 @@ const googlePlacesProvider: LocationProvider = {
   }
 };
 
-export const locationAutocomplete: LocationProvider = googlePlacesProvider;
+const nominatimProvider: LocationProvider = {
+  async search(query: string, signal?: AbortSignal): Promise<LocationSuggestion[]> {
+    if (!query || query.trim().length < 3) return [];
+    
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5`, {
+        signal,
+        headers: {
+          'Accept-Language': 'en'
+        }
+      });
+      if (!response.ok) throw new Error('Nominatim search failed');
+      const data = await response.json();
+      
+      return data.map((item: any) => {
+        const nameParts = item.display_name.split(', ');
+        const primary = nameParts[0];
+        const secondary = nameParts.slice(1).join(', ');
+        
+        return {
+          placeId: item.place_id.toString(),
+          displayName: item.display_name,
+          primaryText: primary,
+          secondaryText: secondary,
+          latitude: parseFloat(item.lat),
+          longitude: parseFloat(item.lon),
+        };
+      });
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  async getDetails(placeId: string, suggestion?: LocationSuggestion): Promise<PlaceDetails> {
+    if (suggestion && suggestion.latitude !== undefined && suggestion.longitude !== undefined) {
+      return {
+        latitude: suggestion.latitude,
+        longitude: suggestion.longitude,
+        formattedAddress: suggestion.displayName
+      };
+    }
+    throw new Error('Details not available for this location.');
+  }
+};
+
+export const locationAutocomplete: LocationProvider = {
+  async search(query: string, signal?: AbortSignal): Promise<LocationSuggestion[]> {
+    try {
+      return await googlePlacesProvider.search(query, signal);
+    } catch (error: any) {
+      if (error.name === 'AbortError' || error.message === 'Aborted') {
+        throw error;
+      }
+      console.warn('Google Places API failed, falling back to Nominatim OpenStreetMap...', error);
+      return await nominatimProvider.search(query, signal);
+    }
+  },
+  async getDetails(placeId: string, suggestion?: LocationSuggestion): Promise<PlaceDetails> {
+    if (suggestion && suggestion.latitude !== undefined && suggestion.longitude !== undefined) {
+      return nominatimProvider.getDetails(placeId, suggestion);
+    }
+    try {
+      return await googlePlacesProvider.getDetails(placeId, suggestion);
+    } catch (error) {
+      console.warn('Google Places API getDetails failed...', error);
+      throw error;
+    }
+  }
+};

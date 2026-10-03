@@ -15,6 +15,7 @@ import { payrollDataService, type PayrollEmployeeData } from '../../services/pay
 import SalaryEditor from '../../components/SalaryEditor';
 import PayslipDocument from '../../components/PayslipDocument';
 import { supabase } from '../../lib/supabase';
+import { useDepartments } from '../../hooks/useDepartments';
 import { employeeService, type EmployeeWithRelations } from '../../services/employees/employeeService';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -36,6 +37,7 @@ const AdminPayroll: React.FC = () => {
   // Filters
   const [search, setSearch] = useState('');
   const [filterDept, setFilterDept] = useState('All');
+  const { departments: activeDepts, loading: deptLoading } = useDepartments();
   const [filterStatus, setFilterStatus] = useState('All');
   
   // Drawers & Modals
@@ -135,7 +137,7 @@ const AdminPayroll: React.FC = () => {
     const empCode = emp.employee_code || '';
     const dept = emp.department?.name || 'Unknown';
     const matchSearch = name.toLowerCase().includes(search.toLowerCase()) || empCode.toLowerCase().includes(search.toLowerCase());
-    const matchDept = filterDept === 'All' || dept === filterDept;
+    const matchDept = filterDept === 'All' ? true : filterDept === 'Unassigned' ? emp.department_id === null : emp.department_id === filterDept;
     const matchStatus = filterStatus === 'All' || (payroll ? payroll.status === filterStatus : filterStatus === 'NOT_GENERATED');
     return matchSearch && matchDept && matchStatus;
   });
@@ -490,9 +492,18 @@ const AdminPayroll: React.FC = () => {
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} />
           </div>
           <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
-            <option value="All">All Departments</option>
-            {departments.map(d => <option key={d}>{d}</option>)}
-          </select>
+              <option value="All">All Departments</option>
+              {deptLoading ? (
+                <option disabled>Loading...</option>
+              ) : (
+                <>
+                  {activeDepts.map((d: any) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                  <option value="Unassigned">Unassigned</option>
+                </>
+              )}
+            </select>
           <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
             <option value="All">All Statuses</option>
             <option value="NOT_GENERATED">Not Generated</option>

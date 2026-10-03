@@ -7,6 +7,7 @@ import {
 import { locationService } from '../../services/location/locationService';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { supabase } from '../../lib/supabase';
+import { useDepartments } from '../../hooks/useDepartments';
 
 type EmployeeStatus = 'Working' | 'On Break' | 'WFH' | 'Outside Geofence' | 'Location Unavailable' | 'Offline' | 'Clocked Out';
 type WorkMode = 'Office' | 'WFH' | 'Hybrid';
@@ -16,6 +17,7 @@ interface LiveEmployee {
   empId: string;
   name: string;
   department: string;
+  departmentId: string | null;
   shift: string;
   workMode: WorkMode;
   status: EmployeeStatus;
@@ -46,6 +48,7 @@ const AdminLiveTracking: React.FC = () => {
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState('All');
   const [officeFilter, setOfficeFilter] = useState('All');
+  const { departments, loading: deptLoading } = useDepartments();
   const [statusFilter, setStatusFilter] = useState('Currently Working');
   
   // Drawer
@@ -112,6 +115,7 @@ const AdminLiveTracking: React.FC = () => {
           empId: l.employees?.employee_code || '-',
           name: l.employees ? `${l.employees.first_name} ${l.employees.last_name}` : 'Unknown',
           department: l.employees?.departments?.name || '-',
+          departmentId: l.employees?.department_id || null,
           shift: 'General', 
           workMode: l.location_context === 'WFH' ? 'WFH' : 'Office',
           status: status as EmployeeStatus,
@@ -179,14 +183,17 @@ const AdminLiveTracking: React.FC = () => {
       if (!searchMatch) return false;
       if (statusFilter === 'Currently Working' && (emp.status === 'Clocked Out' || emp.status === 'Offline')) return false;
       if (statusFilter !== 'All' && statusFilter !== 'Currently Working' && emp.status !== statusFilter) return false;
-      if (deptFilter !== 'All' && emp.department !== deptFilter) return false;
+      if (deptFilter !== 'All' && (deptFilter === 'Unassigned' ? emp.departmentId !== null : emp.departmentId !== deptFilter)) return false;
       if (officeFilter !== 'All' && emp.officeId !== officeFilter) return false;
       return true;
     });
   }, [employees, search, statusFilter, deptFilter, officeFilter]);
 
   const filteredHistory = useMemo(() => {
+    const seen = new Set();
     return historyRecords.filter(rec => {
+      if (seen.has(rec.id)) return false;
+      seen.add(rec.id);
       if (!hSearch) return true;
       const empName = rec.employees ? `${rec.employees.first_name} ${rec.employees.last_name}`.toLowerCase() : '';
       const empCode = rec.employees?.employee_code?.toLowerCase() || '';

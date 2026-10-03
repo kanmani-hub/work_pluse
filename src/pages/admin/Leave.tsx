@@ -1,3 +1,4 @@
+import { useDepartments } from '../../hooks/useDepartments';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -22,6 +23,7 @@ const AdminLeave: React.FC = () => {
   const [filterDept, setFilterDept] = useState('All');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterType, setFilterType] = useState('All');
+  const { departments, loading: deptLoading } = useDepartments();
   
   // Modals & Drawers
   const [detailDrawer, setDetailDrawer] = useState<any>(null);
@@ -45,6 +47,7 @@ const AdminLeave: React.FC = () => {
         empId: r.employees?.employee_code || '-',
         name: r.employees ? `${r.employees.first_name} ${r.employees.last_name}` : 'Unknown',
         dept: r.employees?.departments?.name || '-',
+        department_id: r.employees?.department_id || null,
         type: r.leave_types?.name || '-',
         dates: r.start_date === r.end_date 
           ? new Date(r.start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
@@ -100,7 +103,7 @@ const AdminLeave: React.FC = () => {
 
   const filteredRequests = requests.filter(r => {
     const matchSearch = r.name.toLowerCase().includes(search.toLowerCase()) || r.empId.toLowerCase().includes(search.toLowerCase());
-    const matchDept = filterDept === 'All' || r.dept === filterDept;
+    const matchDept = filterDept === 'All' ? true : filterDept === 'Unassigned' ? r.department_id === null : r.department_id === filterDept;
     const matchStatus = filterStatus === 'All' || r.status === filterStatus;
     const matchType = filterType === 'All' || r.type === filterType;
     return matchSearch && matchDept && matchStatus && matchType;
@@ -294,13 +297,18 @@ const AdminLeave: React.FC = () => {
               </div>
               
               <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
-                <option value="All">All Departments</option>
-              
-                
-                
-                
-                
-              </select>
+                  <option value="All">All Departments</option>
+                  {deptLoading ? (
+                    <option disabled>Loading...</option>
+                  ) : (
+                    <>
+                      {departments.map(d => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                      <option value="Unassigned">Unassigned</option>
+                    </>
+                  )}
+                </select>
 
               <select value={filterType} onChange={e => setFilterType(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
                 <option value="All">All Leave Types</option>

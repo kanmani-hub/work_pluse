@@ -28,6 +28,7 @@ import EmployeeLeave from './pages/employee/Leave';
 import EmployeePermission from './pages/employee/Permission';
 import EmployeePayroll from './pages/employee/Payroll';
 import EmployeePayslip from './pages/employee/Payslip';
+import EmployeeProfile from './pages/employee/Profile';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import { AuthProvider } from './context/AuthContext';
 import './App.css';
@@ -78,7 +79,7 @@ function App() {
               <Route path="permission" element={<EmployeePermission />} />
               <Route path="payroll" element={<EmployeePayroll />} />
               <Route path="payslip" element={<EmployeePayslip />} />
-              <Route path="profile" element={<div className="page-placeholder"><h2>My Profile</h2></div>} />
+              <Route path="profile" element={<EmployeeProfile />} />
               <Route path="notifications" element={<Notifications />} />
             </Route>
           </Route>

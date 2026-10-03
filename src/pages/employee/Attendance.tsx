@@ -43,6 +43,7 @@ const EmployeeAttendance: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const locVerificationIdRef = useRef<string | null>(null);
+  const fetchCalledRef = useRef(false);
 
 
   useEffect(() => {
@@ -95,7 +96,10 @@ const EmployeeAttendance: React.FC = () => {
 
   useEffect(() => {
     // eslint-disable-next-line react-compiler/react-compiler
-    fetchData();
+    if (!fetchCalledRef.current) {
+      fetchCalledRef.current = true;
+      fetchData();
+    }
     return () => {
       // eslint-disable-next-line react-compiler/react-compiler
       stopCamera();
@@ -628,12 +632,19 @@ const EmployeeAttendance: React.FC = () => {
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem', justifyContent: 'center' }}>
               {todayAttendance.originalStatus === 'WORKING' && (
                 <>
-                  <button onClick={() => handleAction('startBreak')} className="btn btn-warning" style={{ flex: 1 }}>Start Break</button>
+                  {appSettings?.breakEnabled && (
+                    <button onClick={() => handleAction('startBreak')} className="btn btn-warning" style={{ flex: 1 }}>Start Break</button>
+                  )}
                   <button onClick={handleClockOut} className="btn btn-danger" style={{ flex: 1 }}>Clock Out</button>
                 </>
               )}
               {todayAttendance.originalStatus === 'ON_BREAK' && (
-                <button onClick={() => handleAction('endBreak')} className="btn btn-primary" style={{ flex: 1 }}>End Break</button>
+                <>
+                  {appSettings?.breakEnabled && (
+                    <button onClick={() => handleAction('endBreak')} className="btn btn-primary" style={{ flex: 1 }}>End Break</button>
+                  )}
+                  <button onClick={handleClockOut} className="btn btn-danger" style={{ flex: 1 }}>Clock Out</button>
+                </>
               )}
             </div>
           </div>

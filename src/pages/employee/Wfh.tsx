@@ -93,7 +93,7 @@ const EmployeeWfh: React.FC = () => {
 
       upcoming.sort((a, b) => a.rawDate.localeCompare(b.rawDate));
       
-      const maxMonthlyWfhDays = parseInt(appSettings?.wfhMaxDaysPerMonth as any) || 2;
+      const maxMonthlyWfhDays = appSettings?.wfhMaxDaysPerMonth !== undefined ? Number(appSettings.wfhMaxDaysPerMonth) : 2;
       const remaining = Math.max(0, maxMonthlyWfhDays - used);
       
       setMetrics({ used, pending, approved: approvedTotal, rejected, remaining });
@@ -139,8 +139,12 @@ const EmployeeWfh: React.FC = () => {
     if (!reqReason) { setReqError('Please provide a reason.'); return; }
     if (!employee?.id) { setReqError('Unauthorized session.'); return; }
     
-    const maxMonthlyWfhDays = parseInt(appSettings?.wfhMaxDaysPerMonth as any) || 2;
-    if (metrics.used + metrics.pending >= maxMonthlyWfhDays) {
+    if (!appSettings?.wfhEnabled) {
+      setReqError('WFH is currently disabled by company policy.');
+      return;
+    }
+    const maxMonthlyWfhDays = appSettings?.wfhMaxDaysPerMonth !== undefined ? Number(appSettings.wfhMaxDaysPerMonth) : 2;
+    if (metrics.used + (reqType === 'Half Day' ? 0.5 : 1) > maxMonthlyWfhDays) {
       setReqError(`You have reached the maximum WFH limit of ${maxMonthlyWfhDays} days per month.`);
       return;
     }
@@ -227,9 +231,19 @@ const EmployeeWfh: React.FC = () => {
           <h1 className="page-title">Work From Home</h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>Request, track and manage your work-from-home days.</p>
         </div>
-        <button onClick={() => setShowRequestModal(true)} className="btn btn-primary">
-          <Plus size={18} /> Request WFH
-        </button>
+        {!appSettings?.wfhEnabled ? (
+          <div style={{ color: 'var(--danger)', fontSize: '0.875rem', fontWeight: 500, padding: '0.5rem 1rem', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)' }}>
+            WFH is currently disabled.
+          </div>
+        ) : metrics.remaining <= 0 ? (
+          <div style={{ color: 'var(--warning)', fontSize: '0.875rem', fontWeight: 500, padding: '0.5rem 1rem', backgroundColor: 'var(--warning-50)', borderRadius: 'var(--radius-md)' }}>
+            WFH monthly limit reached.
+          </div>
+        ) : (
+          <button onClick={() => setShowRequestModal(true)} className="btn btn-primary">
+            <Plus size={18} /> Request WFH
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -376,7 +390,7 @@ const EmployeeWfh: React.FC = () => {
               WFH Policy <span className="badge badge-gray" style={{ fontSize: '0.75rem' }}>COMPANY-CONFIGURED</span>
             </h3>
             <ul style={{ fontSize: '0.875rem', color: 'var(--gray-700)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Maximum WFH:</span> <strong>{parseInt(appSettings?.wfhMaxDaysPerMonth as any) || 2} days/month</strong></li>
+              <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Maximum WFH:</span> <strong>{appSettings?.wfhMaxDaysPerMonth !== undefined ? Number(appSettings.wfhMaxDaysPerMonth) : 2} days/month</strong></li>
               <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Maximum Consecutive:</span> <strong>3 days</strong></li>
               <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Half-Day WFH:</span> <strong>Allowed</strong></li>
               <li style={{ display: 'flex', justifyContent: 'space-between' }}><span>Approval:</span> <strong>Required</strong></li>

@@ -1,3 +1,4 @@
+import { useDepartments } from '../../hooks/useDepartments';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -18,7 +19,7 @@ const AdminEmployees: React.FC = () => {
   const [toast, setToast] = useState('');
   
   const [employees, setEmployees] = useState<EmployeeWithRelations[]>([]);
-  const [departments, setDepartments] = useState<any[]>([]);
+  const { departments, loading: deptLoading } = useDepartments();
   const [offices, setOffices] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [shifts, setShifts] = useState<any[]>([]);
@@ -49,9 +50,9 @@ const AdminEmployees: React.FC = () => {
 
   const loadData = async () => {
     setLoading(true);
-    const [empRes, deptRes, offRes, roleRes, shiftRes] = await Promise.all([
+    const [empRes, offRes, roleRes, shiftRes] = await Promise.all([
       employeeService.getEmployees(),
-      employeeService.getDepartments(),
+      // employeeService.getDepartments(),
       employeeService.getOffices(),
       employeeService.getRoles(),
       employeeService.getShifts()
@@ -62,7 +63,7 @@ const AdminEmployees: React.FC = () => {
     } else if (empRes.data) {
       setEmployees(empRes.data);
     }
-    if (deptRes.data) setDepartments(deptRes.data);
+    // if (deptRes.data) setDepartments(deptRes.data);
     if (offRes.data) setOffices(offRes.data);
     if (roleRes.data) setRoles(roleRes.data);
     if (shiftRes.data) setShifts(shiftRes.data);
@@ -82,7 +83,7 @@ const AdminEmployees: React.FC = () => {
   const filteredEmployees = employees.filter(emp => {
     const searchString = `${emp.first_name} ${emp.last_name} ${emp.employee_code} ${emp.email}`.toLowerCase();
     const matchesSearch = searchString.includes(search.toLowerCase());
-    const matchesDept = filterDept === 'All' || emp.department_id === filterDept;
+    const matchesDept = filterDept === 'All' ? true : filterDept === 'Unassigned' ? emp.department_id === null : emp.department_id === filterDept;
     const matchesStatus = filterStatus === 'All' || emp.status === filterStatus;
     return matchesSearch && matchesDept && matchesStatus;
   });
@@ -313,11 +314,16 @@ const AdminEmployees: React.FC = () => {
             
             <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto' }}>
               <option value="All">All Departments</option>
-              
-              
-              
-              
-              
+              {deptLoading ? (
+                <option disabled>Loading...</option>
+              ) : (
+                <>
+                  {departments.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                  <option value="Unassigned">Unassigned</option>
+                </>
+              )}
             </select>
             
             <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto' }}>
