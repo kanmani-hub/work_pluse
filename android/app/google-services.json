@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "384000885332",
+    "project_id": "workpulse-hr-c2409",
+    "storage_bucket": "workpulse-hr-c2409.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:384000885332:android:ed6b4d4e0646751339e3c1",
+        "android_client_info": {
+          "package_name": "com.company.appname"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBRcIcKOCUSZxfBaE5Od5uhp0VhVwnaqVw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:384000885332:android:647e82e7e08d70fd39e3c1",
+        "android_client_info": {
+          "package_name": "com.workpulse.hr"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBRcIcKOCUSZxfBaE5Od5uhp0VhVwnaqVw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
