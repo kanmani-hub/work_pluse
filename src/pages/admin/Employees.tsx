@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Plus, Search, Filter, Download, Upload, MoreVertical, X, CheckCircle2, 
   AlertTriangle, Users, UserCheck, UserX, Home, Settings, MapPin, Briefcase, 
-  FileText, CalendarClock, Activity, Eye, Edit, CalendarOff, Clock, Wallet, Trash2
+  FileText, CalendarClock, Activity, Eye, Edit, CalendarOff, Clock, Wallet, Trash2, EyeOff
 } from 'lucide-react';
 
 import { employeeService } from '../../services/employees/employeeService';
@@ -47,6 +47,8 @@ const AdminEmployees: React.FC = () => {
 
   // Form State
   const [formData, setFormData] = useState<any>({});
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -576,11 +578,21 @@ const AdminEmployees: React.FC = () => {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                     <div>
                       <label className="form-label">Temporary Password *</label>
-                      <input required type="password" minLength={8} className="form-control" value={formData.password || ''} onChange={e => setFormData({...formData, password: e.target.value})} placeholder="At least 8 characters" />
+                      <div style={{ position: 'relative' }}>
+                        <input required type={showPassword ? "text" : "password"} minLength={8} className="form-control" value={formData.password || ''} onChange={e => setFormData({...formData, password: e.target.value})} placeholder="At least 8 characters" style={{ paddingRight: '2.5rem' }} />
+                        <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gray-500)', padding: 0, display: 'flex' }} aria-label={showPassword ? "Hide password" : "Show password"} title={showPassword ? "Hide password" : "Show password"}>
+                          {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                        </button>
+                      </div>
                     </div>
                     <div>
                       <label className="form-label">Confirm Password *</label>
-                      <input required type="password" minLength={8} className="form-control" value={formData.confirm_password || ''} onChange={e => setFormData({...formData, confirm_password: e.target.value})} placeholder="Confirm password" />
+                      <div style={{ position: 'relative' }}>
+                        <input required type={showConfirmPassword ? "text" : "password"} minLength={8} className="form-control" value={formData.confirm_password || ''} onChange={e => setFormData({...formData, confirm_password: e.target.value})} placeholder="Confirm password" style={{ paddingRight: '2.5rem' }} />
+                        <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gray-500)', padding: 0, display: 'flex' }} aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"} title={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}>
+                          {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </section>
