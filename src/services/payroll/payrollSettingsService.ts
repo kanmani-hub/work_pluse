@@ -10,6 +10,7 @@ const SETTINGS_KEY = 'workpulse_payroll_settings';
 
 export interface PayrollSettings {
   // General
+  payrollPeriod: '1_day' | '10_days' | '15_days' | 'monthly' | 'custom';
   workingDaysBasis: 'configured' | 'calendar' | 'actual';
   configuredWorkingDays: number;
   salaryRounding: 'round' | 'exact';
@@ -29,15 +30,17 @@ export interface PayrollSettings {
   // Late Login Rules
   enableLateLoginDeduction: boolean;
   monthlyLateLoginLimit: number;
-  lateDeductionMethod: 'per_minute' | 'fixed' | 'half_day';
+  lateDeductionMethod: 'per_minute' | 'fixed' | 'half_day' | 'interval_based';
   lateFixedAmount: number;
   latePerMinuteRate: number;
-  lateHalfDayAmount: number; // For when method is half_day and halfDayMethod is fixed
+  lateHalfDayAmount: number;
+  lateIntervalMinutes: number;
+  lateIntervalAmount: number;
 
   // Permission Rules
   enablePermissionDeduction: boolean;
   permissionLimit: number;
-  permissionDeductionMethod: 'per_minute' | 'fixed' | 'half_day';
+  permissionDeductionMethod: 'per_minute' | 'fixed' | 'half_day' | 'salary_based';
   permissionFixedAmount: number;
   permissionPerMinuteRate: number;
   permissionHalfDayAmount: number;
@@ -52,7 +55,7 @@ export interface PayrollSettings {
   // Break Rules
   enableBreakOverrunDetection: boolean;
   enableBreakOverrunDeduction: boolean;
-  breakOverrunDeductionMethod: 'per_minute' | 'fixed' | 'half_day';
+  breakOverrunDeductionMethod: 'per_minute' | 'fixed' | 'half_day' | 'salary_based';
   breakOverrunFixedAmount: number;
   breakOverrunPerMinuteRate: number;
   breakOverrunHalfDayAmount: number;
@@ -65,6 +68,7 @@ export interface PayrollSettings {
 }
 
 const DEFAULT_SETTINGS: PayrollSettings = {
+  payrollPeriod: 'monthly',
   workingDaysBasis: 'configured',
   configuredWorkingDays: 26,
   salaryRounding: 'round',
@@ -81,10 +85,12 @@ const DEFAULT_SETTINGS: PayrollSettings = {
   
   enableLateLoginDeduction: true,
   monthlyLateLoginLimit: 0,
-  lateDeductionMethod: 'fixed',
+  lateDeductionMethod: 'interval_based',
   lateFixedAmount: 100,
   latePerMinuteRate: 10,
   lateHalfDayAmount: 0,
+  lateIntervalMinutes: 15,
+  lateIntervalAmount: 100,
 
   enablePermissionDeduction: false,
   permissionLimit: 2,
@@ -101,7 +107,7 @@ const DEFAULT_SETTINGS: PayrollSettings = {
 
   enableBreakOverrunDetection: false,
   enableBreakOverrunDeduction: false,
-  breakOverrunDeductionMethod: 'fixed',
+  breakOverrunDeductionMethod: 'salary_based',
   breakOverrunFixedAmount: 100,
   breakOverrunPerMinuteRate: 10,
   breakOverrunHalfDayAmount: 0,

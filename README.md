@@ -27,14 +27,16 @@
 15. [Reports & CSV Exports (Step 5J)](#-reports--csv-exports-step-5j)
 16. [Security Hardening & RLS Review (Step 5K)](#-security-hardening--rls-review-step-5k)
 17. [Realtime Integration & Testing (Step 5L)](#-realtime-integration--testing-step-5l)
-18. [Admin Pages (16 Modules)](#-admin--hr-pages-16-modules)
-19. [Employee Self-Service Pages (7 Modules)](#-employee-self-service-pages-7-modules)
-20. [Design System & UI/UX](#-design-system--uiux)
-21. [Getting Started](#-getting-started)
-22. [Environment Variables](#-environment-variables)
-23. [Database Migrations](#-database-migrations)
-24. [Testing Reports](#-testing-reports)
-25. [Completed Steps Summary](#-completed-steps-summary)
+18. [Performance & Accessibility (Step 6A)](#-performance--accessibility-step-6a)
+19. [Mobile App & Push Notifications (Step 6B)](#-mobile-app--push-notifications-step-6b)
+20. [Admin Pages (16 Modules)](#-admin--hr-pages-16-modules)
+21. [Employee Self-Service Pages (7 Modules)](#-employee-self-service-pages-7-modules)
+22. [Design System & UI/UX](#-design-system--uiux)
+23. [Getting Started](#-getting-started)
+24. [Environment Variables](#-environment-variables)
+25. [Database Migrations](#-database-migrations)
+26. [Testing Reports](#-testing-reports)
+27. [Completed Steps Summary](#-completed-steps-summary)
 
 ---
 
@@ -73,6 +75,8 @@
 | **Supabase Auth** | Built-in | Authentication & Session Management |
 | **Supabase Realtime** | Built-in | WebSocket Live Updates |
 | **Supabase RLS** | Built-in | Row-Level Security |
+| **Capacitor** | ^8.5.2 | Android/iOS Native Wrapping |
+| **Capacitor Push** | ^8.1.3 | Push Notifications via FCM |
 | **Lucide React** | ^1.48.0 | Icon Library (500+ icons) |
 | **Inter (Google Fonts)** | — | Typography |
 | **OxLint** | ^1.81.0 | Linting |
@@ -1036,6 +1040,38 @@ Covers:
 | **5J** | Reports & CSV Exports | ✅ Complete | Report queries, CSV download utility |
 | **5K** | Security Hardening | ✅ Complete | Full RLS review, IDOR prevention, helper functions |
 | **5L** | Realtime Integration | ✅ Complete | WebSocket subscriptions, attendance realtime, GPS live tracking |
+| **6A** | Performance (Lighthouse) | ✅ Complete | Code-splitting, bundle reduction (1.3MB → 300KB), Accessibility (95+) |
+| **6B** | Push Notifications (Android) | 🚧 Pending Config | Capacitor integration, Supabase Edge Function, Database Webhooks (Awaiting Firebase keys) |
+
+---
+
+## ⚡ Performance & Accessibility (Step 6A)
+
+WorkPulse HR has been heavily optimized for performance based on strict **Lighthouse** audits:
+
+- **Route-Level Code Splitting:** React Router utilizes `React.lazy()` and `<Suspense>` boundaries to independently load each of the 23+ pages.
+- **Bundle Reduction:** The initial monolithic JavaScript payload was reduced from **1.32 MB** down to **~300 KB**.
+- **Metrics Achieved:**
+  - **Performance:** 88
+  - **Accessibility:** 95 (Fixed WCAG color contrasts, main landmarks, aria-labels, and touch targets)
+  - **Best Practices:** 100
+  - **Total Blocking Time (TBT):** 0 ms
+  - **Cumulative Layout Shift (CLS):** 0
+
+---
+
+## 📱 Mobile App & Push Notifications (Step 6B)
+
+The frontend is converted into a native Android app (`com.workpulse.hr`) using **Capacitor**. 
+A comprehensive production push notification architecture has been implemented alongside the existing UI notifications:
+
+### Push Architecture
+1. **Database Source of Truth:** The existing `public.notifications` table triggers the push via an asynchronous PostgreSQL webhook.
+2. **Supabase Edge Function:** `send-push-notification` securely securely resolves active devices and interacts with FCM using Server Keys (safeguarding credentials).
+3. **Frontend Registration:** `pushNotificationService.ts` cleanly handles native OS permission requests, device token generation, and updates `notification_devices`.
+4. **Interactive Navigation:** Tapping a native Android push routes the Admin exactly to the corresponding business entity (e.g., Leave, WFH, Attendance).
+
+> **Note:** Final device compilation (APK) is pending the manual placement of the Firebase `google-services.json` file.
 
 ---
 

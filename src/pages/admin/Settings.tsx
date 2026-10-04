@@ -239,12 +239,29 @@ const AdminSettings: React.FC = () => {
         </div>
       </div>
       
-      <h3 className="section-title" style={{ marginTop: '2rem' }}>System Behaviors</h3>
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>Automatic Clock-Out</h3>
       <div className="toggle-row">
-        <div><div style={{ fontWeight: 600 }}>Enable Auto Clock-Out</div><div className="help-text">Automatically close active shifts if employee forgets to clock out.</div></div>
+        <div><div style={{ fontWeight: 600 }}>Enable Automatic Clock-Out</div><div className="help-text">Employees who remain clocked in after their shift will be automatically clocked out after the configured grace period.</div></div>
         <input type="checkbox" className="toggle" checked={settings.app.autoClockOut} onChange={e => handleChangeApp('autoClockOut', e.target.checked)}/>
       </div>
-      <div className="toggle-row" style={{ marginTop: '1rem' }}>
+      {settings.app.autoClockOut && (
+        <div className="form-grid" style={{ marginTop: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+          <div>
+            <label className="form-label">Auto Clock-Out After Shift Ends (Hours)</label>
+            <input type="number" min="0" className="form-control" value={settings.app.autoClockOutGraceHours} onChange={e => handleChangeApp('autoClockOutGraceHours', parseInt(e.target.value) || 0)}/>
+          </div>
+          <div>
+            <label className="form-label">Auto Clock-Out Mode</label>
+            <select className="form-control" value={settings.app.autoClockOutMode} onChange={e => handleChangeApp('autoClockOutMode', e.target.value)}>
+              <option value="after_grace_period">After Grace Period</option>
+              <option value="at_shift_end">At Shift End</option>
+            </select>
+          </div>
+        </div>
+      )}
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>System Behaviors</h3>
+      <div className="toggle-row">
         <div><div style={{ fontWeight: 600 }}>Allow Attendance Correction</div><div className="help-text">Let employees request fixes for missed punches.</div></div>
         <input type="checkbox" className="toggle" checked={settings.app.allowCorrection} onChange={e => handleChangeApp('allowCorrection', e.target.checked)}/>
       </div>
@@ -416,6 +433,16 @@ const AdminSettings: React.FC = () => {
       <h3 className="section-title" style={{ marginTop: '2rem' }}>General Settings</h3>
       <div className="form-grid">
         <div>
+          <label className="form-label">Payroll Period</label>
+          <select className="form-control" value={settings.payroll.payrollPeriod || 'monthly'} onChange={e => handleChangePayroll('payrollPeriod', e.target.value)}>
+            <option value="1_day">1 Day</option>
+            <option value="10_days">10 Days</option>
+            <option value="15_days">15 Days</option>
+            <option value="monthly">Monthly</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <div>
           <label className="form-label">Working Days Basis</label>
           <select className="form-control" value={settings.payroll.workingDaysBasis} onChange={e => handleChangePayroll('workingDaysBasis', e.target.value)}>
             <option value="configured">Configured Working Days</option>
@@ -500,6 +527,7 @@ const AdminSettings: React.FC = () => {
             <div>
               <label className="form-label">Deduction Method</label>
               <select className="form-control" value={settings.payroll.lateDeductionMethod} onChange={e => handleChangePayroll('lateDeductionMethod', e.target.value)}>
+                <option value="interval_based">Every 15 Minutes</option>
                 <option value="fixed">Fixed Amount</option>
                 <option value="per_minute">Per Late Minute</option>
                 <option value="half_day">Half Day</option>
@@ -507,6 +535,12 @@ const AdminSettings: React.FC = () => {
             </div>
           </div>
           <div className="form-grid">
+            {settings.payroll.lateDeductionMethod === 'interval_based' && (
+              <>
+                <div><label className="form-label">Deduction Interval (minutes)</label><input type="number" className="form-control" value={settings.payroll.lateIntervalMinutes !== null ? settings.payroll.lateIntervalMinutes : ''} onChange={e => handleChangePayroll('lateIntervalMinutes', e.target.value === '' ? null : parseInt(e.target.value))}/></div>
+                <div><label className="form-label">Deduction Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.lateIntervalAmount !== null ? settings.payroll.lateIntervalAmount : ''} onChange={e => handleChangePayroll('lateIntervalAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+              </>
+            )}
             {settings.payroll.lateDeductionMethod === 'fixed' && (
               <div><label className="form-label">Amount per Late Occurrence (₹)</label><input type="number" className="form-control" value={settings.payroll.lateFixedAmount !== null ? settings.payroll.lateFixedAmount : ''} onChange={e => handleChangePayroll('lateFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
             )}
@@ -537,6 +571,7 @@ const AdminSettings: React.FC = () => {
               <select className="form-control" value={settings.payroll.permissionDeductionMethod} onChange={e => handleChangePayroll('permissionDeductionMethod', e.target.value)}>
                 <option value="fixed">Fixed Amount</option>
                 <option value="per_minute">Per Excess Minute</option>
+                <option value="salary_based">Salary Based</option>
                 <option value="half_day">Half Day</option>
               </select>
             </div>
@@ -603,6 +638,7 @@ const AdminSettings: React.FC = () => {
                 <div>
                   <label className="form-label">Deduction Method</label>
                   <select className="form-control" value={settings.payroll.breakOverrunDeductionMethod} onChange={e => handleChangePayroll('breakOverrunDeductionMethod', e.target.value)}>
+                    <option value="salary_based">Salary Based</option>
                     <option value="fixed">Fixed Amount</option>
                     <option value="per_minute">Per Excess Minute</option>
                     <option value="half_day">Half Day</option>
@@ -610,6 +646,11 @@ const AdminSettings: React.FC = () => {
                 </div>
               </div>
               <div className="form-grid">
+                {settings.payroll.breakOverrunDeductionMethod === 'salary_based' && (
+                  <div style={{ gridColumn: '1 / -1', padding: '1rem', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', fontSize: '0.875rem' }}>
+                    <strong>Calculation:</strong> Excess break time × employee hourly salary. No fixed amount required.
+                  </div>
+                )}
                 {settings.payroll.breakOverrunDeductionMethod === 'fixed' && (
                   <div><label className="form-label">Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.breakOverrunFixedAmount !== null ? settings.payroll.breakOverrunFixedAmount : ''} onChange={e => handleChangePayroll('breakOverrunFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
                 )}

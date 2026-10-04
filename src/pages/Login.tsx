@@ -146,7 +146,7 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-primary)', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+    <main style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-primary)', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
       <div className="card" style={{ width: '100%', maxWidth: '440px', padding: '2.5rem', display: 'flex', flexDirection: 'column', gap: '2rem', backgroundColor: 'var(--bg-surface)', boxShadow: 'var(--shadow-lg)' }}>
         
         {/* Header */}
@@ -195,7 +195,7 @@ const Login: React.FC = () => {
                 type="button" 
                 onClick={handleForgotPassword}
                 disabled={loading}
-                style={{ fontSize: '0.75rem', color: 'var(--primary-500)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', opacity: loading ? 0.7 : 1 }}
+                style={{ fontSize: '0.75rem', color: 'var(--primary-600)', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', opacity: loading ? 0.7 : 1, padding: '0.5rem', margin: '-0.5rem' }}
               >
                 Forgot password?
               </button>
@@ -212,8 +212,9 @@ const Login: React.FC = () => {
               />
               <button 
                 type="button"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
                 onClick={() => setShowPassword(!showPassword)}
-                style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer' }}
+                style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)', background: 'none', border: 'none', cursor: 'pointer', padding: '0.5rem', minHeight: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
@@ -235,7 +236,7 @@ const Login: React.FC = () => {
         .spinner { animation: spin 1s linear infinite; }
         @keyframes spin { 100% { transform: rotate(360deg); } }
       `}</style>
-    </div>
+    </main>
   );
 };
 

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { authService, type AuthSession } from '../services/auth/authService';
+import { pushNotificationService } from '../services/notifications/pushNotificationService';
 
 interface AuthContextType extends AuthSession {
   isLoading: boolean;
@@ -69,6 +70,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setRole(resolvedRoleName);
           }
 
+          // Initialize push notifications on successful login
+          pushNotificationService.initPushNotifications(currentSession.user.id);
+
           // DEV-ONLY: Safe session diagnostics (no tokens/passwords/keys)
           if (import.meta.env.DEV) {
             console.log(
@@ -126,6 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const handleSignOut = async () => {
+    await pushNotificationService.unregisterDeviceToken();
     await authService.signOut();
   };
 

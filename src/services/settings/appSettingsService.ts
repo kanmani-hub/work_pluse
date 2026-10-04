@@ -40,6 +40,8 @@ export interface AppSettings {
   earlyLogoutDetection: boolean;
   gracePeriodMins: number;
   autoClockOut: boolean;
+  autoClockOutGraceHours: number;
+  autoClockOutMode: 'after_grace_period' | 'at_shift_end';
   allowCorrection: boolean;
 
   // Breaks
@@ -112,6 +114,8 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   earlyLogoutDetection: true,
   gracePeriodMins: 0,
   autoClockOut: true,
+  autoClockOutGraceHours: 4,
+  autoClockOutMode: 'after_grace_period',
   allowCorrection: true,
   breakEnabled: true,
   breakDurationMins: 60,

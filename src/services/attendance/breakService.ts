@@ -155,5 +155,52 @@ export const breakService = {
 
     if (error) return { data: null, error: new Error(error.message) };
     return { data, error: null };
+  },
+
+  /**
+   * Admin: Get all breaks for a specific date
+   */
+  async getAllBreaks(dateStr?: string): Promise<{ data: any[] | null; error: Error | null }> {
+    let query = supabase
+      .from('attendance_breaks')
+      .select(`
+        *,
+        attendance:attendance_id!inner(attendance_date, shift_template_id, shift_template:shift_template_id(name)),
+        employees:employee_id(first_name, last_name, employee_code, departments(name))
+      `)
+      .order('started_at', { ascending: false });
+
+    if (dateStr) {
+      query = query.eq('attendance.attendance_date', dateStr);
+    }
+
+    const { data, error } = await query;
+    if (error) return { data: null, error: new Error(error.message) };
+    return { data, error: null };
+  },
+
+  /**
+   * Employee: Get all breaks for a specific date
+   */
+  async getMyBreaks(dateStr: string): Promise<{ data: any[] | null; error: Error | null }> {
+    const empId = await attendanceService.getCurrentEmployeeId();
+    if (!empId) return { data: null, error: new Error('Unauthorized') };
+
+    let query = supabase
+      .from('attendance_breaks')
+      .select(`
+        *,
+        attendance:attendance_id!inner(attendance_date, shift_template_id, shift_template:shift_template_id(name))
+      `)
+      .eq('employee_id', empId)
+      .order('started_at', { ascending: true });
+
+    if (dateStr) {
+      query = query.eq('attendance.attendance_date', dateStr);
+    }
+
+    const { data, error } = await query;
+    if (error) return { data: null, error: new Error(error.message) };
+    return { data, error: null };
   }
 };

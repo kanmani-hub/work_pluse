@@ -100,6 +100,7 @@ const AdminAttendance: React.FC = () => {
         mode: a.work_mode || 'Office',
         clockIn: a.clock_in_at ? new Date(a.clock_in_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--',
         clockOut: a.clock_out_at ? new Date(a.clock_out_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--',
+        clockOutSource: a.clock_out_source || 'MANUAL',
         workHours: '-',
         breakMins: a.break_minutes || 0,
         late: a.late_minutes ? `${a.late_minutes} min` : '-',
@@ -446,6 +447,7 @@ const AdminAttendance: React.FC = () => {
                     <th style={{ textAlign: 'center' }}>Work Mode</th>
                     <th style={{ textAlign: 'center' }}>Clock In</th>
                     <th style={{ textAlign: 'center' }}>Clock Out</th>
+                    <th style={{ textAlign: 'center' }}>Source</th>
                     <th style={{ textAlign: 'center' }}>Working Hrs</th>
                     <th style={{ textAlign: 'center' }}>Late</th>
                     <th style={{ textAlign: 'center' }}>Early</th>
@@ -473,6 +475,9 @@ const AdminAttendance: React.FC = () => {
                     <td style={{ fontWeight: 500, textAlign: 'center' }}>
                         {a.clockOut}
                       {a.missingOut && <div style={{ fontSize: '0.75rem', color: 'var(--danger)', fontWeight: 600 }}>MISSING</div>}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      {a.clockOutSource === 'AUTO' ? <span className="badge badge-warning">AUTO</span> : <span className="badge badge-gray">MANUAL</span>}
                     </td>
                     <td style={{ fontWeight: 600, color: 'var(--primary-700)', textAlign: 'center' }}>{a.workHours}</td>
                     <td style={{ color: 'var(--warning)', fontSize: '0.875rem', textAlign: 'center' }}>{a.late}</td>

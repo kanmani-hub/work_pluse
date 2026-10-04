@@ -67,6 +67,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, role }) => {
                   <CalendarClock className="nav-icon" />
                   Attendance
                 </NavLink>
+                <NavLink to="/admin/breaks" onClick={onClose} className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`}>
+                  <Activity className="nav-icon" />
+                  Break Management
+                </NavLink>
               </div>
 
               <div className="sidebar-nav-group">
@@ -147,6 +151,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, role }) => {
               <NavLink to="/employee/attendance" onClick={onClose} className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`}>
                 <CalendarClock className="nav-icon" />
                 My Attendance
+              </NavLink>
+              <NavLink to="/employee/breaks" onClick={onClose} className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`}>
+                <Activity className="nav-icon" />
+                My Breaks
               </NavLink>
               <NavLink to="/employee/wfh" onClick={onClose} className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`}>
                 <Home className="nav-icon" />

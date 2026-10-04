@@ -121,6 +121,27 @@ export const realtimeService = {
   },
 
   /**
+   * Admin: Subscribe to all attendance breaks
+   */
+  subscribeToAdminBreaks(callback: (payload: any) => void) {
+    return supabase
+      .channel('admin:breaks')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_breaks' }, callback)
+      .subscribe();
+  },
+
+  /**
+   * Employee: Subscribe to their own breaks
+   */
+  subscribeToMyBreaks(employeeId: string, callback: (payload: any) => void) {
+    if (!employeeId) return null;
+    return supabase
+      .channel(`breaks:emp_${employeeId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_breaks', filter: `employee_id=eq.${employeeId}` }, callback)
+      .subscribe();
+  },
+
+  /**
    * Generic unsubscribe method
    */
   unsubscribe(channel: any) {

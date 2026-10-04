@@ -986,6 +986,13 @@ const EmployeeAttendance: React.FC = () => {
                   </span>
                 </div>
                 
+                {selectedDateDetail.autoLogout && (
+                  <div style={{ gridColumn: '1 / -1', padding: '1rem', backgroundColor: 'var(--warning-light)', borderRadius: 'var(--radius-md)', color: 'var(--warning-700)' }}>
+                    <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Automatically Clocked Out</div>
+                    <div style={{ fontSize: '0.875rem' }}>Your attendance was automatically closed because you did not clock out manually.</div>
+                  </div>
+                )}
+                
                 <div className="detail-item">
                   <span className="detail-label">Break Duration</span>
                   <span className="detail-value">{selectedDateDetail.break}</span>

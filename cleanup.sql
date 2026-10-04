@@ -1,60 +1,65 @@
--- Unassign Admin from any department or office to prevent FK constraint issues
-UPDATE public.employees
-SET department_id = NULL, office_id = NULL
-WHERE id = 'c6e4028a-d6be-4278-a460-ce50a91c6bbc';
+DO $$
+DECLARE
+    v_admin_emp_id UUID;
+    v_admin_auth_id UUID;
+    v_admin_email TEXT := 'admin@gmail.com';
+BEGIN
+    -- 1. Find the admin auth ID
+    SELECT id INTO v_admin_auth_id FROM auth.users WHERE email = v_admin_email;
+    IF v_admin_auth_id IS NULL THEN
+        RAISE EXCEPTION 'Admin user not found!';
+    END IF;
 
--- 1. notifications
-DELETE FROM public.notifications;
+    SELECT employee_id INTO v_admin_emp_id FROM profiles WHERE auth_user_id = v_admin_auth_id;
+    IF v_admin_emp_id IS NULL THEN
+        RAISE EXCEPTION 'Admin employee not found!';
+    END IF;
 
--- 2. audit_logs
-DELETE FROM public.audit_logs;
+    -- 2. Detach Admin from Department, Office
+    UPDATE employees 
+    SET department_id = NULL, office_id = NULL
+    WHERE id = v_admin_emp_id;
 
--- 3-7. Payroll
-DELETE FROM public.payroll_items;
-DELETE FROM public.payroll_payments;
-DELETE FROM public.payslips;
-DELETE FROM public.payroll;
-DELETE FROM public.salary_structures;
+    -- Also detach manager_id from departments if it exists
+    -- (We will skip manager_id update since we just drop the table later)
 
--- 8-10. Attendance
-DELETE FROM public.attendance_events;
-DELETE FROM public.attendance_breaks;
-DELETE FROM public.attendance;
+    -- 3. Delete ALL operational data (all current data is QA data)
+    DELETE FROM location_verification_events;
+    DELETE FROM face_verification_events;
+    
+    DELETE FROM employee_live_locations;
+    DELETE FROM employee_location_history;
+    DELETE FROM geofence_events;
+    
+    DELETE FROM attendance_events;
+    DELETE FROM attendance_breaks;
+    DELETE FROM attendance;
 
--- 11-14. Location
-DELETE FROM public.location_verification_events;
-DELETE FROM public.geofence_events;
-DELETE FROM public.employee_location_history;
-DELETE FROM public.employee_live_locations;
+    DELETE FROM leave_requests;
+    DELETE FROM permission_requests;
+    DELETE FROM wfh_requests;
 
--- 15-16. Face Data
-DELETE FROM public.face_verification_events;
-DELETE FROM public.face_registrations;
+    DELETE FROM payslips;
+    DELETE FROM payroll;
+    DELETE FROM salary_structures;
 
--- 17-20. Requests
-DELETE FROM public.leave_requests;
-DELETE FROM public.leave_balances;
-DELETE FROM public.wfh_requests;
-DELETE FROM public.permission_requests;
+    DELETE FROM roster_assignments;
+    DELETE FROM rosters;
+    DELETE FROM shift_assignments;
 
--- 21-24. Shifts
-DELETE FROM public.shift_assignments;
-DELETE FROM public.roster_assignments;
-DELETE FROM public.rosters;
-DELETE FROM public.shift_templates;
+    DELETE FROM face_registrations;
+    DELETE FROM notifications;
+    DELETE FROM audit_logs;
 
--- 25. Profiles (non-admin)
-DELETE FROM public.profiles
-WHERE id != 'c6e4028a-d6be-4278-a460-ce50a91c6bbc';
+    -- 4. Delete other profiles and employees
+    DELETE FROM profiles WHERE employee_id != v_admin_emp_id;
+    DELETE FROM employees WHERE id != v_admin_emp_id;
+    
+    -- 5. Delete departments and offices (now they have no dependencies from employees)
+    DELETE FROM departments;
+    DELETE FROM offices;
 
--- 26. Employees (non-admin)
-DELETE FROM public.employees
-WHERE id != 'c6e4028a-d6be-4278-a460-ce50a91c6bbc';
+    -- 6. Delete other auth.users
+    DELETE FROM auth.users WHERE id != v_admin_auth_id;
 
--- 26b. auth.users (non-admin)
-DELETE FROM auth.users
-WHERE id != 'c6e4028a-d6be-4278-a460-ce50a91c6bbc';
-
--- 27-28. Departments and Offices
-DELETE FROM public.departments;
-DELETE FROM public.offices;
+END $$;

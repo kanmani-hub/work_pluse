@@ -13,6 +13,7 @@ export interface PayrollAttendanceSummary {
   absentDays: number;
   lateLogins: number;
   totalLateMinutes: number;
+  totalBreakExcessMinutes: number;
   totalBreakOverrunMinutes: number;
   totalOvertimeMinutes: number;
   earlyLogouts: number;
@@ -50,7 +51,8 @@ export const payrollDataService = {
   async getEmployeePayrollData(
     employeeId: string,
     year: number,
-    month: number
+    month: number,
+    appSettings?: any
   ): Promise<PayrollEmployeeData> {
     const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
     const lastDay = new Date(year, month, 0).getDate();
@@ -58,7 +60,7 @@ export const payrollDataService = {
 
     // Fetch all data in parallel
     const [attendanceResult, leaveResult, wfhResult, permissionResult] = await Promise.all([
-      this._fetchAttendance(employeeId, startDate, endDate),
+      this._fetchAttendance(employeeId, startDate, endDate, appSettings),
       this._fetchLeave(employeeId, startDate, endDate),
       this._fetchWfh(employeeId, startDate, endDate),
       this._fetchPermissions(employeeId, startDate, endDate),
@@ -81,7 +83,8 @@ export const payrollDataService = {
   async _fetchAttendance(
     employeeId: string,
     startDate: string,
-    endDate: string
+    endDate: string,
+    appSettings?: any
   ): Promise<PayrollAttendanceSummary> {
     try {
       const { data, error } = await supabase
@@ -92,7 +95,7 @@ export const payrollDataService = {
         .lte('attendance_date', endDate);
 
       if (error || !data) {
-        return { workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, totalLateMinutes: 0, totalBreakOverrunMinutes: 0, totalOvertimeMinutes: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0 };
+        return { workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, totalLateMinutes: 0, totalBreakExcessMinutes: 0, totalBreakOverrunMinutes: 0, totalOvertimeMinutes: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0 };
       }
 
       const presentDays = data.filter((a: any) =>
@@ -106,6 +109,9 @@ export const payrollDataService = {
       const totalLateMinutes = data.reduce((sum: number, a: any) => sum + (Number(a.late_minutes) || 0), 0);
       const totalBreakOverrunMinutes = data.reduce((sum: number, a: any) => sum + (Number(a.break_overrun_minutes) || 0), 0);
       const totalOvertimeMinutes = data.reduce((sum: number, a: any) => sum + (Number(a.overtime_minutes) || 0), 0);
+      
+      const breakLimit = appSettings?.breakDurationMins || 75;
+      const totalBreakExcessMinutes = data.reduce((sum: number, a: any) => sum + Math.max(0, (Number(a.break_minutes) || 0) - breakLimit), 0);
 
       const earlyLogouts = data.filter((a: any) =>
         (a.early_logout_minutes && Number(a.early_logout_minutes) > 0)
@@ -121,6 +127,7 @@ export const payrollDataService = {
         absentDays: Math.max(0, workingDays - presentDays),
         lateLogins,
         totalLateMinutes,
+        totalBreakExcessMinutes,
         totalBreakOverrunMinutes,
         totalOvertimeMinutes,
         earlyLogouts,
@@ -129,7 +136,7 @@ export const payrollDataService = {
       };
     } catch (err) {
       console.error('Error fetching attendance for payroll:', err);
-      return { workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, totalLateMinutes: 0, totalBreakOverrunMinutes: 0, totalOvertimeMinutes: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0 };
+      return { workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, totalLateMinutes: 0, totalBreakExcessMinutes: 0, totalBreakOverrunMinutes: 0, totalOvertimeMinutes: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0 };
     }
   },
 
