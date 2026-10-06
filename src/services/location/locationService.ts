@@ -217,6 +217,20 @@ export const locationService = {
       return { eventId: null, result: 'ERROR', error: new Error(insertErr.message) };
     }
 
+    import('../audit/auditService').then(({ auditService }) => {
+      let actionStr = 'LOCATION_VERIFICATION_FAILED';
+      if (result === 'INSIDE' || result === 'WFH') actionStr = 'LOCATION_VERIFICATION_SUCCESS';
+      else if (result === 'LOCATION_DENIED') actionStr = 'LOCATION_DENIED';
+
+      auditService.recordAuditLog({
+        action: actionStr,
+        module: 'SECURITY',
+        entity_type: 'location_verification_events',
+        entity_id: eventResult.id,
+        description: `Location verification: ${result}`
+      }).catch(e => console.error('[AUDIT]', e));
+    });
+
     // 7. Update Live Location (if GPS successful)
     if (geo.status === 'SUCCESS') {
       const locContext = isWfh ? 'WFH' : 'OFFICE';
@@ -234,6 +248,18 @@ export const locationService = {
         const oldStatus = existingLiveLoc.location_status;
         const newStatus = result === 'WFH' ? 'WFH' : (result === 'OUTSIDE' ? 'OUTSIDE_GEOFENCE' : 'INSIDE_GEOFENCE');
 
+        if (oldStatus && oldStatus !== newStatus) {
+          if (oldStatus === 'INSIDE_GEOFENCE' && newStatus === 'OUTSIDE_GEOFENCE') {
+            import('../audit/auditService').then(({ auditService }) => {
+              auditService.recordAuditLog({ action: 'GEOFENCE_LEFT', module: 'SECURITY', description: 'Employee left the geofenced area.' });
+            });
+          } else if (oldStatus === 'OUTSIDE_GEOFENCE' && newStatus === 'INSIDE_GEOFENCE') {
+            import('../audit/auditService').then(({ auditService }) => {
+              auditService.recordAuditLog({ action: 'GEOFENCE_RETURNED', module: 'SECURITY', description: 'Employee returned to the geofenced area.' });
+            });
+          }
+        }
+
         // @ts-ignore
         await (supabase.from('employee_live_locations') as any).update({
           latitude: geo.latitude,
@@ -245,6 +271,21 @@ export const locationService = {
           last_seen_at: nowIso,
           source: 'WEB'
         }).eq('id', existingLiveLoc.id);
+
+        // Always write history record (the sender controls the interval)
+        const { error: histErr } = await (supabase.from('employee_location_history') as any).insert({
+          employee_id: empId,
+          office_id: employeeData?.offices?.id || null,
+          latitude: geo.latitude,
+          longitude: geo.longitude,
+          accuracy_meters: geo.accuracy,
+          distance_from_office_meters: distance || null,
+          location_status: newStatus,
+          location_context: locContext,
+          recorded_at: nowIso,
+          source: 'WEB'
+        });
+        if (histErr) console.error('[HISTORY INSERT ERROR]', histErr);
 
         if ((oldStatus === 'INSIDE_GEOFENCE' && newStatus === 'OUTSIDE_GEOFENCE') || (oldStatus === 'OUTSIDE_GEOFENCE' && newStatus === 'INSIDE_GEOFENCE')) {
           const eventType = newStatus === 'INSIDE_GEOFENCE' ? 'ENTERED' : 'EXITED';
@@ -367,11 +408,13 @@ export const locationService = {
   _lastUpdate: 0,
   _lastLat: null as number | null,
   _lastLon: null as number | null,
+  
+  // Configuration per user request
+  LOCATION_TRACKING_INTERVAL_MS: 10000, // 10 seconds default
 
   startLiveTracking() {
     if (!navigator.geolocation || this._watchId !== null) return;
     
-    // Controlled update: only update if distance > 20m or time > 2 mins
     this._watchId = navigator.geolocation.watchPosition(
       async (position) => {
         const now = Date.now();
@@ -379,12 +422,7 @@ export const locationService = {
         const lon = position.coords.longitude;
         
         let shouldUpdate = false;
-        if (now - this._lastUpdate > 120000) {
-          shouldUpdate = true;
-        } else if (this._lastLat !== null && this._lastLon !== null) {
-          const dist = calculateHaversineDistance(this._lastLat, this._lastLon, lat, lon);
-          if (dist > 20) shouldUpdate = true;
-        } else {
+        if (now - this._lastUpdate >= this.LOCATION_TRACKING_INTERVAL_MS) {
           shouldUpdate = true;
         }
 
@@ -392,14 +430,14 @@ export const locationService = {
           this._lastUpdate = now;
           this._lastLat = lat;
           this._lastLon = lon;
-          // Silently verify and persist
+          // Silently verify and persist (which does live update + history insert)
           await this.verifyCurrentLocation('LOCATION_CHECK').catch(() => {});
         }
       },
       (error) => {
         console.warn('Live tracking error:', error);
       },
-      { enableHighAccuracy: true, maximumAge: 30000, timeout: 27000 }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: this.LOCATION_TRACKING_INTERVAL_MS }
     );
   },
 

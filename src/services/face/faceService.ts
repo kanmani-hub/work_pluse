@@ -78,6 +78,16 @@ export const faceService = {
     // Removed: The Supabase Edge Function 'face-verification' now securely handles the DB insert 
     // using the service_role key to prevent RLS violations and spoofing.
 
+    import('../audit/auditService').then(({ auditService }) => {
+      auditService.recordAuditLog({
+        action: 'FACE_REGISTERED',
+        module: 'SECURITY',
+        entity_type: 'employees',
+        entity_id: employeeId,
+        description: `Face registered via ${providerResult.providerReference || 'AWS'}`
+      }).catch(e => console.error('[AUDIT]', e));
+    });
+
     return { 
       data: {
         id: 'handled-by-backend', // Dummy ID since we don't query the created record back immediately
@@ -158,8 +168,23 @@ export const faceService = {
     }
 
     if (providerResult.status !== 'SUCCESS') {
+      import('../audit/auditService').then(({ auditService }) => {
+        auditService.recordAuditLog({
+          action: 'FACE_VERIFICATION_FAILED',
+          module: 'SECURITY',
+          description: `Face verification failed: ${providerResult.failureReason}`
+        }).catch(e => console.error('[AUDIT]', e));
+      });
       return { eventId: eventResult.id, error: new Error(`Face verification failed: ${providerResult.failureReason}`) };
     }
+
+    import('../audit/auditService').then(({ auditService }) => {
+      auditService.recordAuditLog({
+        action: 'FACE_VERIFICATION_SUCCESS',
+        module: 'SECURITY',
+        description: `Face verification succeeded`
+      }).catch(e => console.error('[AUDIT]', e));
+    });
 
     return { eventId: eventResult.id, error: null };
   },

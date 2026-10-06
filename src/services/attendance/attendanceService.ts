@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database';
+import { auditService } from '../audit/auditService';
 
 export type AttendanceRow = Database['public']['Tables']['attendance']['Row'];
 export type AttendanceInsert = Database['public']['Tables']['attendance']['Insert'];
@@ -225,6 +226,16 @@ export const attendanceService = {
 
     if (error) return { data: null, error: new Error(error.message) };
 
+    // Audit: CLOCK_IN
+    auditService.recordAuditLog({
+      action: 'CLOCK_IN',
+      module: 'ATTENDANCE',
+      entity_type: 'attendance',
+      entity_id: (newAttendance as any).id,
+      description: `Employee clocked in at ${new Date().toLocaleTimeString('en-IN')}. Status: ${initialStatus}. Late minutes: ${lateMinutes}.`,
+      new_values: { status: initialStatus, late_minutes: lateMinutes, date: input.localDateStr }
+    }).catch(e => console.error('[AUDIT] CLOCK_IN failed:', e));
+
     // 4. Create Event
     // @ts-ignore
     await supabase.from('attendance_events').insert({
@@ -263,6 +274,9 @@ export const attendanceService = {
     if (existing.status === 'COMPLETED' || existing.clock_out_at) {
       return { data: null, error: new Error('Attendance is already completed.') };
     }
+    if (existing.status === 'ON_BREAK') {
+      return { data: null, error: new Error('Please end your active break before clocking out.') };
+    }
 
     const { globalSettingsService } = await import('../settings/globalSettingsService');
     const globalSettings = await globalSettingsService.loadSettings();
@@ -293,7 +307,15 @@ export const attendanceService = {
     const requiredHours = existing.required_hours ?? 8;
     const allowedBreakMins = existing.shift_template?.break_duration_minutes ?? globalSettings.app.breakDurationMins ?? 60;
     
-    let breakOverrunMins = Math.max(0, actualBreakMins - allowedBreakMins);
+    // Prevent clock out if any break is still active (fallback check)
+    if (breaks?.some((b: any) => b.ended_at === null)) {
+      return { data: null, error: new Error('Please end your active break before clocking out.') };
+    }
+
+    let breakOverrunMins = 0;
+    if (globalSettings.payroll.enableBreakOverrunDetection) {
+      breakOverrunMins = Math.max(0, actualBreakMins - allowedBreakMins);
+    }
 
     // Calculate effective working hours
     const actualBreakHrs = actualBreakMins / 60;
@@ -338,6 +360,16 @@ export const attendanceService = {
       .single() as any;
 
     if (error) return { data: null, error: new Error(error.message) };
+
+    // Audit: CLOCK_OUT
+    auditService.recordAuditLog({
+      action: 'CLOCK_OUT',
+      module: 'ATTENDANCE',
+      entity_type: 'attendance',
+      entity_id: attendanceId,
+      description: `Employee clocked out. Status: ${status}. Worked: ${effectiveWorkedMins}m. Overtime: ${overtimeMins}m. Early logout: ${earlyLogoutMins}m.`,
+      new_values: { status, worked_minutes: effectiveWorkedMins, break_minutes: actualBreakMins, overtime_minutes: overtimeMins }
+    }).catch(e => console.error('[AUDIT] CLOCK_OUT failed:', e));
 
     // @ts-ignore
     await supabase.from('attendance_events').insert({

@@ -1,5 +1,6 @@
 import { useDepartments } from '../../hooks/useDepartments';
 import React, { useState, useEffect } from 'react';
+import { exportService } from '../../services/export/exportService';
 import { useNavigate } from 'react-router-dom';
 import { 
   Clock, Search, Filter, Download, Settings, Plus, 
@@ -193,7 +194,7 @@ const AdminPermission: React.FC = () => {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => setSettingsDrawer(true)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Settings size={16}/> Permission Settings</button>
-          <button onClick={() => showToast('Permission export prepared successfully.')} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export</button>
+          <button onClick={() => exportService.excel(filteredRequests.map(r => ({ employee: r.employees ? `${(r.employees as any).first_name} ${(r.employees as any).last_name}` : '-', permission_date: r.permission_date, start_time: r.start_time, end_time: r.end_time, duration: r.duration_minutes, status: r.status, reason: r.reason })), [{ header: 'Employee', key: 'employee', width: 22 }, { header: 'Date', key: 'permission_date', width: 14 }, { header: 'Start', key: 'start_time', width: 10 }, { header: 'End', key: 'end_time', width: 10 }, { header: 'Minutes', key: 'duration', width: 10 }, { header: 'Status', key: 'status', width: 12 }, { header: 'Reason', key: 'reason', width: 30 }], `permission_export_${new Date().toISOString().split('T')[0]}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
           <button onClick={() => setAddDrawer(true)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Plus size={16}/> Add Permission</button>
         </div>
       </div>

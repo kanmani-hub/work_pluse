@@ -1,4 +1,6 @@
 import { supabase } from '../../lib/supabase';
+import { auditService } from '../audit/auditService';
+import { notificationService } from '../notifications/notificationService';
 
 export interface PermissionRequestInput {
   permission_date: string; // YYYY-MM-DD
@@ -66,6 +68,27 @@ export const permissionService = {
       .select()
       .single();
 
+    if (!(error) && data) {
+      auditService.recordAuditLog({
+        action: 'PERMISSION_REQUEST_CREATED',
+        module: 'PERMISSION',
+        entity_type: 'permission_requests',
+        entity_id: (data as any).id,
+        description: `Permission request submitted for ${input.permission_date} (${input.start_time}–${input.end_time}, ${duration_minutes} min).`,
+        new_values: { permission_date: input.permission_date, start_time: input.start_time, end_time: input.end_time, duration_minutes }
+      }).catch(e => console.error('[AUDIT] PERMISSION_REQUEST_CREATED failed:', e));
+
+      notificationService.notifyAdmins({
+        notification_type: 'PERMISSION',
+        title: 'New Permission Request',
+        message: `An employee submitted a permission request for ${input.permission_date} (${input.start_time}–${input.end_time}).`,
+        priority: 'NORMAL',
+        action_url: '/admin/permission',
+        entity_type: 'permission_requests',
+        entity_id: (data as any).id
+      }).catch(e => console.error('[NOTIFY] Admin permission notification failed:', e));
+    }
+
     return { data, error };
   },
 
@@ -107,6 +130,13 @@ export const permissionService = {
     const adminId = await this.getCurrentEmployeeId();
     if (!adminId) return { error: new Error('Unauthorized') };
 
+    // Fetch before update for notification
+    const { data: req } = await supabase
+      .from('permission_requests')
+      .select('employee_id, permission_date, start_time, end_time')
+      .eq('id', id)
+      .single() as any;
+
     const { error } = await (supabase.from('permission_requests') as any)
       .update({
         status,
@@ -116,19 +146,26 @@ export const permissionService = {
       })
       .eq('id', id);
 
-    if (error) return { error };
-
-    // --- AUDIT LOG ---
-    import('../audit/auditService').then(({ auditService }) => {
+    if (!error) {
       auditService.recordAuditLog({
-        action: status,
-        module: 'Permission',
+        action: status === 'APPROVED' ? 'PERMISSION_APPROVED' : status === 'REJECTED' ? 'PERMISSION_REJECTED' : 'PERMISSION_CANCELLED',
+        module: 'PERMISSION',
         entity_type: 'permission_requests',
         entity_id: id,
-        description: `Permission request ${status.toLowerCase()}`,
+        description: `Permission request ${status.toLowerCase()} by admin.`,
         metadata: { remarks }
-      });
-    });
+      }).catch(e => console.error('[AUDIT] Permission review audit failed:', e));
+
+      if ((status === 'APPROVED' || status === 'REJECTED') && req) {
+        notificationService.createNotification({
+          recipient_employee_id: req.employee_id,
+          notification_type: 'PERMISSION',
+          title: `Permission Request ${status === 'APPROVED' ? 'Approved' : 'Rejected'}`,
+          message: `Your permission request for ${req.permission_date} (${req.start_time}–${req.end_time}) has been ${status.toLowerCase()}.${remarks ? ' Remarks: ' + remarks : ''}`,
+          action_url: '/employee/permission'
+        }).catch(e => console.error('[NOTIFY] Employee permission notification failed:', e));
+      }
+    }
 
     return { error };
   }

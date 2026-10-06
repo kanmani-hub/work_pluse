@@ -9,6 +9,7 @@ dist-ssr/
 .env
 .env.*
 !.env.example
+!.env.qa.example
 
 # Supabase local temporary files
 supabase/.temp/

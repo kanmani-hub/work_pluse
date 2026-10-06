@@ -17,6 +17,15 @@ export const shiftService = {
       .select()
       .single();
     if (error) return { data: null, error };
+    import('../audit/auditService').then(({ auditService }) => {
+      auditService.recordAuditLog({
+        action: 'SHIFT_CREATED',
+        module: 'SETUP',
+        entity_type: 'shift_templates',
+        entity_id: data.id,
+        description: `Created shift: ${shiftData.name}`
+      }).catch(e => console.error('[AUDIT]', e));
+    });
     return { data, error: null };
   },
 
@@ -28,6 +37,15 @@ export const shiftService = {
       .select()
       .single();
     if (error) return { data: null, error };
+    import('../audit/auditService').then(({ auditService }) => {
+      auditService.recordAuditLog({
+        action: 'SHIFT_UPDATED',
+        module: 'SETUP',
+        entity_type: 'shift_templates',
+        entity_id: shiftId,
+        description: `Updated shift: ${shiftData.name || shiftId}`
+      }).catch(e => console.error('[AUDIT]', e));
+    });
     return { data, error: null };
   },
 
@@ -36,6 +54,17 @@ export const shiftService = {
     const { error } = await (supabase.from('shift_templates') as any)
       .update({ is_active: false })
       .eq('id', shiftId);
+    if (!error) {
+      import('../audit/auditService').then(({ auditService }) => {
+        auditService.recordAuditLog({
+          action: 'SHIFT_DELETED',
+          module: 'SETUP',
+          entity_type: 'shift_templates',
+          entity_id: shiftId,
+          description: `Deactivated shift ID: ${shiftId}`
+        }).catch(e => console.error('[AUDIT]', e));
+      });
+    }
     return { error };
   },
 

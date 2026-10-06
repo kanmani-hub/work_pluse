@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase';
+import { auditService } from '../audit/auditService';
 
 export interface SalaryStructure {
   id: string;
@@ -115,6 +116,17 @@ export const salaryService = {
       .insert(payload as never)
       .select()
       .single();
+
+    if (!error && data) {
+      auditService.recordAuditLog({
+        action: 'SALARY_UPDATED',
+        module: 'PAYROLL',
+        entity_type: 'salary_structures',
+        entity_id: (data as any).id,
+        description: `Salary structure updated for employee ${employeeId}.`,
+        new_values: { basic_salary: (data as any).basic_salary, effective_from: (data as any).effective_from }
+      }).catch(e => console.error('[AUDIT] SALARY_UPDATED failed:', e));
+    }
 
     return { data, error };
   }

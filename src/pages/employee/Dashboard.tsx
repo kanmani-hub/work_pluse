@@ -192,6 +192,10 @@ const EmployeeDashboard: React.FC = () => {
       alert("Your shift assignment is not available for the current time.");
       return;
     }
+    if (action === 'out' && attendanceState === 'on_break') {
+      alert("Please end your active break before clocking out.");
+      return;
+    }
     setClockAction(action);
     setFaceAttempts(0);
     setAdminOverrideRequested(false);

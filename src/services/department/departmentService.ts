@@ -46,6 +46,16 @@ export const departmentService = {
       
     if (error) {
       console.error('Error creating department:', error);
+    } else {
+      import('../audit/auditService').then(({ auditService }) => {
+        auditService.recordAuditLog({
+          action: 'DEPARTMENT_CREATED',
+          module: 'SETUP',
+          entity_type: 'departments',
+          entity_id: (data as any)?.id,
+          description: `Created department: ${department.name}`
+        }).catch((e: any) => console.error('[AUDIT]', e));
+      });
     }
     return { data, error };
   },
@@ -61,6 +71,16 @@ export const departmentService = {
       
     if (error) {
       console.error('Error updating department:', error);
+    } else {
+      import('../audit/auditService').then(({ auditService }) => {
+        auditService.recordAuditLog({
+          action: 'DEPARTMENT_UPDATED',
+          module: 'SETUP',
+          entity_type: 'departments',
+          entity_id: id,
+          description: `Updated department: ${department.name}`
+        }).catch((e: any) => console.error('[AUDIT]', e));
+      });
     }
     return { data, error };
   },
@@ -76,6 +96,16 @@ export const departmentService = {
       
     if (error) {
       console.error('Error deactivating department:', error);
+    } else {
+      import('../audit/auditService').then(({ auditService }) => {
+        auditService.recordAuditLog({
+          action: 'DEPARTMENT_DELETED',
+          module: 'SETUP',
+          entity_type: 'departments',
+          entity_id: id,
+          description: `Deactivated department ID: ${id}`
+        }).catch((e: any) => console.error('[AUDIT]', e));
+      });
     }
     return { data, error };
   }

@@ -115,6 +115,15 @@ const AdminOffices: React.FC = () => {
         is_active: (formData.status || 'Active') === 'Active'
       });
       if (error) { setFormError('Failed to save: ' + error.message); return; }
+      
+      import('../../services/audit/auditService').then(({ auditService }) => {
+        auditService.recordAuditLog({
+          action: 'OFFICE_CREATED',
+          module: 'SETUP',
+          description: `Created office: ${formData.name}`
+        }).catch(e => console.error('[AUDIT]', e));
+      });
+      
       showToast('Office created successfully');
     } else {
       // Update existing office in Supabase
@@ -127,6 +136,17 @@ const AdminOffices: React.FC = () => {
         is_active: (formData.status || 'Active') === 'Active'
       }).eq('id', showForm);
       if (error) { setFormError('Failed to update: ' + error.message); return; }
+
+      import('../../services/audit/auditService').then(({ auditService }) => {
+        auditService.recordAuditLog({
+          action: 'OFFICE_UPDATED',
+          module: 'SETUP',
+          entity_type: 'offices',
+          entity_id: showForm as string,
+          description: `Updated office: ${formData.name}`
+        }).catch(e => console.error('[AUDIT]', e));
+      });
+
       showToast('Office updated successfully');
     }
     setShowForm(false);

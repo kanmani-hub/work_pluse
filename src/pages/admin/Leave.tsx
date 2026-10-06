@@ -1,5 +1,6 @@
 import { useDepartments } from '../../hooks/useDepartments';
 import React, { useState, useEffect } from 'react';
+import { exportService } from '../../services/export/exportService';
 import { useNavigate } from 'react-router-dom';
 import { 
   Calendar as CalendarIcon, CalendarDays, Search, Filter, 
@@ -184,7 +185,7 @@ const AdminLeave: React.FC = () => {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => setSettingsDrawer(true)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Settings size={16}/> Leave Settings</button>
-          <button onClick={() => showToast('Leave report prepared successfully.')} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export</button>
+          <button onClick={() => exportService.excel(filteredRequests.map(r => ({ employee: r.employees ? `${(r.employees as any).first_name} ${(r.employees as any).last_name}` : '-', leave_type: (r as any).leave_types?.name || '-', start_date: r.start_date, end_date: r.end_date, total_days: r.total_days, status: r.status, reason: r.reason, requested_at: r.requested_at ? new Date(r.requested_at).toLocaleDateString('en-IN') : '-' })), [{ header: 'Employee', key: 'employee', width: 22 }, { header: 'Leave Type', key: 'leave_type', width: 14 }, { header: 'Start', key: 'start_date', width: 12 }, { header: 'End', key: 'end_date', width: 12 }, { header: 'Days', key: 'total_days', width: 8 }, { header: 'Status', key: 'status', width: 12 }, { header: 'Reason', key: 'reason', width: 30 }, { header: 'Requested', key: 'requested_at', width: 14 }], `leave_export_${new Date().toISOString().split('T')[0]}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
           <button onClick={() => setAddLeaveDrawer(true)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Plus size={16}/> Add Leave</button>
         </div>
       </div>

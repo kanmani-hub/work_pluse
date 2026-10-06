@@ -86,6 +86,16 @@ export const realtimeService = {
   },
 
   /**
+   * Admin: Subscribe to location history
+   */
+  subscribeToLocationHistory(callback: (payload: any) => void) {
+    return supabase
+      .channel('admin:location_history')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'employee_location_history' }, callback)
+      .subscribe();
+  },
+
+  /**
    * Admin: Subscribe to geofence events
    */
   subscribeToGeofenceEvents(callback: (payload: any) => void) {

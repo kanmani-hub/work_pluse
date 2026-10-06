@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database';
+import { auditService } from '../audit/auditService';
 
 export type EmployeeRow = Database['public']['Tables']['employees']['Row'];
 export type EmployeeInsert = Database['public']['Tables']['employees']['Insert'];
@@ -107,7 +108,17 @@ export const employeeService = {
         return { data: null, error: new Error(errorMessage) };
       }
 
-      return { data: data.employee, error: null };
+      const employee = data.employee;
+      auditService.recordAuditLog({
+        action: 'EMPLOYEE_CREATED',
+        module: 'EMPLOYEE',
+        entity_type: 'employees',
+        entity_id: employee?.id || 'unknown',
+        description: `New employee created: ${employee?.first_name || ''} ${employee?.last_name || ''} (${employee?.employee_code || 'N/A'}).`,
+        new_values: { email: employee?.email, employee_code: employee?.employee_code }
+      }).catch(e => console.error('[AUDIT] EMPLOYEE_CREATED failed:', e));
+
+      return { data: employee, error: null };
     } catch (err) {
       console.error('Unexpected error creating employee via edge function:', err);
       return { data: null, error: new Error('Unexpected network error') };
@@ -130,6 +141,7 @@ export const employeeService = {
         shift_assignments: _______,
         password: ________,
         confirm_password: _________,
+        salary_structures: __________,
         ...safeInput
       } = input as any;
 
@@ -153,6 +165,15 @@ export const employeeService = {
         }
         return { data: null, error: new Error(errorMsg) };
       }
+
+      auditService.recordAuditLog({
+        action: 'EMPLOYEE_UPDATED',
+        module: 'EMPLOYEE',
+        entity_type: 'employees',
+        entity_id: id,
+        description: `Employee record updated.`,
+        new_values: safeInput
+      }).catch(e => console.error('[AUDIT] EMPLOYEE_UPDATED failed:', e));
 
       return { data, error: null };
     } catch (err) {
@@ -194,6 +215,14 @@ export const employeeService = {
       if (data?.error || data?.success === false) {
         return { success: false, error: new Error(data.error || 'Unknown error occurred') };
       }
+
+      auditService.recordAuditLog({
+        action: 'EMPLOYEE_DELETED',
+        module: 'EMPLOYEE',
+        entity_type: 'employees',
+        entity_id: id,
+        description: `Employee permanently deleted.`
+      }).catch(e => console.error('[AUDIT] EMPLOYEE_DELETED failed:', e));
 
       return { success: true, error: null };
     } catch (err) {
@@ -301,6 +330,17 @@ export const employeeService = {
         .update({ shift_template_id: shiftTemplateId })
         // @ts-ignore
         .eq('id', existing.id);
+      if (!error) {
+        import('../audit/auditService').then(({ auditService }) => {
+          auditService.recordAuditLog({
+            action: 'ROSTER_UPDATED',
+            module: 'SETUP',
+            entity_type: 'shift_assignments',
+            entity_id: (existing as any).id,
+            description: `Updated shift assignment for employee ${employeeId} on ${effectiveDate}`
+          }).catch((e: any) => console.error('[AUDIT]', e));
+        });
+      }
       return { data, error };
     } else {
       // Insert new
@@ -311,7 +351,21 @@ export const employeeService = {
           shift_template_id: shiftTemplateId,
           effective_date: effectiveDate,
           assignment_type: 'PERMANENT'
-        } as any);
+        } as any)
+        .select()
+        .single();
+        
+      if (!error) {
+        import('../audit/auditService').then(({ auditService }) => {
+          auditService.recordAuditLog({
+            action: 'ROSTER_CREATED',
+            module: 'SETUP',
+            entity_type: 'shift_assignments',
+            entity_id: (data as any)?.id,
+            description: `Created shift assignment for employee ${employeeId} on ${effectiveDate}`
+          }).catch((e: any) => console.error('[AUDIT]', e));
+        });
+      }
       return { data, error };
     }
   }

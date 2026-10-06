@@ -59,12 +59,23 @@ export const wfhService = {
 
     if (!error && data) {
       await auditService.recordAuditLog({
-        action: 'CREATE_WFH',
+        action: 'WFH_REQUEST_CREATED',
         module: 'WFH',
         entity_type: 'wfh_requests',
         entity_id: data.id,
         description: `Employee requested WFH for ${input.request_date}`
       });
+
+      // Notify Admin/HR of the new WFH request
+      notificationService.notifyAdmins({
+        notification_type: 'WFH',
+        title: 'New WFH Request',
+        message: `An employee submitted a WFH request for ${input.request_date}.`,
+        priority: 'NORMAL',
+        action_url: '/admin/wfh',
+        entity_type: 'wfh_requests',
+        entity_id: data.id
+      }).catch(e => console.error('[NOTIFY] Admin WFH notification failed:', e));
     }
 
     return { data, error };
@@ -97,7 +108,7 @@ export const wfhService = {
 
     if (!error) {
       await auditService.recordAuditLog({
-        action: 'CANCEL_WFH',
+        action: 'WFH_CANCELLED',
         module: 'WFH',
         entity_type: 'wfh_requests',
         entity_id: id,
@@ -152,7 +163,7 @@ export const wfhService = {
 
     if (!error && request) {
       await auditService.recordAuditLog({
-        action: `${status}_WFH`,
+        action: status === 'APPROVED' ? 'WFH_APPROVED' : status === 'REJECTED' ? 'WFH_REJECTED' : 'WFH_CANCELLED',
         module: 'WFH',
         entity_type: 'wfh_requests',
         entity_id: id,

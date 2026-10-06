@@ -408,7 +408,7 @@ export const payrollService = {
         net_salary: netSalary,
         status: 'CALCULATED',
         calculated_at: new Date().toISOString(),
-        notes: dataSummary
+        remarks: dataSummary
       } as any)
       .select()
       .single<any>();
@@ -552,7 +552,7 @@ export const payrollService = {
 
     if (!updErr) {
       await auditService.recordAuditLog({
-        action: 'PAYROLL_PAID',
+        action: 'PAYMENT_MARKED',
         module: 'PAYROLL',
         entity_type: 'payroll',
         entity_id: id,

@@ -216,7 +216,6 @@ const AdminDashboard: React.FC = () => {
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
               <div className="kpi-value">{stats.employees}</div>
-              <span className="badge badge-success">+5%</span>
             </div>
           </div>
           
@@ -227,7 +226,6 @@ const AdminDashboard: React.FC = () => {
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
               <div className="kpi-value">{stats.working}</div>
-              <span className="badge badge-success">+12%</span>
             </div>
           </div>
 
@@ -238,7 +236,6 @@ const AdminDashboard: React.FC = () => {
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
               <div className="kpi-value">{(stats.leavePending + stats.permPending + stats.wfhPending)}</div>
-              <span className="badge badge-warning">-2%</span>
             </div>
           </div>
 
@@ -249,7 +246,6 @@ const AdminDashboard: React.FC = () => {
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
               <div className="kpi-value">{stats.leavePending || 0}</div>
-              <span className="badge badge-danger">+1%</span>
             </div>
           </div>
 

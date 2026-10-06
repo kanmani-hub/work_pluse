@@ -12,6 +12,7 @@ import type { EmployeeWithRelations } from '../../services/employees/employeeSer
 import { salaryService } from '../../services/payroll/salaryService';
 import { payrollService } from '../../services/payroll/payrollService';
 import SalaryEditor from '../../components/SalaryEditor';
+import { exportService } from '../../services/export/exportService';
 
 const AdminEmployees: React.FC = () => {
   const navigate = useNavigate();
@@ -264,7 +265,40 @@ const AdminEmployees: React.FC = () => {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button onClick={() => setImportModal(true)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Upload size={16}/> Import Employees</button>
-          <button onClick={() => { showToast('Employee export started'); }} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Employees</button>
+          <button onClick={() => exportService.excel(filteredEmployees.map(e => ({
+            employee_code: e.employee_code,
+            name: `${e.first_name} ${e.last_name}`,
+            email: e.email,
+            department: (e.department as any)?.name || '-',
+            office: (e.office as any)?.name || '-',
+            role: (e.role as any)?.name || '-',
+            status: e.status,
+            phone: e.phone || '-',
+            join_date: e.joining_date || '-',
+          })), [
+            { header: 'Code', key: 'employee_code', width: 10 },
+            { header: 'Name', key: 'name', width: 22 },
+            { header: 'Email', key: 'email', width: 28 },
+            { header: 'Department', key: 'department', width: 18 },
+            { header: 'Office', key: 'office', width: 16 },
+            { header: 'Role', key: 'role', width: 16 },
+            { header: 'Status', key: 'status', width: 12 },
+            { header: 'Phone', key: 'phone', width: 14 },
+            { header: 'Join Date', key: 'join_date', width: 14 },
+          ], `employees_export_${new Date().toISOString().split('T')[0]}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
+          <button onClick={() => exportService.pdf(filteredEmployees.map(e => ({
+            employee_code: e.employee_code,
+            name: `${e.first_name} ${e.last_name}`,
+            department: (e.department as any)?.name || '-',
+            role: (e.role as any)?.name || '-',
+            status: e.status,
+          })), [
+            { header: 'Code', key: 'employee_code' },
+            { header: 'Name', key: 'name' },
+            { header: 'Department', key: 'department' },
+            { header: 'Role', key: 'role' },
+            { header: 'Status', key: 'status' },
+          ], 'Employee Directory', `employees_export_${new Date().toISOString().split('T')[0]}`, `Total: ${filteredEmployees.length} employees`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><FileText size={16}/> Export PDF</button>
           <button onClick={() => { setFormData({}); setShowAddForm(true); }} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Plus size={16}/> Add Employee</button>
         </div>
       </div>

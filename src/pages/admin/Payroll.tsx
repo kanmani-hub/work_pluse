@@ -6,6 +6,7 @@ import {
   FileText, Activity, ShieldCheck, History, Edit, 
   Unlock, Lock, CheckCircle, ArrowRight, Send
 } from 'lucide-react';
+import { exportService } from '../../services/export/exportService';
 import { payrollService } from '../../services/payroll/payrollService';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { payslipService } from '../../services/payroll/payslipService';
@@ -201,23 +202,29 @@ const AdminPayroll: React.FC = () => {
   };
 
   const handleExport = async () => {
-    if (monthPayrolls.length === 0) {
-      showToast('No payroll data to export for this month.');
+    if (filteredData.length === 0) {
+      showToast('No payroll data to export for current filters.');
       return;
     }
-    const headers = ['Employee Name', 'Employee Code', 'Department', 'Status', 'Gross Salary', 'Total Deductions', 'Net Salary'];
-    const keys = ['name', 'code', 'department', 'status', 'gross', 'deductions', 'net'];
-    const rows = monthPayrolls.map(p => ({
-      name: p.employees ? `${p.employees.first_name} ${p.employees.last_name}` : 'Unknown',
-      code: p.employees?.employee_code || '-',
-      department: p.employees?.departments?.name || '-',
-      status: p.status,
-      gross: p.gross_salary,
-      deductions: p.total_deductions,
-      net: p.net_salary
+    const exportRows = filteredData.map(({ emp, payroll }) => ({
+      name: `${emp.first_name || ''} ${emp.last_name || ''}`,
+      code: emp.employee_code || '-',
+      department: emp.department?.name || '-',
+      status: payroll?.status || 'NOT_GENERATED',
+      gross: payroll?.gross_salary || 0,
+      deductions: payroll?.total_deductions || 0,
+      net: payroll?.net_salary || 0
     }));
-    const { exportToCSV } = await import('../../utils/exportCsv');
-    exportToCSV(`Payroll_${MONTH_NAMES[selectedMonth - 1]}_${selectedYear}`, rows, headers, keys);
+
+    exportService.excel(exportRows, [
+      { header: 'Employee Name', key: 'name', width: 22 },
+      { header: 'Employee Code', key: 'code', width: 14 },
+      { header: 'Department', key: 'department', width: 16 },
+      { header: 'Status', key: 'status', width: 14 },
+      { header: 'Gross Salary', key: 'gross', width: 14 },
+      { header: 'Deductions', key: 'deductions', width: 14 },
+      { header: 'Net Salary', key: 'net', width: 14 }
+    ], `Payroll_${MONTH_NAMES[selectedMonth - 1]}_${selectedYear}`);
     showToast('Payroll export generated.');
   };
 

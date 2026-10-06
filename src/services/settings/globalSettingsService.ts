@@ -93,6 +93,14 @@ class SettingsService {
       // Sync local storage for offline fallback
       appSettingsService.saveSettings(settings.app);
       payrollSettingsService.saveSettings(settings.payroll);
+
+      import('../audit/auditService').then(({ auditService }) => {
+        auditService.recordAuditLog({
+          action: 'SETTINGS_UPDATED',
+          module: 'SETTINGS',
+          description: 'Global company settings were updated.'
+        }).catch(e => console.error('[AUDIT]', e));
+      });
       
       return true;
     } catch (e: any) {

@@ -102,9 +102,18 @@ const Login: React.FC = () => {
 
       if (signInError) {
         setError(signInError.message);
-      } else if (signInData?.user?.email === 'admin@gmail.com') {
-        // Auto-restore admin profile if missing (Note: Requires RLS bypass or existing admin role)
-        try {
+      } else {
+        import('../services/audit/auditService').then(({ auditService }) => {
+          auditService.recordAuditLog({
+            action: 'LOGIN_SUCCESS',
+            module: 'AUTH',
+            description: `User logged in: ${loginEmail}`
+          }).catch((e: any) => console.error('[AUDIT]', e));
+        });
+
+        if (signInData?.user?.email === 'admin@gmail.com') {
+          // Auto-restore admin profile if missing (Note: Requires RLS bypass or existing admin role)
+          try {
           const userId = signInData.user.id;
           
           // First try to get the ADMIN role_id
@@ -135,7 +144,7 @@ const Login: React.FC = () => {
           console.error('Failed to auto-restore admin profile from client (RLS likely blocks this). Please run the SQL migration.', e);
         }
       }
-      
+      }
       // If successful, the AuthContext listener will detect SIGNED_IN and handle navigation
     } catch (err) {
       console.error(err);

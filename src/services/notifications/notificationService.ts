@@ -126,6 +126,53 @@ export const notificationService = {
     return { data, error };
   },
 
+  /**
+   * Notify all Admin/HR users of a business event (e.g. new request submitted).
+   * Resolves actual admin employee IDs from the DB — never uses hardcoded IDs.
+   */
+  async notifyAdmins(params: {
+    notification_type: string;
+    title: string;
+    message: string;
+    priority?: string;
+    action_url?: string;
+    entity_type?: string;
+    entity_id?: string;
+    metadata?: any;
+  }) {
+    const { data: adminRoles } = await supabase
+      .from('roles')
+      .select('id, name')
+      .in('name', ['Admin', 'HR Manager', 'System Admin']) as any;
+
+    if (!adminRoles || adminRoles.length === 0) return;
+    const roleIds = adminRoles.map((r: any) => r.id);
+
+    const { data: admins } = await supabase
+      .from('employees')
+      .select('id')
+      .in('role_id', roleIds)
+      .eq('status', 'ACTIVE') as any;
+
+    if (!admins || admins.length === 0) return;
+
+    // Dedup: don't create if same entity already notified this admin
+    const notificationsToInsert = admins.map((admin: any) => ({
+      recipient_employee_id: admin.id,
+      notification_type: params.notification_type,
+      title: params.title,
+      message: params.message,
+      priority: params.priority || 'NORMAL',
+      action_url: params.action_url || null,
+      entity_type: params.entity_type || null,
+      entity_id: params.entity_id || null,
+      metadata: params.metadata || null,
+    }));
+
+    const { error } = await supabase.from('notifications').insert(notificationsToInsert as any);
+    if (error) console.error('[NOTIFY] notifyAdmins insert error:', error);
+  },
+
   // Notify Admins of Geofence Events
   async notifyGeofenceEvent(params: { event_type: string, employeeName: string, employeeCode: string, distance?: number | null, empId: string, eventId?: string }) {
     // Determine title and message

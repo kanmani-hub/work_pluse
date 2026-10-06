@@ -5,7 +5,7 @@ export const auditService = {
   async getAuditLogs() {
     const { data, error } = await supabase
       .from('audit_logs')
-      .select('*, employees!audit_logs_actor_employee_id_fkey(first_name, last_name, employee_code)')
+      .select('*, employees(first_name, last_name, employee_code)')
       .order('created_at', { ascending: false });
 
     return { data, error };
@@ -14,7 +14,7 @@ export const auditService = {
   async getAuditLogById(id: string) {
     const { data, error } = await supabase
       .from('audit_logs')
-      .select('*, employees!audit_logs_actor_employee_id_fkey(first_name, last_name, employee_code)')
+      .select('*, employees(first_name, last_name, employee_code)')
       .eq('id', id)
       .single<any>();
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { exportService } from '../../services/export/exportService';
 import { useNavigate } from 'react-router-dom';
 import { 
   Calendar, ChevronLeft, ChevronRight, Search, Filter, 
@@ -274,7 +275,7 @@ const AdminAttendance: React.FC = () => {
           </div>
           <button className="btn btn-outline" onClick={handleToday} style={{ fontSize: '0.875rem' }}>Today</button>
 
-          <button onClick={() => showToast('Attendance export prepared successfully.')} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export</button>
+          <button onClick={() => exportService.excel(filteredData.map(a => ({ empId: a.empId, name: a.name, dept: a.dept, shift: a.shiftTime, mode: a.mode, clockIn: a.clockIn, clockOut: a.clockOut, break: a.breakMins, status: a.status, late: a.late })), [{ header: 'Code', key: 'empId', width: 10 }, { header: 'Name', key: 'name', width: 22 }, { header: 'Department', key: 'dept', width: 16 }, { header: 'Shift Time', key: 'shift', width: 16 }, { header: 'Mode', key: 'mode', width: 10 }, { header: 'In', key: 'clockIn', width: 10 }, { header: 'Out', key: 'clockOut', width: 10 }, { header: 'Break (m)', key: 'break', width: 10 }, { header: 'Status', key: 'status', width: 12 }, { header: 'Late', key: 'late', width: 10 }], `attendance_export_${currentDateDisplay}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
           <button onClick={() => { setLoading(true); setTimeout(() => setLoading(false), 500); }} className="icon-button  border"><RefreshCw size={16}/></button>
           <button className="icon-button  border"><Settings size={16}/></button>
         </div>

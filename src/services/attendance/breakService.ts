@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database';
 import { attendanceService } from './attendanceService';
+import { auditService } from '../audit/auditService';
 
 export type AttendanceBreakRow = Database['public']['Tables']['attendance_breaks']['Row'];
 export type AttendanceBreakInsert = Database['public']['Tables']['attendance_breaks']['Insert'];
@@ -17,7 +18,7 @@ export const breakService = {
     // 1. Verify Attendance is active
     const { data: attendance } = await supabase
       .from('attendance')
-      .select('status, id')
+      .select('status, id, clock_in_at, clock_out_at')
       .eq('id', attendanceId)
       .eq('employee_id', empId)
       .single() as any;
@@ -25,7 +26,8 @@ export const breakService = {
     if (!attendance) {
       return { data: null, error: new Error('Attendance record not found.') };
     }
-    if (attendance.status !== 'WORKING' && attendance.status !== 'ON_BREAK') {
+    
+    if (!attendance.clock_in_at || attendance.clock_out_at !== null) {
       return { data: null, error: new Error('Cannot start break for completed attendance.') };
     }
 
@@ -39,6 +41,27 @@ export const breakService = {
 
     if (activeBreak) {
       return { data: null, error: new Error('A break is already active.') };
+    }
+
+    // 2.5 Check break limit exhaustion
+    const { data: attendanceData } = await supabase
+      .from('attendance')
+      .select('*, shift_template:shift_template_id(break_duration_minutes)')
+      .eq('id', attendanceId)
+      .single() as any;
+
+    const { globalSettingsService } = await import('../settings/globalSettingsService');
+    const globalSettings = await globalSettingsService.loadSettings();
+    const allowedBreakMins = attendanceData?.shift_template?.break_duration_minutes ?? globalSettings.app.breakDurationMins ?? 60;
+
+    const { data: pastBreaks } = await supabase.from('attendance_breaks').select('duration_minutes').eq('attendance_id', attendanceId);
+    let usedMins = 0;
+    if (pastBreaks) {
+      pastBreaks.forEach((b: any) => usedMins += (b.duration_minutes || 0));
+    }
+    
+    if (usedMins >= allowedBreakMins) {
+      return { data: null, error: new Error('You have already exhausted your allowed break duration for today.') };
     }
 
     const nowIso = new Date().toISOString();
@@ -57,6 +80,16 @@ export const breakService = {
       .single() as any;
 
     if (error) return { data: null, error: new Error(error.message) };
+
+    // Audit: BREAK_STARTED
+    auditService.recordAuditLog({
+      action: 'BREAK_STARTED',
+      module: 'ATTENDANCE',
+      entity_type: 'attendance_breaks',
+      entity_id: (newBreak as any).id,
+      description: `Employee started a ${breakType} break.`,
+      new_values: { attendance_id: attendanceId, break_type: breakType, started_at: nowIso }
+    }).catch(e => console.error('[AUDIT] BREAK_STARTED failed:', e));
 
     // Update Attendance status
     // @ts-ignore
@@ -111,6 +144,16 @@ export const breakService = {
       .single() as any;
 
     if (error) return { data: null, error: new Error(error.message) };
+
+    // Audit: BREAK_ENDED
+    auditService.recordAuditLog({
+      action: 'BREAK_ENDED',
+      module: 'ATTENDANCE',
+      entity_type: 'attendance_breaks',
+      entity_id: (updatedBreak as any)?.id || activeBreak.id,
+      description: `Employee ended break. Duration: ${durationMinutes} minutes.`,
+      new_values: { attendance_id: attendanceId, duration_minutes: durationMinutes, ended_at: nowIso }
+    }).catch(e => console.error('[AUDIT] BREAK_ENDED failed:', e));
 
     // 3. Update attendance total break minutes and status
     const { data: attendanceInfo } = await supabase

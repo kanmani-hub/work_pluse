@@ -1,4 +1,6 @@
 import { supabase } from '../../lib/supabase';
+import { auditService } from '../audit/auditService';
+import { notificationService } from '../notifications/notificationService';
 
 export interface LeaveRequestInput {
   leave_type_id: string;
@@ -119,6 +121,27 @@ export const leaveService = {
       .select()
       .single() as any;
 
+    if (!error && data) {
+      auditService.recordAuditLog({
+        action: 'LEAVE_REQUEST_CREATED',
+        module: 'LEAVE',
+        entity_type: 'leave_requests',
+        entity_id: (data as any).id,
+        description: `Leave request submitted for ${input.start_date} to ${input.end_date} (${total_days} day(s)).`,
+        new_values: { start_date: input.start_date, end_date: input.end_date, total_days }
+      }).catch(e => console.error('[AUDIT] LEAVE_REQUEST_CREATED failed:', e));
+
+      notificationService.notifyAdmins({
+        notification_type: 'LEAVE',
+        title: 'New Leave Request',
+        message: `An employee submitted a leave request from ${input.start_date} to ${input.end_date} (${total_days} day(s)).`,
+        priority: 'NORMAL',
+        action_url: '/admin/leave',
+        entity_type: 'leave_requests',
+        entity_id: (data as any).id
+      }).catch(e => console.error('[NOTIFY] Admin leave notification failed:', e));
+    }
+
     return { data, error };
   },
 
@@ -143,6 +166,18 @@ export const leaveService = {
     const { error } = await (supabase.from('leave_requests') as any)
       .update({ status: 'CANCELLED' })
       .eq('id', id);
+
+    if (!error) {
+      auditService.recordAuditLog({
+        action: 'LEAVE_CANCELLED',
+        module: 'LEAVE',
+        entity_type: 'leave_requests',
+        entity_id: id,
+        description: 'Employee cancelled their leave request.',
+        old_values: { status: 'PENDING' },
+        new_values: { status: 'CANCELLED' }
+      }).catch(e => console.error('[AUDIT] LEAVE_CANCELLED failed:', e));
+    }
 
     return { error };
   },
@@ -181,16 +216,33 @@ export const leaveService = {
     if (error) return { error };
 
     // --- AUDIT LOG ---
-    import('../audit/auditService').then(({ auditService }) => {
-      auditService.recordAuditLog({
-        action: status,
-        module: 'Leave',
-        entity_type: 'leave_requests',
-        entity_id: id,
-        description: `Leave request ${status.toLowerCase()}`,
-        metadata: { remarks }
-      });
-    });
+    auditService.recordAuditLog({
+      action: status === 'APPROVED' ? 'LEAVE_APPROVED' : status === 'REJECTED' ? 'LEAVE_REJECTED' : 'LEAVE_CANCELLED',
+      module: 'LEAVE',
+      entity_type: 'leave_requests',
+      entity_id: id,
+      description: `Leave request ${status.toLowerCase()} by admin.`,
+      metadata: { remarks }
+    }).catch(e => console.error('[AUDIT] Leave review audit failed:', e));
+
+    if (status === 'APPROVED' || status === 'REJECTED') {
+      // Fetch employee for notification
+      const { data: leaveReq } = await supabase
+        .from('leave_requests')
+        .select('employee_id, start_date, end_date')
+        .eq('id', id)
+        .single() as any;
+
+      if (leaveReq) {
+        notificationService.createNotification({
+          recipient_employee_id: leaveReq.employee_id,
+          notification_type: 'LEAVE',
+          title: `Leave Request ${status === 'APPROVED' ? 'Approved' : 'Rejected'}`,
+          message: `Your leave request from ${leaveReq.start_date} to ${leaveReq.end_date} has been ${status.toLowerCase()}.${remarks ? ' Remarks: ' + remarks : ''}`,
+          action_url: '/employee/leave'
+        }).catch(e => console.error('[NOTIFY] Employee leave notification failed:', e));
+      }
+    }
 
     if (status === 'APPROVED') {
        // --- SANDWICH LEAVE CALCULATION ---

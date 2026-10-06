@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 
 import { reportService } from '../../services/reports/reportService';
-import { exportToCSV } from '../../utils/exportCsv';
+import { exportService } from '../../services/export/exportService';
 
 const AdminReports: React.FC = () => {
   const navigate = useNavigate();
@@ -91,12 +91,12 @@ const AdminReports: React.FC = () => {
     setExportModal(false);
     
     if (activeTab === 'Attendance' && attendanceReport.length > 0) {
-       exportToCSV(
-         `attendance_report_${new Date().toISOString().split('T')[0]}.csv`,
-         attendanceReport,
-         ['Employee Name', 'Employee Code', 'Department', 'Date', 'Clock In', 'Late Minutes'],
-         ['employees.first_name', 'employees.employee_code', 'employees.departments.name', 'date', 'clock_in', 'late_minutes']
-       );
+       exportService.excel(attendanceReport.map(r => ({ name: r.employees?.first_name ? `${r.employees.first_name} ${r.employees.last_name}` : 'Unknown', code: r.employees?.employee_code || '-', department: (r.employees?.departments as any)?.name || '-', date: r.date, clock_in: r.clock_in ? new Date(r.clock_in).toLocaleTimeString() : '-', late_minutes: r.late_minutes })), [{ header: 'Employee', key: 'name', width: 22 }, { header: 'Code', key: 'code', width: 14 }, { header: 'Department', key: 'department', width: 18 }, { header: 'Date', key: 'date', width: 14 }, { header: 'Clock In', key: 'clock_in', width: 14 }, { header: 'Late Minutes', key: 'late_minutes', width: 12 }], `attendance_report_${new Date().toISOString().split('T')[0]}`);
+
+
+
+
+
     }
     
     showToast('Report generated successfully');

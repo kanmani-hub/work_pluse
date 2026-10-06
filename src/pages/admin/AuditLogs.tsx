@@ -4,7 +4,7 @@ import {
   Activity, Users, Lock, AlertTriangle, CheckCircle2, X,
   FileText, Clock, ChevronRight, ChevronLeft, LayoutList, List
 } from 'lucide-react';
-
+import { exportService } from '../../services/export/exportService';
 import { auditService } from '../../services/audit/auditService';
 
 const AuditLogs: React.FC = () => {
@@ -28,6 +28,9 @@ const AuditLogs: React.FC = () => {
   const fetchLogs = async () => {
     setLoading(true);
     const { data, error } = await auditService.getAuditLogs();
+    if (error) {
+      console.error('[AUDIT LOG QUERY ERROR]', error);
+    }
     if (data) setLogs(data);
     setLoading(false);
   };
@@ -106,7 +109,7 @@ const AuditLogs: React.FC = () => {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={handleRefresh} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><RefreshCw size={16}/> Refresh</button>
-          <button onClick={() => setExportModal(true)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Logs</button>
+          <button onClick={() => exportService.excel(filteredLogs.map(l => ({ id: l.id.slice(0, 8), module: l.module, action: l.action, description: l.description, actor: l.employees ? `${l.employees.first_name} ${l.employees.last_name}` : 'System', role: l.role, date: new Date(l.created_at).toLocaleString() })), [{ header: 'ID', key: 'id', width: 10 }, { header: 'Module', key: 'module', width: 14 }, { header: 'Action', key: 'action', width: 24 }, { header: 'Description', key: 'description', width: 35 }, { header: 'Actor', key: 'actor', width: 22 }, { header: 'Role', key: 'role', width: 12 }, { header: 'Date', key: 'date', width: 22 }], `audit_logs_${new Date().toISOString().split('T')[0]}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Logs</button>
         </div>
       </div>
 
