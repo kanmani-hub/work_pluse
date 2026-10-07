@@ -6,6 +6,7 @@ import {
 import { wfhService } from '../../services/wfh/wfhService';
 import { useGlobalSettings } from '../../services/settings/globalSettingsService';
 import { useAuth } from '../../context/AuthContext';
+import { qaTimeService } from '../../services/qa/qaTimeService';
 
 const EmployeeWfh: React.FC = () => {
   const { settings } = useGlobalSettings();
@@ -57,7 +58,7 @@ const EmployeeWfh: React.FC = () => {
       }));
       setHistory(mapped);
 
-      const now = new Date();
+      const now = qaTimeService.getDate();
       // Ensure YYYY-MM-DD format regardless of locale
       const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const currentMonthStr = todayStr.substring(0, 7);
@@ -110,7 +111,7 @@ const EmployeeWfh: React.FC = () => {
   useEffect(() => {
     let interval: any;
     if (todayAttendanceState === 'working') {
-      interval = setInterval(() => setWorkTime(t => t + 1), 1000);
+      interval = setInterval(() => setWorkTime(t => t + 1), qaTimeService.getRealToSimulatedInterval(1000));
     }
     return () => clearInterval(interval);
   }, [todayAttendanceState]);
@@ -204,7 +205,7 @@ const EmployeeWfh: React.FC = () => {
     setTimeout(() => setToastMessage(''), 3000);
   };
 
-  const now = new Date();
+  const now = qaTimeService.getDate();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
   const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();

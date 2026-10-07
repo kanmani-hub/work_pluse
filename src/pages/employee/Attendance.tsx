@@ -9,6 +9,7 @@ import { attendanceService } from '../../services/attendance/attendanceService';
 import { breakService } from '../../services/attendance/breakService';
 import { faceService } from '../../services/face/faceService';
 import { locationService } from '../../services/location/locationService';
+import { qaTimeService } from '../../services/qa/qaTimeService';
 import { supabase } from '../../lib/supabase';
 
 const SearchIcon = ({size, color}: any) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
@@ -99,18 +100,37 @@ const EmployeeAttendance: React.FC = () => {
     if (!fetchCalledRef.current) {
       fetchCalledRef.current = true;
       fetchData();
+      
+      attendanceService.getCurrentEmployeeId().then(empId => {
+        if (!empId) return;
+        const channel = supabase.channel('attendance_page')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'attendance', filter: `employee_id=eq.${empId}` },
+            () => {
+              fetchData();
+            }
+          )
+          .subscribe();
+        
+        // attach to window for cleanup or just let it live since we can't easily return it here without complex state
+        (window as any)._attChannel = channel;
+      });
     }
     return () => {
       // eslint-disable-next-line react-compiler/react-compiler
       stopCamera();
       locationService.stopLiveTracking();
+      if ((window as any)._attChannel) {
+        supabase.removeChannel((window as any)._attChannel);
+      }
     };
   }, []);
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
     if (todayAttendance?.status === 'WORKING') {
-      interval = setInterval(() => setEffectiveTime(t => t + 1), 1000);
+      interval = setInterval(() => setEffectiveTime(t => t + 1), qaTimeService.getRealToSimulatedInterval(1000));
     }
     return () => clearInterval(interval);
   }, [todayAttendance?.status]);
@@ -236,14 +256,25 @@ const EmployeeAttendance: React.FC = () => {
       setTodayAttendance(today || null);
 
       if (today) {
+        let currentWorkSecs = 0;
+        const { data: breaks } = await breakService.getAttendanceBreaks(today.id);
+        
         if (today.clock_in_at) {
            const inTime = new Date(today.clock_in_at).getTime();
-           let currentWorkSecs = Math.floor((new Date().getTime() - inTime) / 1000);
+           currentWorkSecs = Math.floor((qaTimeService.now() - inTime) / 1000);
            if (today.break_minutes) currentWorkSecs -= today.break_minutes * 60;
+           
+           if (today.status === 'ON_BREAK' && breaks && breaks.length > 0) {
+             const activeBreak = breaks.find(b => b.ended_at === null);
+             if (activeBreak) {
+               const breakStart = new Date(activeBreak.started_at).getTime();
+               const currentBreakSecs = Math.floor((qaTimeService.now() - breakStart) / 1000);
+               currentWorkSecs -= currentBreakSecs;
+             }
+           }
            setEffectiveTime(Math.max(0, currentWorkSecs));
         }
 
-        const { data: breaks } = await breakService.getAttendanceBreaks(today.id);
         if (breaks) {
            setTodayBreaks(breaks);
         }

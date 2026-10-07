@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database';
 import { auditService } from '../audit/auditService';
+import { qaTimeService } from '../qa/qaTimeService';
 
 export type AttendanceRow = Database['public']['Tables']['attendance']['Row'];
 export type AttendanceInsert = Database['public']['Tables']['attendance']['Insert'];
@@ -181,8 +182,8 @@ export const attendanceService = {
       return { data: null, error: new Error('No shift assigned for today.') };
     }
 
-    const now = new Date();
-    const nowIso = now.toISOString();
+    const now = qaTimeService.getDate();
+    const nowIso = qaTimeService.getIsoString();
 
     if (shiftTemplateId) {
       // Calculate late based on shift start + grace
@@ -232,7 +233,7 @@ export const attendanceService = {
       module: 'ATTENDANCE',
       entity_type: 'attendance',
       entity_id: (newAttendance as any).id,
-      description: `Employee clocked in at ${new Date().toLocaleTimeString('en-IN')}. Status: ${initialStatus}. Late minutes: ${lateMinutes}.`,
+      description: `Employee clocked in at ${now.toLocaleTimeString('en-IN')}. Status: ${initialStatus}. Late minutes: ${lateMinutes}.`,
       new_values: { status: initialStatus, late_minutes: lateMinutes, date: input.localDateStr }
     }).catch(e => console.error('[AUDIT] CLOCK_IN failed:', e));
 
@@ -281,7 +282,7 @@ export const attendanceService = {
     const { globalSettingsService } = await import('../settings/globalSettingsService');
     const globalSettings = await globalSettingsService.loadSettings();
 
-    const nowIso = new Date().toISOString();
+    const nowIso = qaTimeService.getIsoString();
     
     const inTime = new Date(existing.clock_in_at!).getTime();
     const outTime = new Date(nowIso).getTime();

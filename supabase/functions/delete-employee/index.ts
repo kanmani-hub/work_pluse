@@ -57,31 +57,36 @@ serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // Check for dependent records
-    const tables = [
-      'attendance', 'attendance_breaks', 'attendance_events',
-      'wfh_requests', 'leave_requests', 'permission_requests',
-      'leave_balances', 'payroll', 'payslips', 'salary_structures',
-      'shift_assignments', 'face_registrations', 'face_verification_events',
-      'employee_live_locations', 'employee_location_history', 'geofence_events',
-      'notifications', 'audit_logs'
+    // Perform FK-safe cascading deletion of dependent records
+    const { data: payrolls } = await supabaseAdmin.from('payroll').select('id').eq('employee_id', employeeId);
+    if (payrolls && payrolls.length > 0) {
+      const pIds = payrolls.map((p: any) => p.id);
+      await supabaseAdmin.from('payslips').delete().in('payroll_id', pIds);
+      await supabaseAdmin.from('payroll_payments').delete().in('payroll_id', pIds);
+      await supabaseAdmin.from('payroll_items').delete().in('payroll_id', pIds);
+    }
+    
+    const { data: atts } = await supabaseAdmin.from('attendance').select('id').eq('employee_id', employeeId);
+    if (atts && atts.length > 0) {
+      const aIds = atts.map((a: any) => a.id);
+      await supabaseAdmin.from('attendance_breaks').delete().in('attendance_id', aIds);
+      await supabaseAdmin.from('attendance_events').delete().in('attendance_id', aIds);
+    }
+
+    const tablesToDelete = [
+      'face_verification_logs', 'face_enrollments', 'location_verification_events',
+      'geofence_events', 'employee_location_history', 'employee_live_locations',
+      'leave_requests', 'leave_balances', 'permission_requests', 'wfh_requests',
+      'attendance', 'payroll', 'salary_structures',
+      'roster_assignments', 'shift_assignments', 'notifications', 'audit_logs'
     ];
 
-    for (const table of tables) {
-      const column = table === 'notifications' ? 'recipient_employee_id' : 'employee_id';
+    for (const table of tablesToDelete) {
+      let column = 'employee_id';
+      if (table === 'notifications') column = 'recipient_employee_id';
+      if (table === 'audit_logs') column = 'actor_employee_id';
       
-      const { data, error } = await supabaseAdmin
-        .from(table)
-        .select('id')
-        .eq(column, employeeId)
-        .limit(1);
-
-      if (!error && data && data.length > 0) {
-        return new Response(JSON.stringify({
-          success: false,
-          error: 'Employee cannot be permanently deleted because related attendance, payroll, leave, or other records exist. Deactivate the employee instead.'
-        }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
+      await supabaseAdmin.from(table).delete().eq(column, employeeId);
     }
 
     // If safe, delete employee

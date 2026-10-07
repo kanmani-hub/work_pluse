@@ -13,8 +13,7 @@ const AdminBreaks: React.FC = () => {
   const [loading, setLoading] = useState(true);
   
   const [filterDate, setFilterDate] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
   });
   
   const [filterStatus, setFilterStatus] = useState('ALL');
@@ -22,9 +21,9 @@ const AdminBreaks: React.FC = () => {
 
   const fetchBreaks = async () => {
     setLoading(true);
-    const { data, error } = await breakService.getAllBreaks(filterDate);
+    const { data, error } = await breakService.getBreakReport(filterDate);
     if (data) {
-      setBreaks(data);
+      setBreaks(data); // data is now an array of attendance records
     }
     setLoading(false);
   };
@@ -41,49 +40,45 @@ const AdminBreaks: React.FC = () => {
 
   // Aggregate breaks per employee per attendance day
   const employeeBreakSummary = React.useMemo(() => {
-    const map = new Map<string, any>();
-    
-    breaks.forEach(b => {
-      const empId = b.employee_id;
-      const attId = b.attendance_id;
-      const key = `${empId}_${attId}`;
+    return breaks.map(att => {
+      const allowedMins = att.shift_template?.break_duration_minutes ?? appSettings.breakDurationMins ?? 75;
       
-      if (!map.has(key)) {
-        map.set(key, {
-          employee_id: empId,
-          attendance_id: attId,
-          employee: b.employees,
-          attendance: b.attendance,
-          allowedMins: b.attendance?.shift_template?.break_duration_minutes ?? appSettings.breakDurationMins ?? 75,
-          totalMins: 0,
-          activeCount: 0,
-          sessions: []
-        });
-      }
+      let totalMins = 0;
+      let activeCount = 0;
       
-      const summary = map.get(key);
-      let duration = 0;
-      if (b.duration_minutes !== null) {
-        duration = b.duration_minutes;
-      } else if (b.started_at && !b.ended_at) {
-        duration = Math.floor((new Date().getTime() - new Date(b.started_at).getTime()) / 60000);
-        summary.activeCount += 1;
-      }
+      const sessions = (att.attendance_breaks || []).map((b: any) => {
+        let duration = 0;
+        if (b.duration_minutes !== null) {
+          duration = b.duration_minutes;
+        } else if (b.started_at && !b.ended_at) {
+          // If active, compute current elapsed based on Asia/Kolkata timezone
+          duration = Math.floor((new Date().getTime() - new Date(b.started_at).getTime()) / 60000);
+          activeCount += 1;
+        }
+        totalMins += duration;
+        return { ...b, computed_duration: duration };
+      });
       
-      summary.totalMins += duration;
-      summary.sessions.push({ ...b, computed_duration: duration });
-    });
-    
-    // Convert to array and calculate excess/status
-    return Array.from(map.values()).map(s => {
-      const excessMins = Math.max(0, s.totalMins - s.allowedMins);
+      const excessMins = Math.max(0, totalMins - allowedMins);
       const isDeductionApplicable = excessMins > 0 && payrollSettings?.enableBreakOverrunDeduction;
       
       let status = 'Within Limit';
-      if (s.activeCount > 0) status = 'Currently On Break';
+      if (activeCount > 0) status = 'Currently On Break';
       else if (excessMins > 0) status = 'Excess Break';
       
-      return { ...s, excessMins, status, isDeductionApplicable };
+      return {
+        employee_id: att.employee_id,
+        attendance_id: att.id,
+        employee: att.employees,
+        attendance: att,
+        allowedMins,
+        totalMins,
+        activeCount,
+        sessions,
+        excessMins,
+        status,
+        isDeductionApplicable
+      };
     });
   }, [breaks, appSettings, payrollSettings]);
 

@@ -56,6 +56,113 @@ export const payrollService = {
   },
 
   /**
+   * Admin: Get Daily Deduction Report for preview (TODAY / CUSTOM DATE)
+   */
+  async getDailyDeductionReport(dateStr: string) {
+    // 1. Get current authenticated user
+    const { data: authData } = await supabase.auth.getUser();
+    if (!authData.user) return { data: null, error: new Error('Unauthorized') };
+    
+    // 2. Safely resolve role using existing RBAC structure (role_id -> roles.name)
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role_id')
+      .eq('auth_user_id', authData.user.id)
+      .single() as any;
+      
+    if (!profile || !profile.role_id) {
+      return { data: null, error: new Error('Unable to verify your permissions.') };
+    }
+
+    const { data: roleData } = await supabase
+      .from('roles')
+      .select('name')
+      .eq('id', profile.role_id)
+      .single() as any;
+
+    const roleName = roleData?.name || '';
+    
+    if (import.meta.env.DEV) {
+      console.log('[Payroll Auth Debug] user_id =', authData.user.id, 'resolved_role =', roleName);
+    }
+    
+    const validRoles = ['Admin', 'System Admin', 'HR Manager', 'HR'];
+    if (!validRoles.includes(roleName)) {
+      return { data: null, error: new Error('Access Denied: Admin/HR only') };
+    }
+
+    // Find all attendance records for this date
+    const { data: attendanceRecords, error: attErr } = await supabase
+      .from('attendance')
+      .select('employee_id, status, clock_in_at, clock_out_at, shift_template(name)')
+      .eq('attendance_date', dateStr) as any;
+
+    if (attErr || !attendanceRecords) {
+      return { data: [], error: null };
+    }
+
+    const { data: employees } = await supabase
+      .from('employees')
+      .select('id, first_name, last_name, employee_code, departments(name)')
+      .in('id', attendanceRecords.map((a: any) => a.employee_id)) as any;
+
+    if (!employees) return { data: [], error: null };
+
+    // Get the year and month for the given date to pass to the calculation engine
+    const d = new Date(dateStr);
+    const year = d.getFullYear();
+    const month = d.getMonth() + 1;
+
+    const reports = [];
+
+    for (const emp of employees) {
+      const att = attendanceRecords.find((a: any) => a.employee_id === emp.id);
+      if (!att) continue;
+
+      const calc = await this.calculatePayrollDetails(emp.id, year, month, dateStr, dateStr);
+      
+      if (!calc.error && calc.data) {
+        const c = calc.data as any;
+        const totalLate = c.empData.attendance.totalLateMinutes;
+        const lateDed = c.deductionItems.find((d: any) => d.name.includes('Late Deduction'))?.amount || 0;
+        
+        const totalBreakOverrun = c.empData.attendance.totalBreakExcessMinutes;
+        const breakDed = c.deductionItems.find((d: any) => d.name.includes('Break Excess Deduction'))?.amount || 0;
+
+        const overtimeMins = c.empData.attendance.totalOvertimeMinutes;
+        const overtimePay = c.overtime;
+
+        const lopImpact = c.lopDeduction;
+
+        // Sum all other deductions excluding Late, Break, LOP, Standard
+        const otherDed = c.deductionItems
+          .filter((d: any) => !d.name.includes('Late Deduction') && !d.name.includes('Break Excess') && !d.name.includes('LOP Deduction'))
+          .reduce((sum: number, item: any) => sum + item.amount, 0);
+
+        reports.push({
+          employee: emp,
+          shift: att.shift_template?.name || 'Standard',
+          status: att.status,
+          clockIn: att.clock_in_at,
+          clockOut: att.clock_out_at,
+          lateMinutes: totalLate,
+          lateDeduction: lateDed,
+          breakOverrunMinutes: totalBreakOverrun,
+          breakDeduction: breakDed,
+          overtimeMinutes: overtimeMins,
+          overtimePay: overtimePay,
+          lopImpact: lopImpact,
+          otherDeductions: otherDed,
+          totalDailyImpact: lateDed + breakDed + lopImpact + otherDed,
+          rawCalc: c
+        });
+      }
+    }
+
+    return { data: reports, error: null };
+  },
+
+  /**
    * Admin: Generate Payroll for all active employees
    */
   async generatePayroll(year: number, month: number) {
@@ -160,11 +267,11 @@ export const payrollService = {
     return res;
   },
 
-  async _doCalculate(employeeId: string, year: number, month: number, periodStart: string, periodEnd: string) {
+  async calculatePayrollDetails(employeeId: string, year: number, month: number, periodStart: string, periodEnd: string) {
     // 1. Get salary structure
     const { data: salary, error: salErr } = (await salaryService.getSalaryStructureForPeriod(employeeId, periodStart, periodEnd)) as any;
     if (salErr || !salary) {
-      return { error: new Error('No active salary structure found for this payroll period.') };
+      return { data: null, error: new Error('No active salary structure found for this payroll period.') };
     }
 
     // 2. Get payroll settings from configuration (not hardcoded)
@@ -173,7 +280,29 @@ export const payrollService = {
 
     // 3. Get actual employee data from attendance/leave/permission/wfh modules
     const appSettings = globalSettings.app;
-    const empData: PayrollEmployeeData = await payrollDataService.getEmployeePayrollData(employeeId, year, month, appSettings);
+    // Note: We use periodStart and periodEnd to fetch exactly the requested window
+    const startDate = periodStart;
+    const endDate = periodEnd;
+    
+    const [attendanceResult, leaveResult, wfhResult, permissionResult] = await Promise.all([
+      payrollDataService._fetchAttendance(employeeId, startDate, endDate, appSettings),
+      payrollDataService._fetchLeave(employeeId, startDate, endDate),
+      payrollDataService._fetchWfh(employeeId, startDate, endDate),
+      payrollDataService._fetchPermissions(employeeId, startDate, endDate),
+    ]);
+
+    // Calculate unauthorized absences
+    const unauthorizedAbsences = Math.max(0, attendanceResult.absentDays - leaveResult.approvedLeave - wfhResult.wfhDays);
+    
+    // Total LOP = Unauthorized absences + Approved Unpaid Leave
+    attendanceResult.lopDays = unauthorizedAbsences + leaveResult.lopLeave;
+
+    const empData: PayrollEmployeeData = {
+      attendance: attendanceResult,
+      leave: leaveResult,
+      wfh: wfhResult,
+      permission: permissionResult,
+    };
 
     // 4. Compute Gross Salary
     const basic = Number(salary.basic_salary || 0);
@@ -190,7 +319,6 @@ export const payrollService = {
     let totalDeductions = Number(salary.standard_deduction || 0);
     let lopDeduction = 0;
     const deductionItems: { name: string; amount: number }[] = [];
-
 
     // LOP Deduction
     if (settings.enableLopDeductions && empData.attendance.lopDays > 0) {
@@ -236,8 +364,6 @@ export const payrollService = {
           permDeduction = payrollSettingsService.applyRounding(excessMins * (settings.permissionPerMinuteRate || 0), settings);
           suffix = `(${excessMins}m excess)`;
         } else if (settings.permissionDeductionMethod === 'fixed') {
-          // Typically fixed per occurrence, but for limit based we charge it once if exceeded, or scale it.
-          // Let's charge standard fixed amount.
           permDeduction = payrollSettingsService.applyRounding(settings.permissionFixedAmount || 0, settings);
         } else if (settings.permissionDeductionMethod === 'half_day') {
           if (settings.halfDayMethod === 'fixed') {
@@ -257,7 +383,7 @@ export const payrollService = {
       }
     }
 
-    // Half-Day Deduction (Preserved)
+    // Half-Day Deduction
     if (settings.enableHalfDayDeductions && empData.attendance.halfDays > 0) {
       let halfDayDeduction = 0;
       if (settings.halfDayMethod === 'fixed') {
@@ -269,7 +395,7 @@ export const payrollService = {
       deductionItems.push({ name: 'Half-Day Deduction', amount: halfDayDeduction });
     }
 
-    // Client Rule: Late Login Deduction (Interval based by default)
+    // Late Login Deduction
     if (settings.enableLateLoginDeduction) {
       const totalLateMins = empData.attendance.totalLateMinutes || 0;
       if (totalLateMins > 0) {
@@ -300,7 +426,7 @@ export const payrollService = {
       }
     }
 
-    // WFH Deduction (Preserved)
+    // WFH Deduction
     if (settings.enableWfhDeduction && empData.wfh.wfhDays > 0) {
       let wfhDeduction = 0;
       
@@ -322,7 +448,7 @@ export const payrollService = {
       }
     }
 
-    // Client Rule: Break Excess Deduction (Salary-based by default)
+    // Break Excess Deduction
     if (settings.enableBreakOverrunDetection && settings.enableBreakOverrunDeduction) {
       const breakExcessMins = empData.attendance.totalBreakExcessMinutes || 0;
       if (breakExcessMins > 0) {
@@ -356,15 +482,14 @@ export const payrollService = {
       }
     }
 
-    // 7. Overtime (Calculated from clockOut totalOvertimeMinutes)
+    // 7. Overtime
     let overtime = 0;
     if (settings.enableOvertimePay && empData.attendance.totalOvertimeMinutes > 0) {
-      const hourlyRate = (dailyRate / 8); // Assuming 8 hour standard for hourly rate
+      const hourlyRate = (dailyRate / 8); 
       const otHours = empData.attendance.totalOvertimeMinutes / 60;
       if (settings.overtimeRateType === 'multiplier') {
         overtime = payrollSettingsService.applyRounding(otHours * hourlyRate * (settings.overtimeMultiplier || 1), settings);
       } else {
-        // fixed rate per hour
         overtime = payrollSettingsService.applyRounding(otHours * (settings.overtimeFixedRate || 0), settings);
       }
     }
@@ -374,6 +499,35 @@ export const payrollService = {
     
     let netSalary = payrollSettingsService.applyRounding((grossSalary + overtime) - totalDeductions, settings);
     if (netSalary < 0) netSalary = 0;
+
+    return {
+      data: {
+        basic,
+        grossSalary,
+        totalAllowances,
+        totalDeductions,
+        lopDeduction,
+        overtime,
+        netSalary,
+        empData,
+        workingDays,
+        dailyRate,
+        deductionItems,
+        salary,
+        settings
+      },
+      error: null
+    };
+  },
+
+  async _doCalculate(employeeId: string, year: number, month: number, periodStart: string, periodEnd: string) {
+    const calc = await this.calculatePayrollDetails(employeeId, year, month, periodStart, periodEnd);
+    if (calc.error) return { data: null, error: calc.error };
+    
+    const {
+      basic, grossSalary, totalAllowances, totalDeductions, lopDeduction, overtime, netSalary,
+      empData, workingDays, dailyRate, deductionItems, salary, settings
+    } = calc.data as any;
 
     // 9. Build attendance/leave/permission summary JSON to store in payroll
     const dataSummary = JSON.stringify({

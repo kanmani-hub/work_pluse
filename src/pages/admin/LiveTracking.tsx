@@ -186,13 +186,13 @@ const AdminLiveTracking: React.FC = () => {
         const lastSeen = new Date(l.last_seen_at);
         const diffMins = (now.getTime() - lastSeen.getTime()) / 60000;
         let status: EmployeeStatus = 'Working';
-        let locationStatus = l.location_status === 'INSIDE_GEOFENCE' ? 'Inside Geofence' : (l.location_status === 'OUTSIDE_GEOFENCE' ? 'Outside Geofence' : l.location_status);
+        let locationStatus = l.location_status === 'INSIDE_GEOFENCE' ? 'Inside Geofence' : (l.location_status === 'OUTSIDE_GEOFENCE' ? 'AUTO BREAK' : l.location_status);
         let distanceStr = l.distance_from_office_meters != null ? `${Math.round(l.distance_from_office_meters)}m` : 'N/A';
         
         if (l.location_context === 'WFH') {
            status = 'WFH';
         } else if (l.location_status === 'OUTSIDE_GEOFENCE') {
-           status = 'Outside Geofence';
+           status = 'On Break';
         }
 
         if (diffMins > 15) {

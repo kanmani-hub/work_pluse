@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { calculateHaversineDistance } from '../../utils/geofence';
 import { notificationService } from '../notifications/notificationService';
+import { qaTimeService } from '../qa/qaTimeService';
 
 export interface GeolocationResult {
   latitude: number | null;
@@ -22,6 +23,16 @@ export interface LocationVerificationResponse {
 }
 
 export const locationService = {
+  qaMockLocation: null as { lat: number, lng: number } | null,
+  
+  setQaMockLocation(lat: number, lng: number) {
+      this.qaMockLocation = { lat, lng };
+  },
+  
+  clearQaMockLocation() {
+      this.qaMockLocation = null;
+  },
+
   /**
    * Helper to securely get current employee identity.
    */
@@ -69,6 +80,17 @@ export const locationService = {
    */
   getCurrentLocation(): Promise<GeolocationResult> {
     return new Promise((resolve) => {
+      if (qaTimeService.isEnabled && this.qaMockLocation) {
+          resolve({
+              latitude: this.qaMockLocation.lat,
+              longitude: this.qaMockLocation.lng,
+              accuracy: 5,
+              timestamp: qaTimeService.now(),
+              status: 'SUCCESS'
+          });
+          return;
+      }
+
       if (!navigator.geolocation) {
         resolve({
           latitude: null, longitude: null, accuracy: null, timestamp: null,
@@ -253,9 +275,15 @@ export const locationService = {
             import('../audit/auditService').then(({ auditService }) => {
               auditService.recordAuditLog({ action: 'GEOFENCE_LEFT', module: 'SECURITY', description: 'Employee left the geofenced area.' });
             });
+            import('../attendance/breakService').then(({ breakService }) => {
+              breakService.handleAutoBreakTransition(empId, 'START', geo.timestamp ? new Date(geo.timestamp).toISOString() : nowIso).catch(console.error);
+            });
           } else if (oldStatus === 'OUTSIDE_GEOFENCE' && newStatus === 'INSIDE_GEOFENCE') {
             import('../audit/auditService').then(({ auditService }) => {
               auditService.recordAuditLog({ action: 'GEOFENCE_RETURNED', module: 'SECURITY', description: 'Employee returned to the geofenced area.' });
+            });
+            import('../attendance/breakService').then(({ breakService }) => {
+              breakService.handleAutoBreakTransition(empId, 'END', geo.timestamp ? new Date(geo.timestamp).toISOString() : nowIso).catch(console.error);
             });
           }
         }
@@ -413,7 +441,17 @@ export const locationService = {
   LOCATION_TRACKING_INTERVAL_MS: 10000, // 10 seconds default
 
   startLiveTracking() {
-    if (!navigator.geolocation || this._watchId !== null) return;
+    if (this._watchId !== null) return;
+    
+    if (qaTimeService.isEnabled) {
+       // In QA mode, we just run an interval because mock location handles the data.
+       this._watchId = window.setInterval(async () => {
+         await this.verifyCurrentLocation('LOCATION_CHECK').catch(() => {});
+       }, qaTimeService.getRealToSimulatedInterval(this.LOCATION_TRACKING_INTERVAL_MS)) as unknown as number;
+       return;
+    }
+
+    if (!navigator.geolocation) return;
     
     this._watchId = navigator.geolocation.watchPosition(
       async (position) => {
@@ -443,7 +481,11 @@ export const locationService = {
 
   stopLiveTracking() {
     if (this._watchId !== null) {
-      navigator.geolocation.clearWatch(this._watchId);
+      if (qaTimeService.isEnabled) {
+          window.clearInterval(this._watchId);
+      } else {
+          navigator.geolocation.clearWatch(this._watchId);
+      }
       this._watchId = null;
     }
   }

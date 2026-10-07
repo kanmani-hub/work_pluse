@@ -10,6 +10,8 @@ import { attendanceService } from '../../services/attendance/attendanceService';
 import { breakService } from '../../services/attendance/breakService';
 import { faceService } from '../../services/face/faceService';
 import { locationService } from '../../services/location/locationService';
+import { supabase } from '../../lib/supabase';
+import { qaTimeService } from '../../services/qa/qaTimeService';
 
 type AttendanceState = 'not_clocked_in' | 'working' | 'on_break' | 'clocked_out';
 
@@ -71,6 +73,30 @@ const EmployeeDashboard: React.FC = () => {
 
   useEffect(() => {
     fetchTodayAttendance();
+
+    attendanceService.getCurrentEmployeeId().then(empId => {
+      if (!empId) return;
+      
+      (window as any)._testAutoBreak = async (action: 'START' | 'END', pastMins: number = 0) => {
+          const time = new Date(Date.now() - pastMins * 60000).toISOString();
+          await breakService.handleAutoBreakTransition(empId, action, time);
+          console.log(`Test Auto Break ${action} triggered at ${time}`);
+      };
+      
+      const channel = supabase.channel('dashboard_attendance')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'attendance', filter: `employee_id=eq.${empId}` },
+          () => {
+            fetchTodayAttendance();
+          }
+        )
+        .subscribe();
+      
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    });
   }, []);
 
   const getLocalDateStr = () => {
@@ -103,7 +129,7 @@ const EmployeeDashboard: React.FC = () => {
       
       if (data.clock_in_at) {
         const inTime = new Date(data.clock_in_at).getTime();
-        let currentWorkSecs = Math.floor((new Date().getTime() - inTime) / 1000);
+        let currentWorkSecs = Math.floor((qaTimeService.now() - inTime) / 1000);
         if (data.break_minutes) currentWorkSecs -= data.break_minutes * 60;
         
         if (data.status === 'ON_BREAK') {
@@ -112,7 +138,7 @@ const EmployeeDashboard: React.FC = () => {
             const activeBreak = breaks.find(b => b.ended_at === null);
             if (activeBreak) {
               const breakStart = new Date(activeBreak.started_at).getTime();
-              const currentBreakSecs = Math.floor((new Date().getTime() - breakStart) / 1000);
+              const currentBreakSecs = Math.floor((qaTimeService.now() - breakStart) / 1000);
               setBreakTime(currentBreakSecs);
               currentWorkSecs -= currentBreakSecs;
             }
@@ -129,9 +155,9 @@ const EmployeeDashboard: React.FC = () => {
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
     if (attendanceState === 'working') {
-      interval = setInterval(() => setWorkTime(t => t + 1), 1000);
+      interval = setInterval(() => setWorkTime(t => t + 1), qaTimeService.getRealToSimulatedInterval(1000));
     } else if (attendanceState === 'on_break') {
-      interval = setInterval(() => setBreakTime(t => t + 1), 1000);
+      interval = setInterval(() => setBreakTime(t => t + 1), qaTimeService.getRealToSimulatedInterval(1000));
     }
     return () => clearInterval(interval);
   }, [attendanceState]);
@@ -464,8 +490,8 @@ const EmployeeDashboard: React.FC = () => {
                       Total Break Time: {formatTime(attendanceRecord.break_minutes * 60)}
                     </div>
                   )}
-                  <div style={{ display: 'grid', gridTemplateColumns: appSettings?.breakEnabled ? '1fr 1fr' : '1fr', gap: '1rem', marginTop: '1rem' }}>
-                    {appSettings?.breakEnabled && (
+                  <div style={{ display: 'grid', gridTemplateColumns: (appSettings?.breakEnabled && attendanceRecord?.status === 'WFH') ? '1fr 1fr' : '1fr', gap: '1rem', marginTop: '1rem' }}>
+                    {appSettings?.breakEnabled && attendanceRecord?.status === 'WFH' && (
                       <button onClick={() => setShowBreakModal(true)} className="btn btn-outline" style={{ padding: '0.75rem', borderRadius: 'var(--radius-full)' }}>
                         <Coffee size={18} />
                         Start Break
@@ -492,9 +518,15 @@ const EmployeeDashboard: React.FC = () => {
                   <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
                     {appSettings.maxBreakDurationMins ? `Max Allowed: ${appSettings.maxBreakDurationMins} mins` : ''}
                   </div>
-                  <button onClick={confirmBreak} className="btn btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1.125rem', borderRadius: 'var(--radius-full)' }}>
-                    End Break
-                  </button>
+                  {attendanceRecord?.status === 'WFH' ? (
+                    <button onClick={confirmBreak} className="btn btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1.125rem', borderRadius: 'var(--radius-full)' }}>
+                      End Break
+                    </button>
+                  ) : (
+                    <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                      Break will automatically end when you return to the office.
+                    </div>
+                  )}
                 </>
               )}
 

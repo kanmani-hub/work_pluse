@@ -30,6 +30,15 @@ const AdminPayroll: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   
+  // View modes
+  const [viewMode, setViewMode] = useState<'TODAY' | 'CUSTOM' | 'MONTH'>('MONTH');
+  const [customDate, setCustomDate] = useState(() => {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  });
+  
+  // Daily reports
+  const [dailyReports, setDailyReports] = useState<any[]>([]);
+
   // Month selector
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
@@ -44,6 +53,10 @@ const AdminPayroll: React.FC = () => {
   // Drawers & Modals
   const [detailDrawer, setDetailDrawer] = useState<any>(null);
   const [detailEmpData, setDetailEmpData] = useState<PayrollEmployeeData | null>(null);
+  
+  // Daily specific detail modal
+  const [dailyDetailModal, setDailyDetailModal] = useState<any>(null);
+
   const [generateModal, setGenerateModal] = useState(false);
   const [paymentModal, setPaymentModal] = useState<any>(null);
   const [showSalaryEditor, setShowSalaryEditor] = useState<string | null>(null);
@@ -66,42 +79,53 @@ const AdminPayroll: React.FC = () => {
   // Filter payrolls for selected month
   const monthPayrolls = payrolls.filter(p => Number(p.payroll_year) === selectedYear && Number(p.payroll_month) === selectedMonth);
 
-  const fetchPayrolls = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [payrollRes, empRes, deptRes] = await Promise.all([
-        payrollService.getPayrolls(),
-        employeeService.getEmployees(),
-        employeeService.getDepartments()
-      ]);
-      
-      if (payrollRes.error) throw payrollRes.error;
-      if (empRes.error) throw empRes.error;
-      if (deptRes.error) throw deptRes.error;
-
-      if (empRes.data) setEmployees(empRes.data);
-      if (deptRes.data) {
-        setAllDepartments(deptRes.data);
-        setDepartments(deptRes.data.map((d: any) => d.name).sort());
-      }
-
-      if (payrollRes.data) {
-        setPayrolls(payrollRes.data);
+      if (viewMode === 'MONTH') {
+        const [payrollRes, empRes, deptRes] = await Promise.all([
+          payrollService.getPayrolls(),
+          employeeService.getEmployees(),
+          employeeService.getDepartments()
+        ]);
         
-        // Compute global status from month data
-        const monthData = payrollRes.data.filter((p: any) => Number(p.payroll_year) === selectedYear && Number(p.payroll_month) === selectedMonth);
-        if (monthData.length > 0) {
-          if (monthData.every((p: any) => p.status === 'CLOSED')) setGlobalStatus('CLOSED');
-          else if (monthData.every((p: any) => p.status === 'PAID')) setGlobalStatus('PAID');
-          else if (monthData.some((p: any) => p.status === 'PAYMENT_PENDING')) setGlobalStatus('PAYMENT_PENDING');
-          else if (monthData.some((p: any) => p.status === 'APPROVED')) setGlobalStatus('APPROVED');
-          else if (monthData.some((p: any) => p.status === 'UNDER_REVIEW')) setGlobalStatus('UNDER_REVIEW');
-          else if (monthData.some((p: any) => p.status === 'CALCULATED')) setGlobalStatus('CALCULATED');
-          else setGlobalStatus('DRAFT');
-        } else {
-          setGlobalStatus('DRAFT');
+        if (payrollRes.error) throw payrollRes.error;
+        if (empRes.error) throw empRes.error;
+        if (deptRes.error) throw deptRes.error;
+
+        if (empRes.data) setEmployees(empRes.data);
+        if (deptRes.data) {
+          setAllDepartments(deptRes.data);
+          setDepartments(deptRes.data.map((d: any) => d.name).sort());
         }
+
+        if (payrollRes.data) {
+          setPayrolls(payrollRes.data);
+          
+          // Compute global status from month data
+          const monthData = payrollRes.data.filter((p: any) => Number(p.payroll_year) === selectedYear && Number(p.payroll_month) === selectedMonth);
+          if (monthData.length > 0) {
+            if (monthData.every((p: any) => p.status === 'CLOSED')) setGlobalStatus('CLOSED');
+            else if (monthData.every((p: any) => p.status === 'PAID')) setGlobalStatus('PAID');
+            else if (monthData.some((p: any) => p.status === 'PAYMENT_PENDING')) setGlobalStatus('PAYMENT_PENDING');
+            else if (monthData.some((p: any) => p.status === 'APPROVED')) setGlobalStatus('APPROVED');
+            else if (monthData.some((p: any) => p.status === 'UNDER_REVIEW')) setGlobalStatus('UNDER_REVIEW');
+            else if (monthData.some((p: any) => p.status === 'CALCULATED')) setGlobalStatus('CALCULATED');
+            else setGlobalStatus('DRAFT');
+          } else {
+            setGlobalStatus('DRAFT');
+          }
+        }
+      } else {
+        // Daily View (TODAY or CUSTOM)
+        const targetDate = viewMode === 'TODAY' 
+          ? new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) 
+          : customDate;
+
+        const { data, error } = await payrollService.getDailyDeductionReport(targetDate);
+        if (error) throw error;
+        setDailyReports(data || []);
       }
     } catch (err: any) {
       console.error("Error loading payroll data:", err);
@@ -109,13 +133,13 @@ const AdminPayroll: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedYear, selectedMonth]);
+  }, [viewMode, selectedYear, selectedMonth, customDate]);
 
   useEffect(() => {
-    fetchPayrolls();
-    const channel = realtimeService.subscribeToAdminPayroll(() => fetchPayrolls());
+    fetchData();
+    const channel = realtimeService.subscribeToAdminPayroll(() => fetchData());
     return () => { realtimeService.unsubscribe(channel); };
-  }, [fetchPayrolls]);
+  }, [fetchData]);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -194,7 +218,7 @@ const AdminPayroll: React.FC = () => {
     const result = await payrollService.generatePayroll(selectedYear, selectedMonth);
     
     if (result.success) {
-      await fetchPayrolls();
+      await fetchData();
       showToast(`${MONTH_NAMES[selectedMonth - 1]} ${selectedYear} payroll calculated for ${result.count} employee(s).`);
     } else {
       showToast(result.error || 'Failed to generate payroll');
@@ -240,7 +264,7 @@ const AdminPayroll: React.FC = () => {
       }
     }
     
-    await fetchPayrolls();
+    await fetchData();
     if (detailDrawer?.status === 'UNDER_REVIEW') setDetailDrawer({ ...detailDrawer, status: 'APPROVED' });
     showToast(`${count} payroll(s) approved.`);
   };
@@ -253,7 +277,7 @@ const AdminPayroll: React.FC = () => {
         count++;
       }
     }
-    await fetchPayrolls();
+    await fetchData();
     showToast(`${count} payroll(s) moved to Payment Pending.`);
   };
 
@@ -263,7 +287,7 @@ const AdminPayroll: React.FC = () => {
     const { error } = await payrollService.submitPayrollForReview(detailDrawer.id);
     if (!error) {
       setDetailDrawer({ ...detailDrawer, status: 'UNDER_REVIEW' });
-      await fetchPayrolls();
+      await fetchData();
       showToast('Submitted for review.');
     } else { showToast(error.message); }
   };
@@ -273,7 +297,7 @@ const AdminPayroll: React.FC = () => {
     const { error } = await payrollService.approvePayroll(detailDrawer.id);
     if (!error) {
       setDetailDrawer({ ...detailDrawer, status: 'APPROVED' });
-      await fetchPayrolls();
+      await fetchData();
       showToast('Payroll approved.');
     } else { showToast(error.message); }
   };
@@ -283,7 +307,7 @@ const AdminPayroll: React.FC = () => {
     const { error } = await payrollService.movePayrollToPaymentPending(detailDrawer.id);
     if (!error) {
       setDetailDrawer({ ...detailDrawer, status: 'PAYMENT_PENDING' });
-      await fetchPayrolls();
+      await fetchData();
       showToast('Moved to Payment Pending.');
     } else { showToast(error.message); }
   };
@@ -293,7 +317,7 @@ const AdminPayroll: React.FC = () => {
     const { error } = await payrollService.closePayroll(detailDrawer.id);
     if (!error) {
       setDetailDrawer({ ...detailDrawer, status: 'CLOSED' });
-      await fetchPayrolls();
+      await fetchData();
       showToast('Payroll closed.');
     } else { showToast(error.message); }
   };
@@ -304,7 +328,7 @@ const AdminPayroll: React.FC = () => {
     if (paymentModal) {
       const payroll = monthPayrolls.find(p => p.id === paymentModal);
       await payrollService.markPayrollPaid(paymentModal, paymentForm.amount || payroll?.net_salary || 0, paymentForm.method, paymentForm.ref, paymentForm.remarks);
-      await fetchPayrolls();
+      await fetchData();
       setPaymentModal(null);
       if (detailDrawer?.id === paymentModal) setDetailDrawer({ ...detailDrawer, status: 'PAID' });
       showToast('Payment recorded successfully.');
@@ -403,245 +427,337 @@ const AdminPayroll: React.FC = () => {
         </div>
       </div>
 
-      {/* Month Selector */}
+      {/* View Selector */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', borderBottom: '1px solid var(--gray-200)', paddingBottom: '1rem' }}>
-        <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>Payroll Period: <span style={{ color: 'var(--primary-700)' }}>{monthLabel}</span></div>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface-elevated)' }}>
-            <button onClick={handlePrevMonth} className="icon-button" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)', padding: '0.5rem' }}><ChevronLeft size={16}/></button>
-            <div style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600 }}>{monthLabel}</div>
-            <button onClick={handleNextMonth} className="icon-button" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0', padding: '0.5rem' }}><ChevronRight size={16}/></button>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <div style={{ fontSize: '1.125rem', fontWeight: 600 }}>Payroll View:</div>
+          <div style={{ display: 'flex', backgroundColor: 'var(--bg-surface-elevated)', borderRadius: 'var(--radius-md)', padding: '0.25rem', border: '1px solid var(--border-color)' }}>
+            <button onClick={() => setViewMode('TODAY')} className={`btn ${viewMode === 'TODAY' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem' }}>Today</button>
+            <button onClick={() => setViewMode('CUSTOM')} className={`btn ${viewMode === 'CUSTOM' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem' }}>Custom Date</button>
+            <button onClick={() => setViewMode('MONTH')} className={`btn ${viewMode === 'MONTH' ? 'btn-primary' : 'btn-ghost'}`} style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem' }}>Month</button>
           </div>
-          <button onClick={handleCurrentMonth} className="btn btn-outline" style={{ fontSize: '0.875rem', padding: '0.5rem 1rem' }}>Current Month</button>
         </div>
+
+        {viewMode === 'MONTH' && (
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface-elevated)' }}>
+              <button onClick={handlePrevMonth} className="icon-button" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)', padding: '0.5rem' }}><ChevronLeft size={16}/></button>
+              <div style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600 }}>{monthLabel}</div>
+              <button onClick={handleNextMonth} className="icon-button" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0', padding: '0.5rem' }}><ChevronRight size={16}/></button>
+            </div>
+            <button onClick={handleCurrentMonth} className="btn btn-outline" style={{ fontSize: '0.875rem', padding: '0.5rem 1rem' }}>Current Month</button>
+          </div>
+        )}
+
+        {viewMode === 'CUSTOM' && (
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input 
+              type="date" 
+              value={customDate}
+              onChange={e => setCustomDate(e.target.value)}
+              className="form-control"
+              style={{ fontSize: '0.875rem' }}
+            />
+          </div>
+        )}
       </div>
 
       {error ? (
         <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--danger)', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)' }}>
           <AlertTriangle size={48} style={{ margin: '0 auto 1rem auto' }} />
-          <h3 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Unable to load payroll data</h3>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Unable to load data</h3>
           <p style={{ marginTop: '0.5rem', color: 'var(--danger-700)' }}>{error}</p>
         </div>
       ) : loading ? (
         <div className="skeleton-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '1rem' }}>
           {[...Array(9)].map((_, i) => <div key={i} className="skeleton" style={{ height: '70px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', minWidth: 0 }}>
-          <div className="kpi-grid">
-            <div className="tracking-kpi-card"><div className="sc-val">{kpis.total}</div><div className="sc-title">Total Employees</div></div>
-            <div className="tracking-kpi-card"><div className="sc-val">{kpis.generated}</div><div className="sc-title">Payroll Generated</div></div>
-            <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('UNDER_REVIEW')}><div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.underReview}</div><div className="sc-title">Under Review</div></div>
-            <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('APPROVED')}><div className="sc-val" style={{ color: '#a855f7' }}>{kpis.approved}</div><div className="sc-title">Approved</div></div>
-            <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('PAYMENT_PENDING')}><div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.paymentPending}</div><div className="sc-title">Payment Pending</div></div>
-            <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('PAID')}><div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.paid}</div><div className="sc-title">Paid</div></div>
+      ) : viewMode === 'MONTH' ? (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', minWidth: 0 }}>
+            <div className="kpi-grid">
+              <div className="tracking-kpi-card"><div className="sc-val">{kpis.total}</div><div className="sc-title">Total Employees</div></div>
+              <div className="tracking-kpi-card"><div className="sc-val">{kpis.generated}</div><div className="sc-title">Payroll Generated</div></div>
+              <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('UNDER_REVIEW')}><div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.underReview}</div><div className="sc-title">Under Review</div></div>
+              <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('APPROVED')}><div className="sc-val" style={{ color: '#a855f7' }}>{kpis.approved}</div><div className="sc-title">Approved</div></div>
+              <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('PAYMENT_PENDING')}><div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.paymentPending}</div><div className="sc-title">Payment Pending</div></div>
+              <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('PAID')}><div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.paid}</div><div className="sc-title">Paid</div></div>
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', width: '100%', minWidth: 0 }}>
+              <div className="tracking-kpi-card">
+                <div className="sc-title">Gross Payroll</div>
+                <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--text-primary)' }}>₹{kpis.gross.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
+              </div>
+              <div className="tracking-kpi-card">
+                <div className="sc-title">Total Deductions</div>
+                <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--danger)' }}>₹{kpis.deductions.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
+              </div>
+              <div className="tracking-kpi-card" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--success)' }}>
+                <div className="sc-title" style={{ color: 'var(--success)' }}>Net Payroll</div>
+                <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 800, color: 'var(--success)' }}>₹{kpis.net.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
+              </div>
+            </div>
           </div>
+
+          {/* Progress Banner */}
+          <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', backgroundColor: 'var(--bg-surface-elevated)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>{monthLabel} Payroll</h3>
+                <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Status: {getStatusBadge(globalStatus)}</div>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {globalStatus === 'UNDER_REVIEW' && <button onClick={() => setBulkApproveModal(true)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}>Approve Payroll</button>}
+                {globalStatus === 'APPROVED' && <button onClick={handleProceedToPayments} className="btn btn-outline" style={{ fontSize: '0.875rem', color: 'var(--primary-700)', borderColor: 'var(--primary-400)' }}><ArrowRight size={16}/> Proceed to Payments</button>}
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem', position: 'relative' }}>
+              <div style={{ position: 'absolute', top: '12px', left: '20px', right: '20px', height: '2px', backgroundColor: 'var(--gray-200)', zIndex: 0 }}></div>
+              {['Draft', 'Calculated', 'Under Review', 'Approved', 'Payment Pending', 'Paid', 'Closed'].map((step, i) => {
+                const steps = ['DRAFT', 'CALCULATED', 'UNDER_REVIEW', 'APPROVED', 'PAYMENT_PENDING', 'PAID', 'CLOSED'];
+                const currentIndex = steps.indexOf(globalStatus);
+                const isCompleted = i <= currentIndex;
+                const isCurrent = i === currentIndex;
+                
+                return (
+                  <div key={step} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', zIndex: 1, backgroundColor: 'var(--bg-surface-elevated)', padding: '0 0.5rem' }}>
+                    <div style={{ 
+                      width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: isCurrent ? 'var(--primary-600)' : isCompleted ? 'var(--success)' : 'var(--gray-200)',
+                      color: 'var(--bg-primary)', fontSize: '0.75rem', fontWeight: 600, border: isCurrent ? '4px solid var(--primary-100)' : 'none'
+                    }}>
+                      {isCompleted && !isCurrent ? <CheckCircle size={14}/> : isCurrent ? '●' : '○'}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', fontWeight: isCurrent ? 700 : 500, color: isCurrent ? 'var(--primary-700)' : isCompleted ? 'var(--gray-800)' : 'var(--gray-400)' }}>{step}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Main Table */}
+          <div className="card" style={{ padding: 0 }}>
+            <div style={{ padding: '1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ position: 'relative', width: '220px' }}>
+                <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
+                <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} />
+              </div>
+              <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+                  <option value="All">All Departments</option>
+                  {deptLoading ? (
+                    <option disabled>Loading...</option>
+                  ) : (
+                    <>
+                      {activeDepts.map((d: any) => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                      <option value="Unassigned">Unassigned</option>
+                    </>
+                  )}
+                </select>
+              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+                <option value="All">All Statuses</option>
+                <option value="NOT_GENERATED">Not Generated</option>
+                <option value="CALCULATED">Calculated</option>
+                <option value="UNDER_REVIEW">Under Review</option>
+                <option value="APPROVED">Approved</option>
+                <option value="PAYMENT_PENDING">Payment Pending</option>
+                <option value="PAID">Paid</option>
+                <option value="CLOSED">Closed</option>
+              </select>
+              {(search || filterDept !== 'All' || filterStatus !== 'All') && (
+                <button onClick={() => { setSearch(''); setFilterDept('All'); setFilterStatus('All'); }} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem' }}>Clear</button>
+              )}
+            </div>
+
+            {loading ? (
+              <div className="skeleton" style={{ height: '400px', margin: '1rem' }} />
+            ) : filteredData.length === 0 ? (
+              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                <Banknote size={48} style={{ margin: '0 auto 1rem auto', opacity: 0.3 }} />
+                <h3 style={{ fontSize: '1.125rem', color: 'var(--text-primary)' }}>No payroll records found</h3>
+                <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>Generate payroll to create records for this month.</p>
+              </div>
+            ) : (
+              <div className="table-container desktop-only">
+                <table className="table" style={{ width: '100%', minWidth: '1000px' }}>
+                  <thead>
+                    <tr>
+                      <th>Employee</th>
+                      <th style={{ textAlign: 'right' }}>Gross Salary</th>
+                      <th style={{ textAlign: 'right' }}>Work Days</th>
+                      <th style={{ textAlign: 'right' }}>Present</th>
+                      <th style={{ textAlign: 'right' }}>Leave / LOP</th>
+                      <th style={{ textAlign: 'right' }}>Deductions</th>
+                      <th style={{ textAlign: 'right' }}>Overtime</th>
+                      <th style={{ textAlign: 'right' }}>Net Salary</th>
+                      <th>Status</th>
+                      <th style={{ textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredData.map(({ emp, payroll }) => {
+                      if (!payroll) {
+                        const hasActiveSalary = emp.salary_structures && emp.salary_structures.some((s: any) => s.is_active);
+                        return (
+                          <tr key={emp.id}>
+                            <td>
+                              <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{emp.first_name} {emp.last_name}</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.employee_code} • {emp.department?.name || 'Unknown'}</div>
+                            </td>
+                            <td colSpan={7} style={{ textAlign: 'center', color: hasActiveSalary ? 'var(--text-secondary)' : 'var(--danger)' }}>
+                              {hasActiveSalary ? 'Employee exists, but no payroll record exists for this period.' : 'Salary not configured'}
+                            </td>
+                            <td>{getStatusBadge('NOT_GENERATED')}</td>
+                            <td style={{ textAlign: 'right' }}>
+                              <button onClick={() => hasActiveSalary ? setGenerateModal(true) : setShowSalaryEditor(emp.id)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>
+                                {hasActiveSalary ? 'Generate' : 'Configure'}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      }
+                      
+                      const ts = getTableSummary(payroll);
+                      return (
+                        <tr key={payroll.id}>
+                          <td>
+                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{emp.first_name} {emp.last_name}</div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.employee_code} • {emp.department?.name || 'Unknown'}</div>
+                          </td>
+                          <td style={{ textAlign: 'right', fontWeight: 500 }}>₹{Number(payroll.gross_salary).toLocaleString('en-IN')}</td>
+                          <td style={{ textAlign: 'right' }}>{ts.workingDays}</td>
+                          <td style={{ textAlign: 'right' }}>{ts.present}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            <span style={{ color: 'var(--text-secondary)' }}>{ts.approvedLeave}</span> / <span style={{ color: ts.lopLeave > 0 ? 'var(--danger-600)' : 'var(--gray-600)', fontWeight: ts.lopLeave > 0 ? 600 : 400 }}>{ts.lopLeave}</span>
+                          </td>
+                          <td style={{ textAlign: 'right', color: Number(payroll.total_deductions) > 0 ? 'var(--danger)' : 'inherit' }}>
+                            ₹{Number(payroll.total_deductions).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          </td>
+                          <td style={{ textAlign: 'right', color: Number(payroll.overtime_amount) > 0 ? 'var(--success)' : 'inherit' }}>
+                            ₹{Number(payroll.overtime_amount).toLocaleString('en-IN')}
+                          </td>
+                          <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)', fontSize: '1rem' }}>
+                            ₹{Number(payroll.net_salary).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                          </td>
+                          <td>{getStatusBadge(payroll.status)}</td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button onClick={() => openDetailDrawer(payroll)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>View</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        /* TODAY / CUSTOM Date View */
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', minWidth: 0 }}>
           
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', width: '100%', minWidth: 0 }}>
+          <div className="kpi-grid">
             <div className="tracking-kpi-card">
-              <div className="sc-title">Gross Payroll</div>
-              <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--text-primary)' }}>₹{kpis.gross.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
+              <div className="sc-val">{dailyReports.length}</div>
+              <div className="sc-title">Employees Clocked In</div>
             </div>
             <div className="tracking-kpi-card">
-              <div className="sc-title">Total Deductions</div>
-              <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--danger)' }}>₹{kpis.deductions.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
+              <div className="sc-val" style={{ color: 'var(--danger)' }}>
+                ₹{dailyReports.reduce((sum, r) => sum + r.lateDeduction, 0).toLocaleString('en-IN')}
+              </div>
+              <div className="sc-title">Late Deductions</div>
             </div>
-            <div className="tracking-kpi-card" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--success)' }}>
-              <div className="sc-title" style={{ color: 'var(--success)' }}>Net Payroll</div>
-              <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 800, color: 'var(--success)' }}>₹{kpis.net.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
+            <div className="tracking-kpi-card">
+              <div className="sc-val" style={{ color: 'var(--danger)' }}>
+                ₹{dailyReports.reduce((sum, r) => sum + r.breakDeduction, 0).toLocaleString('en-IN')}
+              </div>
+              <div className="sc-title">Break Overrun Deductions</div>
             </div>
+            <div className="tracking-kpi-card">
+              <div className="sc-val" style={{ color: 'var(--danger)' }}>
+                ₹{dailyReports.reduce((sum, r) => sum + r.lopImpact, 0).toLocaleString('en-IN')}
+              </div>
+              <div className="sc-title">LOP Impact</div>
+            </div>
+            <div className="tracking-kpi-card">
+              <div className="sc-val" style={{ color: 'var(--success)' }}>
+                ₹{dailyReports.reduce((sum, r) => sum + r.overtimePay, 0).toLocaleString('en-IN')}
+              </div>
+              <div className="sc-title">Overtime Pay</div>
+            </div>
+            <div className="tracking-kpi-card" style={{ backgroundColor: 'var(--danger-50)' }}>
+              <div className="sc-val" style={{ color: 'var(--danger)' }}>
+                ₹{dailyReports.reduce((sum, r) => sum + r.totalDailyImpact, 0).toLocaleString('en-IN')}
+              </div>
+              <div className="sc-title">Total Daily Deduction Impact</div>
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 0 }}>
+            {dailyReports.length === 0 ? (
+              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                <Activity size={48} style={{ margin: '0 auto 1rem auto', opacity: 0.3 }} />
+                <h3 style={{ fontSize: '1.125rem', color: 'var(--text-primary)' }}>No attendance records found for this date.</h3>
+              </div>
+            ) : (
+              <div className="table-container">
+                <table className="table" style={{ width: '100%', minWidth: '1200px' }}>
+                  <thead>
+                    <tr>
+                      <th>Employee</th>
+                      <th>Shift</th>
+                      <th>Status</th>
+                      <th>Clock In</th>
+                      <th>Clock Out</th>
+                      <th style={{ textAlign: 'right' }}>Late Mins</th>
+                      <th style={{ textAlign: 'right' }}>Late Ded.</th>
+                      <th style={{ textAlign: 'right' }}>Break Overrun</th>
+                      <th style={{ textAlign: 'right' }}>Break Ded.</th>
+                      <th style={{ textAlign: 'right' }}>OT Mins</th>
+                      <th style={{ textAlign: 'right' }}>OT Pay</th>
+                      <th style={{ textAlign: 'right' }}>LOP Impact</th>
+                      <th style={{ textAlign: 'right' }}>Other Ded.</th>
+                      <th style={{ textAlign: 'right' }}>Total Impact</th>
+                      <th style={{ textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dailyReports.map(r => (
+                      <tr key={r.employee.id}>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{r.employee.first_name} {r.employee.last_name}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{r.employee.employee_code} • {r.employee.departments?.name}</div>
+                        </td>
+                        <td>{r.shift}</td>
+                        <td><span className={`badge badge-${r.status === 'COMPLETED' ? 'success' : r.status === 'WORKING' ? 'primary' : 'warning'}`}>{r.status}</span></td>
+                        <td>{r.clockIn ? new Date(r.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                        <td>{r.clockOut ? new Date(r.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
+                        <td style={{ textAlign: 'right', color: r.lateMinutes > 0 ? 'var(--danger-700)' : 'inherit' }}>{r.lateMinutes || '-'}</td>
+                        <td style={{ textAlign: 'right', color: r.lateDeduction > 0 ? 'var(--danger)' : 'inherit' }}>{r.lateDeduction > 0 ? `₹${r.lateDeduction.toLocaleString('en-IN')}` : '₹0'}</td>
+                        <td style={{ textAlign: 'right', color: r.breakOverrunMinutes > 0 ? 'var(--warning-700)' : 'inherit' }}>{r.breakOverrunMinutes || '-'}</td>
+                        <td style={{ textAlign: 'right', color: r.breakDeduction > 0 ? 'var(--danger)' : 'inherit' }}>{r.breakDeduction > 0 ? `₹${r.breakDeduction.toLocaleString('en-IN')}` : '₹0'}</td>
+                        <td style={{ textAlign: 'right', color: r.overtimeMinutes > 0 ? 'var(--success-700)' : 'inherit' }}>{r.overtimeMinutes || '-'}</td>
+                        <td style={{ textAlign: 'right', color: r.overtimePay > 0 ? 'var(--success)' : 'inherit' }}>{r.overtimePay > 0 ? `₹${r.overtimePay.toLocaleString('en-IN')}` : '₹0'}</td>
+                        <td style={{ textAlign: 'right', color: r.lopImpact > 0 ? 'var(--danger)' : 'inherit' }}>{r.lopImpact > 0 ? `₹${r.lopImpact.toLocaleString('en-IN')}` : '₹0'}</td>
+                        <td style={{ textAlign: 'right', color: r.otherDeductions > 0 ? 'var(--danger)' : 'inherit' }}>{r.otherDeductions > 0 ? `₹${r.otherDeductions.toLocaleString('en-IN')}` : '₹0'}</td>
+                        <td style={{ textAlign: 'right', fontWeight: 600, color: r.totalDailyImpact > 0 ? 'var(--danger)' : 'var(--text-secondary)' }}>
+                          {r.totalDailyImpact > 0 ? `₹${r.totalDailyImpact.toLocaleString('en-IN')}` : '₹0'}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button onClick={() => setDailyDetailModal(r)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>Details</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
-
-      {/* Progress Banner */}
-      <div className="card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', backgroundColor: 'var(--bg-surface-elevated)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
-          <div>
-            <h3 style={{ fontSize: '1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>{monthLabel} Payroll</h3>
-            <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Status: {getStatusBadge(globalStatus)}</div>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            {globalStatus === 'UNDER_REVIEW' && <button onClick={() => setBulkApproveModal(true)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}>Approve Payroll</button>}
-            {globalStatus === 'APPROVED' && <button onClick={handleProceedToPayments} className="btn btn-outline" style={{ fontSize: '0.875rem', color: 'var(--primary-700)', borderColor: 'var(--primary-400)' }}><ArrowRight size={16}/> Proceed to Payments</button>}
-          </div>
-        </div>
-        
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem', position: 'relative' }}>
-          <div style={{ position: 'absolute', top: '12px', left: '20px', right: '20px', height: '2px', backgroundColor: 'var(--gray-200)', zIndex: 0 }}></div>
-          {['Draft', 'Calculated', 'Under Review', 'Approved', 'Payment Pending', 'Paid', 'Closed'].map((step, i) => {
-            const steps = ['DRAFT', 'CALCULATED', 'UNDER_REVIEW', 'APPROVED', 'PAYMENT_PENDING', 'PAID', 'CLOSED'];
-            const currentIndex = steps.indexOf(globalStatus);
-            const isCompleted = i <= currentIndex;
-            const isCurrent = i === currentIndex;
-            
-            return (
-              <div key={step} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', zIndex: 1, backgroundColor: 'var(--bg-surface-elevated)', padding: '0 0.5rem' }}>
-                <div style={{ 
-                  width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  backgroundColor: isCurrent ? 'var(--primary-600)' : isCompleted ? 'var(--success)' : 'var(--gray-200)',
-                  color: 'var(--bg-primary)', fontSize: '0.75rem', fontWeight: 600, border: isCurrent ? '4px solid var(--primary-100)' : 'none'
-                }}>
-                  {isCompleted && !isCurrent ? <CheckCircle size={14}/> : isCurrent ? '●' : '○'}
-                </div>
-                <div style={{ fontSize: '0.75rem', fontWeight: isCurrent ? 700 : 500, color: isCurrent ? 'var(--primary-700)' : isCompleted ? 'var(--gray-800)' : 'var(--gray-400)' }}>{step}</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Main Table */}
-      <div className="card" style={{ padding: 0 }}>
-        <div style={{ padding: '1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ position: 'relative', width: '220px' }}>
-            <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} />
-          </div>
-          <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
-              <option value="All">All Departments</option>
-              {deptLoading ? (
-                <option disabled>Loading...</option>
-              ) : (
-                <>
-                  {activeDepts.map((d: any) => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                  <option value="Unassigned">Unassigned</option>
-                </>
-              )}
-            </select>
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
-            <option value="All">All Statuses</option>
-            <option value="NOT_GENERATED">Not Generated</option>
-            <option value="CALCULATED">Calculated</option>
-            <option value="UNDER_REVIEW">Under Review</option>
-            <option value="APPROVED">Approved</option>
-            <option value="PAYMENT_PENDING">Payment Pending</option>
-            <option value="PAID">Paid</option>
-            <option value="CLOSED">Closed</option>
-          </select>
-          {(search || filterDept !== 'All' || filterStatus !== 'All') && (
-            <button onClick={() => { setSearch(''); setFilterDept('All'); setFilterStatus('All'); }} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem' }}>Clear</button>
-          )}
-        </div>
-
-        {loading ? (
-          <div className="skeleton" style={{ height: '400px', margin: '1rem' }} />
-        ) : filteredData.length === 0 ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-            <Banknote size={48} style={{ margin: '0 auto 1rem auto', opacity: 0.3 }} />
-            <h3 style={{ fontSize: '1.125rem', color: 'var(--text-primary)' }}>No payroll records found</h3>
-            <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>Generate payroll to create records for this month.</p>
-          </div>
-        ) : (
-          <div className="table-container desktop-only">
-            <table className="table" style={{ width: '100%', minWidth: '1000px' }}>
-              <thead>
-                <tr>
-                  <th>Employee</th>
-                  <th style={{ textAlign: 'right' }}>Gross Salary</th>
-                  <th style={{ textAlign: 'right' }}>Work Days</th>
-                  <th style={{ textAlign: 'right' }}>Present</th>
-                  <th style={{ textAlign: 'right' }}>Leave / LOP</th>
-                  <th style={{ textAlign: 'right' }}>Deductions</th>
-                  <th style={{ textAlign: 'right' }}>Overtime</th>
-                  <th style={{ textAlign: 'right' }}>Net Salary</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredData.map(({ emp, payroll }) => {
-                  if (!payroll) {
-                    const hasActiveSalary = emp.salary_structures && emp.salary_structures.some((s: any) => s.is_active);
-                    return (
-                      <tr key={emp.id}>
-                        <td>
-                          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{emp.first_name} {emp.last_name}</div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.employee_code} • {emp.department?.name || 'Unknown'}</div>
-                        </td>
-                        <td colSpan={7} style={{ textAlign: 'center', color: hasActiveSalary ? 'var(--text-secondary)' : 'var(--danger)' }}>
-                          {hasActiveSalary ? 'Employee exists, but no payroll record exists for this period.' : 'Salary not configured'}
-                        </td>
-                        <td>{getStatusBadge('NOT_GENERATED')}</td>
-                        <td style={{ textAlign: 'right' }}>
-                          <button onClick={() => hasActiveSalary ? setGenerateModal(true) : setShowSalaryEditor(emp.id)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>
-                            {hasActiveSalary ? 'Generate' : 'Configure'}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  }
-                  
-                  const ts = getTableSummary(payroll);
-                  return (
-                    <tr key={payroll.id}>
-                      <td>
-                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{emp.first_name} {emp.last_name}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.employee_code} • {emp.department?.name || 'Unknown'}</div>
-                      </td>
-                      <td style={{ textAlign: 'right', fontWeight: 500 }}>₹{Number(payroll.gross_salary).toLocaleString('en-IN')}</td>
-                      <td style={{ textAlign: 'right' }}>{ts.workingDays}</td>
-                      <td style={{ textAlign: 'right' }}>{ts.present}</td>
-                      <td style={{ textAlign: 'right' }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>{ts.approvedLeave}</span> / <span style={{ color: ts.lopLeave > 0 ? 'var(--danger-600)' : 'var(--gray-600)', fontWeight: ts.lopLeave > 0 ? 600 : 400 }}>{ts.lopLeave}</span>
-                      </td>
-                      <td style={{ textAlign: 'right', color: Number(payroll.total_deductions) > 0 ? 'var(--danger)' : 'inherit' }}>
-                        ₹{Number(payroll.total_deductions).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                      </td>
-                      <td style={{ textAlign: 'right', color: Number(payroll.overtime_amount) > 0 ? 'var(--success)' : 'inherit' }}>
-                        ₹{Number(payroll.overtime_amount).toLocaleString('en-IN')}
-                      </td>
-                      <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)', fontSize: '1rem' }}>
-                        ₹{Number(payroll.net_salary).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                      </td>
-                      <td>{getStatusBadge(payroll.status)}</td>
-                      <td style={{ textAlign: 'right' }}>
-                        <button onClick={() => openDetailDrawer(payroll)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>View</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        
-        {!loading && filteredData.length > 0 && (
-          <div className="mobile-only" style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {filteredData.map(({ emp, payroll }) => (
-              <div key={emp.id} className="card" style={{ padding: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <div><div style={{ fontWeight: 600, fontSize: '1rem' }}>{emp.first_name} {emp.last_name}</div><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.employee_code} • {emp.department?.name || 'Unknown'}</div></div>
-                  <div>{getStatusBadge(payroll ? payroll.status : 'NOT_GENERATED')}</div>
-                </div>
-                {payroll ? (
-                  <>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.875rem', marginTop: '1rem' }}>
-                      <div><span style={{ color: 'var(--text-secondary)' }}>Gross:</span> ₹{Number(payroll.gross_salary).toLocaleString('en-IN')}</div>
-                      <div><span style={{ color: 'var(--danger-600)' }}>Ded:</span> ₹{Number(payroll.total_deductions).toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
-                      <div style={{ gridColumn: '1 / -1', fontSize: '1rem', fontWeight: 700, marginTop: '0.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.5rem' }}>
-                        Net: ₹{Number(payroll.net_salary).toLocaleString('en-IN', {maximumFractionDigits:2})}
-                      </div>
-                    </div>
-                    <button onClick={() => openDetailDrawer(payroll)} className="btn btn-outline" style={{ width: '100%', marginTop: '1rem', fontSize: '0.875rem' }}>View Payroll</button>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ textAlign: 'center', color: emp.salary_structures?.some((s:any)=>s.is_active) ? 'var(--text-secondary)' : 'var(--danger)', margin: '1rem 0' }}>
-                      {emp.salary_structures?.some((s:any)=>s.is_active) ? 'Employee exists, but no payroll record exists for this period.' : 'Salary not configured'}
-                    </div>
-                    <button onClick={() => emp.salary_structures?.some((s:any)=>s.is_active) ? setGenerateModal(true) : setShowSalaryEditor(emp.id)} className="btn btn-outline" style={{ width: '100%', marginTop: '1rem', fontSize: '0.875rem' }}>
-                      {emp.salary_structures?.some((s:any)=>s.is_active) ? 'Generate Payroll' : 'Configure Salary'}
-                    </button>
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
       {/* Detail Drawer */}
       {detailDrawer && (() => {
@@ -911,7 +1027,7 @@ const AdminPayroll: React.FC = () => {
                 payrollYear={detailDrawer?.payroll_year}
                 payrollMonth={detailDrawer?.payroll_month}
                 onSuccess={async () => {
-                  await fetchPayrolls();
+                  await fetchData();
                   if (detailDrawer) {
                     const { data } = await supabase
                       .from('payroll')
@@ -1043,6 +1159,64 @@ const AdminPayroll: React.FC = () => {
         .skeleton { background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%); background-size: 200% 100%; animation: skeleton-loading 1.5s infinite; }
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
+      {/* Daily Detail Modal */}
+      {dailyDetailModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ width: '90%', maxWidth: '600px' }}>
+            <div className="modal-header">
+              <h2 className="modal-title">Daily Deduction Breakdown</h2>
+              <button onClick={() => setDailyDetailModal(null)} className="icon-button"><X size={20}/></button>
+            </div>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>{dailyDetailModal.employee.first_name} {dailyDetailModal.employee.last_name}</h3>
+                <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>{dailyDetailModal.employee.employee_code} • {dailyDetailModal.employee.departments?.name}</div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div className="card" style={{ padding: '1rem', backgroundColor: 'var(--bg-surface)' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Clock In</div>
+                  <div style={{ fontWeight: 600 }}>{dailyDetailModal.clockIn ? new Date(dailyDetailModal.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</div>
+                </div>
+                <div className="card" style={{ padding: '1rem', backgroundColor: 'var(--bg-surface)' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Clock Out</div>
+                  <div style={{ fontWeight: 600 }}>{dailyDetailModal.clockOut ? new Date(dailyDetailModal.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</div>
+                </div>
+              </div>
+
+              <div className="card" style={{ padding: '1rem' }}>
+                <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--danger-700)', marginBottom: '0.75rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Deductions Applied</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
+                  {dailyDetailModal.rawCalc.deductionItems.map((item: any, i: number) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>{item.name}</span>
+                      <span style={{ fontWeight: 500, color: 'var(--danger)' }}>₹{item.amount.toLocaleString('en-IN')}</span>
+                    </div>
+                  ))}
+                  {dailyDetailModal.rawCalc.deductionItems.length === 0 && (
+                    <div style={{ color: 'var(--text-secondary)' }}>No deductions for this date.</div>
+                  )}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed var(--border-color)', paddingTop: '0.5rem', marginTop: '0.25rem', fontWeight: 600 }}>
+                    <span>Total Deduction Impact</span>
+                    <span style={{ color: 'var(--danger)' }}>₹{dailyDetailModal.totalDailyImpact.toLocaleString('en-IN')}</span>
+                  </div>
+                </div>
+              </div>
+              
+              {dailyDetailModal.overtimePay > 0 && (
+                <div className="card" style={{ padding: '1rem', borderColor: 'var(--success-200)', backgroundColor: 'var(--success-50)' }}>
+                  <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--success-700)', marginBottom: '0.75rem' }}>Earnings</h4>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
+                    <span style={{ color: 'var(--success-700)' }}>Overtime Pay ({dailyDetailModal.overtimeMinutes}m)</span>
+                    <span style={{ fontWeight: 600, color: 'var(--success)' }}>₹{dailyDetailModal.overtimePay.toLocaleString('en-IN')}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

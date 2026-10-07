@@ -4,6 +4,7 @@ import AppLayout from './components/layout/AppLayout';
 import ErrorBoundary from './ErrorBoundary';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import { AuthProvider } from './context/AuthContext';
+import { QaControlPanel } from './components/QaControlPanel';
 import './App.css';
 import './responsive.css';
 
@@ -47,6 +48,7 @@ const LoadingFallback = () => (
 function App() {
   return (
     <AuthProvider>
+      <QaControlPanel />
       <BrowserRouter>
         <Suspense fallback={<LoadingFallback />}>
           <Routes>
