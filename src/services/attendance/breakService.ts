@@ -5,7 +5,7 @@ import { auditService } from '../audit/auditService';
 import { qaTimeService } from '../qa/qaTimeService';
 import { breakDurationMinutes, completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes } from './breakRules';
 
-const companyDate = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+import { companyDateStr as companyDate } from '../../utils/companyDate';
 
 /**
  * Recalculate attendance.break_minutes and break_overrun_minutes from the stored breaks.

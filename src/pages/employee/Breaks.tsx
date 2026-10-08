@@ -5,6 +5,7 @@ import { attendanceService } from '../../services/attendance/attendanceService';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { Coffee, Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { companyDateStr } from '../../utils/companyDate';
 
 const EmployeeBreaks: React.FC = () => {
   const { settings } = useGlobalSettings();
@@ -17,23 +18,17 @@ const EmployeeBreaks: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [currentDate, setCurrentDate] = useState(new Date());
 
-  const getLocalDateStr = () => {
-    const d = new Date();
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
-  };
+  const getLocalDateStr = () => companyDateStr();
 
   const fetchBreaks = async () => {
     setLoading(true);
     const dateStr = getLocalDateStr();
     
     // Fetch today's attendance to get the shift information
-    const { data: att } = await attendanceService.getTodayAttendance(dateStr);
+    const { data: att } = await attendanceService.getCurrentAttendance();
     setAttendance(att);
 
-    const { data, error } = await breakService.getMyBreaks(dateStr);
+    const { data, error } = await breakService.getMyBreaks((att as any)?.attendance_date ?? dateStr);
     if (data) {
       setBreaks(data);
     }

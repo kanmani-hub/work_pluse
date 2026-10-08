@@ -4,7 +4,8 @@
  */
 import { supabase } from '../../lib/supabase';
 import { appSettingsService } from '../settings/appSettingsService';
-import { buildAdminAttendanceDay, COMPANY_TIMEZONE } from './adminAttendanceRules';
+import { buildAdminAttendanceDay } from './adminAttendanceRules';
+import { companyDateStr } from '../../utils/companyDate';
 
 const SHIFT_FIELDS = 'name, start_time, end_time, crosses_midnight, break_duration_minutes, required_hours';
 
@@ -12,7 +13,7 @@ export const adminAttendanceService = {
   async getDay(date: string) {
     const errors: string[] = [];
     const check = (label: string, r: { error: any }) => { if (r.error) errors.push(`${label}: ${r.error.message}`); };
-    const today = new Date().toLocaleDateString('en-CA', { timeZone: COMPANY_TIMEZONE });
+    const today = companyDateStr();
 
     const [settings, employees, attendance, assignments, leaves, wfh, live, faceRegs] = await Promise.all([
       appSettingsService.loadSettings(),

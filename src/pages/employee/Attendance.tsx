@@ -11,6 +11,8 @@ import { faceService } from '../../services/face/faceService';
 import { locationService } from '../../services/location/locationService';
 import { qaTimeService } from '../../services/qa/qaTimeService';
 import { computeWorkTimer } from '../../services/attendance/breakRules';
+import { selectCurrentAttendance } from '../../services/attendance/currentAttendance';
+import { companyDateStr, previousDateStr } from '../../utils/companyDate';
 import { supabase } from '../../lib/supabase';
 
 const SearchIcon = ({size, color}: any) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
@@ -161,7 +163,7 @@ const EmployeeAttendance: React.FC = () => {
     
     const empId = await attendanceService.getCurrentEmployeeId();
     if (empId) {
-      const localDateStr = new Date().toISOString().split('T')[0];
+      const localDateStr = companyDateStr();
       
       // Shift logic
       const { data: shiftAssignments } = await supabase
@@ -264,8 +266,10 @@ const EmployeeAttendance: React.FC = () => {
 
       setHistory(mapped);
       
-      const localDateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-      const today = mapped.find((m: any) => m.rawDate === localDateStr);
+      // Current attendance = today's record (company date) or yesterday's still-open overnight session.
+      // Never the latest historical record (e.g. yesterday's clock-out).
+      const localDateStr = companyDateStr();
+      const today = selectCurrentAttendance(mapped, localDateStr, previousDateStr(localDateStr));
       setTodayAttendance(today || null);
 
       if (today) {
@@ -358,7 +362,7 @@ const EmployeeAttendance: React.FC = () => {
       }
 
       // 2. Clock In directly (no face verification)
-      const localDateStr = new Date().toISOString().split('T')[0];
+      const localDateStr = companyDateStr();
       const res = await attendanceService.clockIn({
         localDateStr,
         locationVerificationId: locResult.eventId || undefined,
@@ -415,7 +419,7 @@ const EmployeeAttendance: React.FC = () => {
            alert(error.message);
         } else {
            // Success, call Clock In
-           const localDateStr = new Date().toISOString().split('T')[0];
+           const localDateStr = companyDateStr();
            const res = await attendanceService.clockIn({ 
              localDateStr, 
              locationVerificationId: locVerificationIdRef.current || undefined,
@@ -852,7 +856,7 @@ const EmployeeAttendance: React.FC = () => {
                 {monthDays.map(day => {
                   const dStr = `${year}-${(month + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
                   const record = history.find((h: any) => h.rawDate === dStr);
-                  const isToday = dStr === new Date().toISOString().split('T')[0];
+                  const isToday = dStr === companyDateStr();
                   let status = record ? record.status : (new Date(year, month, day) > new Date() ? 'FUTURE' : 'WEEK OFF');
                   
                   const dayOfWeek = new Date(year, month, day).getDay();
