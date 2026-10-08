@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { normalizeRole } from '../lib/roles';
 import { authService, type AuthSession } from '../services/auth/authService';
 import { pushNotificationService } from '../services/notifications/pushNotificationService';
 
@@ -32,7 +33,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const resolveRole = async (roleId: string) => {
     const { data, error } = await supabase.from('roles').select('name').eq('id', roleId).single();
     if (!error && data) {
-      setRole((data as { name: string }).name);
+      setRole(normalizeRole((data as { name: string }).name));
     } else {
       setRole(null);
     }
@@ -67,7 +68,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (employeeData.profile.role_id) {
             const { data: roleData } = await supabase.from('roles').select('name').eq('id', employeeData.profile.role_id).single();
             resolvedRoleName = (roleData as { name: string } | null)?.name ?? null;
-            setRole(resolvedRoleName);
+            setRole(normalizeRole(resolvedRoleName));
           }
 
           // Initialize push notifications on successful login

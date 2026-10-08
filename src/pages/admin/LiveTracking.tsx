@@ -1,5 +1,5 @@
 /// <reference types="@types/google.maps" />
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   MapPin, Clock, Search, Filter, 
   RefreshCw, AlertCircle, X, 
@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { locationService } from '../../services/location/locationService';
 import { realtimeService } from '../../services/realtime/realtimeService';
+import { deriveLiveWorkStatus } from '../../services/location/liveStatusRules';
 import { supabase } from '../../lib/supabase';
 import { useDepartments } from '../../hooks/useDepartments';
 
@@ -34,7 +35,7 @@ interface LiveEmployee {
   officeId: string | null;
   officeLat: number;
   officeLng: number;
-  officeRadius: number;
+  officeRadius: number | null;
   lat: number | null;
   lng: number | null;
   x: number;
@@ -61,6 +62,7 @@ const AdminLiveTracking: React.FC = () => {
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [employees, setEmployees] = useState<LiveEmployee[]>([]);
+  const workStateRef = useRef<{ attendance: Map<string, any>; activeBreaks: Set<string> }>({ attendance: new Map(), activeBreaks: new Set() });
   const [activeOffices, setActiveOffices] = useState<any[]>([]);
   const [lastUpdatedTime, setLastUpdatedTime] = useState(new Date().toLocaleTimeString('en-US'));
   
@@ -104,15 +106,10 @@ const AdminLiveTracking: React.FC = () => {
           const now = new Date();
           const lastSeen = new Date(newData.last_seen_at);
           const diffMins = (now.getTime() - lastSeen.getTime()) / 60000;
-          let status: EmployeeStatus = 'Working';
+          const ws = workStateRef.current;
+          const status: EmployeeStatus = deriveLiveWorkStatus(newData, ws.attendance.get(newData.employee_id), ws.activeBreaks.has(newData.employee_id));
           let locationStatus = newData.location_status === 'INSIDE_GEOFENCE' ? 'Inside Geofence' : (newData.location_status === 'OUTSIDE_GEOFENCE' ? 'Outside Geofence' : newData.location_status);
           let distanceStr = newData.distance_from_office_meters != null ? `${Math.round(newData.distance_from_office_meters)}m` : 'N/A';
-          
-          if (newData.location_context === 'WFH') {
-             status = 'WFH';
-          } else if (newData.location_status === 'OUTSIDE_GEOFENCE') {
-             status = 'Outside Geofence';
-          }
 
           if (diffMins > 15) {
              locationStatus = 'STALE / LAST KNOWN';
@@ -160,9 +157,15 @@ const AdminLiveTracking: React.FC = () => {
       }
     });
 
+    // Break start/end and clock-in/out update the attendance row: refresh work status in realtime
+    const attendanceChannel = realtimeService.subscribeToAdminAttendance(() => {
+      fetchLocations();
+    });
+
     return () => {
       realtimeService.unsubscribe(liveChannel);
       realtimeService.unsubscribe(historyChannel);
+      realtimeService.unsubscribe(attendanceChannel);
     };
   }, []);
 
@@ -179,21 +182,25 @@ const AdminLiveTracking: React.FC = () => {
 
   const fetchLocations = async () => {
     setLoading(true);
-    const { data } = await locationService.getAllLiveLocations();
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const [{ data }, { data: todayAttendance }, { data: openBreaks }] = await Promise.all([
+      locationService.getAllLiveLocations(),
+      supabase.from('attendance').select('employee_id, status, clock_in_at, clock_out_at').eq('attendance_date', todayStr) as any,
+      supabase.from('attendance_breaks').select('employee_id, attendance:attendance_id!inner(attendance_date)').is('ended_at', null).eq('attendance.attendance_date', todayStr) as any,
+    ]);
+    workStateRef.current = {
+      attendance: new Map((todayAttendance || []).map((a: any) => [a.employee_id, a])),
+      activeBreaks: new Set((openBreaks || []).map((b: any) => b.employee_id)),
+    };
     if (data) {
       const now = new Date();
       setEmployees(data.map((l: any) => {
         const lastSeen = new Date(l.last_seen_at);
         const diffMins = (now.getTime() - lastSeen.getTime()) / 60000;
-        let status: EmployeeStatus = 'Working';
-        let locationStatus = l.location_status === 'INSIDE_GEOFENCE' ? 'Inside Geofence' : (l.location_status === 'OUTSIDE_GEOFENCE' ? 'AUTO BREAK' : l.location_status);
+        const att = workStateRef.current.attendance.get(l.employee_id);
+        const status: EmployeeStatus = deriveLiveWorkStatus(l, att, workStateRef.current.activeBreaks.has(l.employee_id));
+        let locationStatus = l.location_status === 'INSIDE_GEOFENCE' ? 'Inside Geofence' : (l.location_status === 'OUTSIDE_GEOFENCE' ? 'Outside Geofence' : l.location_status);
         let distanceStr = l.distance_from_office_meters != null ? `${Math.round(l.distance_from_office_meters)}m` : 'N/A';
-        
-        if (l.location_context === 'WFH') {
-           status = 'WFH';
-        } else if (l.location_status === 'OUTSIDE_GEOFENCE') {
-           status = 'On Break';
-        }
 
         if (diffMins > 15) {
            locationStatus = 'STALE / LAST KNOWN';
@@ -212,12 +219,12 @@ const AdminLiveTracking: React.FC = () => {
           locationStatus,
           distance: distanceStr,
           lastUpdated: new Date(l.last_seen_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-          workingSince: '-', 
+          workingSince: att?.clock_in_at ? new Date(att.clock_in_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '-',
           office: l.employees?.offices?.name || '-',
           officeId: l.employees?.offices?.id || null,
           officeLat: l.employees?.offices?.latitude || 13.0827,
           officeLng: l.employees?.offices?.longitude || 80.2707,
-          officeRadius: l.employees?.offices?.geofence_radius_meters || 200,
+          officeRadius: l.employees?.offices?.geofence_radius ?? null,
           lat: l.latitude || null,
           lng: l.longitude || null,
           x: l.longitude && l.employees?.offices?.longitude ? 50 + ((l.longitude - l.employees.offices.longitude) * 10000) : 50,
@@ -698,7 +705,7 @@ const AdminLiveTracking: React.FC = () => {
                     </span>
                   </div>
                   <div className="detail-item"><span className="detail-label">Distance</span><span className="detail-value">{selectedEmp.distance}</span></div>
-                  <div className="detail-item"><span className="detail-label">Geofence Radius</span><span className="detail-value">{selectedEmp.officeRadius}m</span></div>
+                  <div className="detail-item"><span className="detail-label">Geofence Radius</span><span className="detail-value">{selectedEmp.officeRadius != null ? `${selectedEmp.officeRadius}m` : '-'}</span></div>
                   <div className="detail-item" style={{ gridColumn: "1 / -1" }}><span className="detail-label">Last Location Update</span><span className="detail-value">{selectedEmp.lastUpdated}</span></div>
                 </div>
               </div>

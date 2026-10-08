@@ -13,7 +13,7 @@ interface LiveEmployee {
   distance: string;
   lastUpdated: string;
   office: string;
-  officeRadius: number;
+  officeRadius: number | null;
   lat: number | null;
   lng: number | null;
 }
@@ -23,7 +23,8 @@ interface Office {
   name: string;
   latitude: number | null;
   longitude: number | null;
-  geofence_radius_meters: number;
+  geofence_radius?: number | null; // offices.geofence_radius (actual column)
+  geofence_radius_meters?: number;
 }
 
 interface LiveTrackingMapProps {
@@ -113,7 +114,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({ employees, off
         officeCircleRef.current = new google.maps.Circle({
           map,
           center: officePos,
-          radius: office.geofence_radius_meters || 200,
+          radius: office.geofence_radius ?? office.geofence_radius_meters ?? 0,
           strokeColor: "#38e8ff",
           strokeOpacity: 0.8,
           strokeWeight: 2,
@@ -122,7 +123,7 @@ export const LiveTrackingMap: React.FC<LiveTrackingMapProps> = ({ employees, off
         });
       } else {
         officeCircleRef.current.setCenter(officePos);
-        officeCircleRef.current.setRadius(office.geofence_radius_meters || 200);
+        officeCircleRef.current.setRadius(office.geofence_radius ?? office.geofence_radius_meters ?? 0);
       }
     } else {
       if (officeMarkerRef.current) {

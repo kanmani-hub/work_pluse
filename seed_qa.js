@@ -7,7 +7,11 @@ dotenv.config({ path: '.env.qa' });
 
 const qaUrl = process.env.SUPABASE_QA_URL;
 const qaKey = process.env.SUPABASE_QA_SERVICE_ROLE_KEY;
-const qaPassword = process.env.QA_PASSWORD || 'QA_password123!';
+const qaPassword = process.env.QA_PASSWORD;
+if (!qaPassword) {
+  console.error('Set QA_PASSWORD in .env.qa (never commit it).');
+  process.exit(1);
+}
 
 if (!qaUrl || !qaKey) {
   console.error("ERROR: SUPABASE_QA_URL or SUPABASE_QA_SERVICE_ROLE_KEY missing in .env.qa");

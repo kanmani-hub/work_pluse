@@ -987,7 +987,7 @@ Create a `.env` file in the project root:
 
 ```env
 VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+VITE_SUPABASE_ANON_KEY=your-anon-or-publishable-key
 ```
 
 > ⚠️ **IMPORTANT:** Never commit the `.env` file. Only the publishable anon key should be used. Never expose the service-role key in frontend code.

@@ -3,6 +3,26 @@ import type { Database } from '../../types/database';
 import { attendanceService } from './attendanceService';
 import { auditService } from '../audit/auditService';
 import { qaTimeService } from '../qa/qaTimeService';
+import { breakDurationMinutes, completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes } from './breakRules';
+
+const companyDate = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
+/**
+ * Recalculate attendance.break_minutes and break_overrun_minutes from the stored breaks.
+ * Allowed minutes = shift break_duration_minutes, else Admin setting (no hard-coded default).
+ */
+async function recalculateBreakTotals(attendanceId: string) {
+  const [{ data: att }, { data: breaks }, { globalSettingsService }] = await Promise.all([
+    supabase.from('attendance').select('shift_template:shift_template_id(break_duration_minutes)').eq('id', attendanceId).single() as any,
+    supabase.from('attendance_breaks').select('started_at, ended_at, duration_minutes').eq('attendance_id', attendanceId) as any,
+    import('../settings/globalSettingsService'),
+  ]);
+  const settings = await globalSettingsService.loadSettings();
+  const actual = completedBreakMinutes(breaks || []);
+  const allowed = resolveAllowedBreakMinutes(att?.shift_template?.break_duration_minutes, settings.app.breakDurationMins);
+  const overrun = computeBreakOverrun(actual, allowed, settings.payroll.enableBreakOverrunDetection);
+  return { actual, allowed, overrun };
+}
 
 export type AttendanceBreakRow = Database['public']['Tables']['attendance_breaks']['Row'];
 export type AttendanceBreakInsert = Database['public']['Tables']['attendance_breaks']['Insert'];
@@ -53,7 +73,7 @@ export const breakService = {
 
     const { globalSettingsService } = await import('../settings/globalSettingsService');
     const globalSettings = await globalSettingsService.loadSettings();
-    const allowedBreakMins = attendanceData?.shift_template?.break_duration_minutes ?? globalSettings.app.breakDurationMins ?? 60;
+    const allowedBreakMins = resolveAllowedBreakMinutes(attendanceData?.shift_template?.break_duration_minutes, globalSettings.app.breakDurationMins);
 
     const { data: pastBreaks } = await supabase.from('attendance_breaks').select('duration_minutes').eq('attendance_id', attendanceId);
     let usedMins = 0;
@@ -61,7 +81,7 @@ export const breakService = {
       pastBreaks.forEach((b: any) => usedMins += (b.duration_minutes || 0));
     }
     
-    if (usedMins >= allowedBreakMins) {
+    if (allowedBreakMins !== null && usedMins >= allowedBreakMins) {
       return { data: null, error: new Error('You have already exhausted your allowed break duration for today.') };
     }
 
@@ -129,9 +149,7 @@ export const breakService = {
     }
 
     const nowIso = qaTimeService.getIsoString();
-    const startIso = new Date(activeBreak.started_at).getTime();
-    const endMs = new Date(nowIso).getTime();
-    const durationMinutes = Math.floor((endMs - startIso) / (1000 * 60));
+    const durationMinutes = breakDurationMinutes(activeBreak.started_at, nowIso);
 
     // 2. Update break
     // @ts-ignore
@@ -156,19 +174,14 @@ export const breakService = {
       new_values: { attendance_id: attendanceId, duration_minutes: durationMinutes, ended_at: nowIso }
     }).catch(e => console.error('[AUDIT] BREAK_ENDED failed:', e));
 
-    // 3. Update attendance total break minutes and status
-    const { data: attendanceInfo } = await supabase
-      .from('attendance')
-      .select('break_minutes')
-      .eq('id', attendanceId)
-      .single() as any;
-      
-    const totalBreaks = (attendanceInfo?.break_minutes || 0) + durationMinutes;
+    // 3. Update attendance totals from the stored breaks (sum of actual durations) and status
+    const totals = await recalculateBreakTotals(attendanceId);
 
     // @ts-ignore
     await supabase.from('attendance').update({ 
       status: 'WORKING',
-      break_minutes: totalBreaks
+      break_minutes: totals.actual,
+      break_overrun_minutes: totals.overrun
     }).eq('id', attendanceId);
 
     // Add Event
@@ -274,137 +287,120 @@ export const breakService = {
   },
 
   /**
-   * Handle automatic break transitions based on GPS geofence exits/entries
+   * Handle automatic break transitions based on confirmed GPS geofence exits/entries.
+   * START: outside transition while clocked in (office mode) -> AUTO_GPS break from the transition time.
+   * END: return transition -> close the active AUTO_GPS break at the return time.
+   * Never clocks the employee out. WFH attendance never gets AUTO_GPS breaks.
    */
-  async handleAutoBreakTransition(empId: string, transition: 'START' | 'END', timestamp: string) {
-    // 1. Get active attendance for today
+  async handleAutoBreakTransition(empId: string, transition: 'START' | 'END', timestamp: string, opts: { isWfhContext?: boolean } = {}) {
+    const today = companyDate(new Date().toISOString());
+    const yesterday = companyDate(new Date(Date.now() - 86400000).toISOString());
+
+    // 1. Open attendance for today (or an overnight shift that started yesterday)
     const { data: attendance } = await supabase
       .from('attendance')
-      .select('id, status, clock_out_at, break_minutes')
+      .select('id, status, attendance_date, clock_in_at, clock_out_at, shift_template:shift_template_id(crosses_midnight)')
       .eq('employee_id', empId)
       .is('clock_out_at', null)
+      .in('attendance_date', [today, yesterday])
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle() as any;
 
-    if (!attendance) return; // Not working
+    if (!attendance || !attendance.clock_in_at) return { action: 'NONE', reason: 'NOT_CLOCKED_IN' };
+    if (attendance.attendance_date !== today && !attendance.shift_template?.crosses_midnight) return { action: 'NONE', reason: 'STALE_OPEN_ATTENDANCE' };
+
+    // A transition before clock-in belongs to no attendance
+    const atIso = new Date(Math.max(new Date(timestamp).getTime(), new Date(attendance.clock_in_at).getTime())).toISOString();
+
+    const { data: activeBreak } = await supabase
+      .from('attendance_breaks')
+      .select('id, started_at, break_type')
+      .eq('attendance_id', attendance.id)
+      .is('ended_at', null)
+      .maybeSingle() as any;
 
     if (transition === 'START') {
-      if (attendance.status === 'ON_BREAK') return; // Already on break
-      
-      // Check if WFH (no auto breaks for WFH)
-      const localDateStr = new Date(timestamp).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      if (activeBreak) return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' }; // no duplicate active breaks
+      if (opts.isWfhContext) return { action: 'NONE', reason: 'WFH' };
+
       const { data: wfhData } = await supabase
         .from('wfh_requests')
         .select('id')
         .eq('employee_id', empId)
-        .eq('request_date', localDateStr)
+        .eq('request_date', attendance.attendance_date)
         .eq('status', 'APPROVED')
         .maybeSingle();
-      if (wfhData) return;
+      if (wfhData) return { action: 'NONE', reason: 'WFH' };
 
-      // Start automatic break
-      const { data: newBreak } = await supabase
+      const { data: newBreak, error } = await supabase
         .from('attendance_breaks')
-        .insert({
-          attendance_id: attendance.id,
-          employee_id: empId,
-          break_type: 'AUTO_GPS',
-          started_at: timestamp
-        } as any)
+        .insert({ attendance_id: attendance.id, employee_id: empId, break_type: 'AUTO_GPS', started_at: atIso } as any)
         .select()
         .single();
-        
-      if (newBreak) {
-        // @ts-ignore
-        await supabase.from('attendance').update({ status: 'ON_BREAK' } as any).eq('id', attendance.id);
-        
-        auditService.recordAuditLog({
-          action: 'AUTOMATIC_BREAK_STARTED',
-          module: 'ATTENDANCE',
-          entity_type: 'attendance_breaks',
-          entity_id: (newBreak as any).id,
-          description: `Automatic GPS break started at ${new Date(timestamp).toLocaleTimeString('en-IN')}.`,
-        }).catch(() => {});
-      }
-    } else if (transition === 'END') {
-      if (attendance.status !== 'ON_BREAK') return; // Not on break
-      
-      const { data: activeBreak } = await supabase
-        .from('attendance_breaks')
-        .select('id, started_at')
-        .eq('attendance_id', attendance.id)
-        .is('ended_at', null)
-        .maybeSingle() as any;
-        
-      if (!activeBreak) return;
-      
-      const startMs = new Date(activeBreak.started_at).getTime();
-      const endMs = new Date(timestamp).getTime();
-      const durationMinutes = Math.floor((endMs - startMs) / 60000);
-      
-      const { data: updatedBreak } = await supabase
-        .from('attendance_breaks')
-        // @ts-ignore
-        .update({
-          ended_at: timestamp,
-          duration_minutes: durationMinutes
-        } as any)
-        .eq('id', activeBreak.id)
-        .select()
-        .single();
-        
-      if (updatedBreak) {
-        // Calculate break overrun
-        const { globalSettingsService } = await import('../settings/globalSettingsService');
-        const globalSettings = await globalSettingsService.loadSettings();
-        
-        // Fetch Shift info to get allowed break
-        const { data: attData } = await supabase
-          .from('attendance')
-          .select('shift_template:shift_template_id(break_duration_minutes)')
-          .eq('id', attendance.id)
-          .single() as any;
-          
-        const allowedBreakMins = attData?.shift_template?.break_duration_minutes ?? globalSettings.app.breakDurationMins ?? 75;
-        
-        // Get all breaks for this attendance to sum actual duration
-        const { data: pastBreaks } = await supabase.from('attendance_breaks').select('duration_minutes').eq('attendance_id', attendance.id);
-        let actualBreakMins = 0;
-        if (pastBreaks) {
-           pastBreaks.forEach((b: any) => actualBreakMins += (b.duration_minutes || 0));
-        }
-        
-        let breakOverrunMins = 0;
-        if (actualBreakMins > allowedBreakMins) {
-           breakOverrunMins = actualBreakMins - allowedBreakMins;
-        }
+      if (error || !newBreak) return { action: 'ERROR', reason: error?.message };
 
-        // @ts-ignore
-        await supabase.from('attendance').update({ 
-          status: 'WORKING',
-          break_minutes: actualBreakMins,
-          break_overrun_minutes: breakOverrunMins
-        } as any).eq('id', attendance.id);
-        
-        auditService.recordAuditLog({
-          action: 'AUTOMATIC_BREAK_ENDED',
-          module: 'ATTENDANCE',
-          entity_type: 'attendance_breaks',
-          entity_id: activeBreak.id,
-          description: `Automatic GPS break ended. Duration: ${durationMinutes}m.`,
-        }).catch(() => {});
-        
-        if (breakOverrunMins > 0) {
-          auditService.recordAuditLog({
-            action: 'BREAK_OVERRUN_DETECTED',
-            module: 'ATTENDANCE',
-            entity_type: 'attendance',
-            entity_id: attendance.id,
-            description: `Break overrun detected: ${breakOverrunMins} minutes.`,
-          }).catch(() => {});
-        }
-      }
+      // @ts-ignore
+      await supabase.from('attendance').update({ status: 'ON_BREAK' } as any).eq('id', attendance.id);
+      await supabase.from('attendance_events').insert({
+        attendance_id: attendance.id, employee_id: empId, event_type: 'BREAK_START', event_at: atIso, source: 'SYSTEM',
+        metadata: { trigger: 'GPS_GEOFENCE', break_type: 'AUTO_GPS', break_id: (newBreak as any).id },
+      } as any);
+
+      auditService.recordAuditLog({
+        action: 'AUTOMATIC_BREAK_STARTED',
+        module: 'ATTENDANCE',
+        entity_type: 'attendance_breaks',
+        entity_id: (newBreak as any).id,
+        description: `Automatic GPS break started at ${new Date(atIso).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}.`,
+      }).catch(() => {});
+      return { action: 'STARTED', breakId: (newBreak as any).id };
     }
+
+    // END: only an automatic break is closed by returning inside (manual breaks are ended by the employee)
+    if (!activeBreak || activeBreak.break_type !== 'AUTO_GPS') return { action: 'NONE', reason: 'NO_ACTIVE_AUTO_BREAK' };
+
+    const endIso = new Date(Math.max(new Date(atIso).getTime(), new Date(activeBreak.started_at).getTime())).toISOString();
+    const durationMinutes = breakDurationMinutes(activeBreak.started_at, endIso);
+
+    const { data: updatedBreak, error } = await supabase
+      .from('attendance_breaks')
+      // @ts-ignore
+      .update({ ended_at: endIso, duration_minutes: durationMinutes } as any)
+      .eq('id', activeBreak.id)
+      .is('ended_at', null)
+      .select()
+      .single();
+    if (error || !updatedBreak) return { action: 'ERROR', reason: error?.message };
+
+    const totals = await recalculateBreakTotals(attendance.id);
+    // @ts-ignore
+    await supabase.from('attendance').update({
+      status: 'WORKING',
+      break_minutes: totals.actual,
+      break_overrun_minutes: totals.overrun,
+    } as any).eq('id', attendance.id);
+    await supabase.from('attendance_events').insert({
+      attendance_id: attendance.id, employee_id: empId, event_type: 'BREAK_END', event_at: endIso, source: 'SYSTEM',
+      metadata: { trigger: 'GPS_GEOFENCE', break_type: 'AUTO_GPS', break_id: activeBreak.id, duration_minutes: durationMinutes },
+    } as any);
+
+    auditService.recordAuditLog({
+      action: 'AUTOMATIC_BREAK_ENDED',
+      module: 'ATTENDANCE',
+      entity_type: 'attendance_breaks',
+      entity_id: activeBreak.id,
+      description: `Automatic GPS break ended. Duration: ${durationMinutes}m.`,
+    }).catch(() => {});
+    if (totals.overrun > 0) {
+      auditService.recordAuditLog({
+        action: 'BREAK_OVERRUN_DETECTED',
+        module: 'ATTENDANCE',
+        entity_type: 'attendance',
+        entity_id: attendance.id,
+        description: `Break overrun detected: ${totals.overrun} minutes (allowed ${totals.allowed}, actual ${totals.actual}).`,
+      }).catch(() => {});
+    }
+    return { action: 'ENDED', breakId: activeBreak.id, durationMinutes, ...totals };
   }
 };

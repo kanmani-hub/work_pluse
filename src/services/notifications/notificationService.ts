@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase';
+import { ADMIN_NOTIFICATION_ROLES } from '../../lib/roles';
 import { salaryService } from '../payroll/salaryService'; // Reusing getCurrentEmployeeId
 
 export const notificationService = {
@@ -143,7 +144,7 @@ export const notificationService = {
     const { data: adminRoles } = await supabase
       .from('roles')
       .select('id, name')
-      .in('name', ['Admin', 'HR Manager', 'System Admin']) as any;
+      .in('name', [...ADMIN_NOTIFICATION_ROLES]) as any;
 
     if (!adminRoles || adminRoles.length === 0) return;
     const roleIds = adminRoles.map((r: any) => r.id);
@@ -209,7 +210,7 @@ export const notificationService = {
     }
 
     // 1. Fetch admins (Role = System Admin or HR)
-    const { data: adminRoles } = await supabase.from('roles').select('id, name').in('name', ['System Admin', 'Admin', 'HR Manager']) as any;
+    const { data: adminRoles } = await supabase.from('roles').select('id, name').in('name', [...ADMIN_NOTIFICATION_ROLES]) as any;
     if (!adminRoles || adminRoles.length === 0) return;
     
     const roleIds = adminRoles.map((r: any) => r.id);

@@ -5,7 +5,12 @@ DECLARE
   v_dept_id UUID;
   v_office_id UUID;
   v_emp_id UUID := gen_random_uuid();
+  -- Set a strong password here ONLY in your local copy before running. Never commit it.
+  v_password TEXT := '__SET_LOCALLY__';
 BEGIN
+  IF v_password = '__SET_LOCALLY__' OR length(v_password) < 12 THEN
+    RAISE EXCEPTION 'Set v_password locally (12+ characters) before running seed_admin.sql';
+  END IF;
   -- Enable pgcrypto if not already
   CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -34,7 +39,7 @@ BEGIN
     'authenticated',
     'authenticated',
     'admin@gmail.com',
-    crypt('admin@123', gen_salt('bf')),
+    crypt(v_password, gen_salt('bf')),
     NOW(),
     NOW(),
     NOW(),

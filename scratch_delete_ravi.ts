@@ -1,11 +1,14 @@
 import { supabase } from './src/lib/supabase';
 import { config } from 'dotenv';
 config();
+if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
+  throw new Error('Set ADMIN_EMAIL and ADMIN_PASSWORD in your local .env (never commit them).');
+}
 
 async function removeRavi() {
   const { data: { user }, error: authErr } = await supabase.auth.signInWithPassword({
-    email: 'admin@gmail.com',
-    password: 'admin@123'
+    email: process.env.ADMIN_EMAIL,
+    password: process.env.ADMIN_PASSWORD
   });
   if (authErr) throw authErr;
   

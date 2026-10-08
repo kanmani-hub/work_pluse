@@ -63,7 +63,7 @@ const AdminDashboard: React.FC = () => {
         
         const attendanceRecords = (attendanceData as any[]) || [];
         const workingCount = attendanceRecords.filter(a => a.clock_in_at && !a.clock_out_at).length;
-        const presentCount = attendanceRecords.filter(a => ['PRESENT', 'LATE', 'EARLY LOGOUT', 'WORKING', 'AUTO LOGOUT'].includes(a.status?.toUpperCase() || '')).length;
+        const presentCount = attendanceRecords.filter(a => ['PRESENT', 'LATE', 'EARLY LOGOUT', 'WORKING', 'COMPLETED', 'ON_BREAK', 'HALF_DAY', 'AUTO LOGOUT'].includes(a.status?.toUpperCase() || '')).length;
         const attendanceExists = attendanceRecords.length > 0;
 
         const allEmps = empCountData || [];

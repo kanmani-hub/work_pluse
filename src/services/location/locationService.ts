@@ -2,6 +2,7 @@ import { supabase } from '../../lib/supabase';
 import { calculateHaversineDistance } from '../../utils/geofence';
 import { notificationService } from '../notifications/notificationService';
 import { qaTimeService } from '../qa/qaTimeService';
+import { initialStability, nextStability, type GeofenceSide, type StabilityState } from './geofenceStability';
 
 export interface GeolocationResult {
   latitude: number | null;
@@ -76,7 +77,11 @@ export const locationService = {
   },
 
   /**
-   * Promise wrapper for browser geolocation API
+   * Promise wrapper for browser geolocation API.
+   * Uses a two-phase strategy for Android mobile reliability:
+   *   Phase 1: High accuracy with 15s timeout
+   *   Phase 2 (fallback): Low accuracy with 10s timeout
+   * Diagnostic logging uses safe prefixed tags for production debugging.
    */
   getCurrentLocation(): Promise<GeolocationResult> {
     return new Promise((resolve) => {
@@ -92,6 +97,7 @@ export const locationService = {
       }
 
       if (!navigator.geolocation) {
+        console.warn('[GPS] GPS_POSITION_UNAVAILABLE: Geolocation API not supported');
         resolve({
           latitude: null, longitude: null, accuracy: null, timestamp: null,
           status: 'LOCATION_UNAVAILABLE', error: 'Geolocation not supported'
@@ -99,28 +105,65 @@ export const locationService = {
         return;
       }
 
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          resolve({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            accuracy: position.coords.accuracy,
-            timestamp: position.timestamp,
-            status: 'SUCCESS'
-          });
-        },
-        (error) => {
-          let status: GeolocationResult['status'] = 'UNKNOWN_ERROR';
-          if (error.code === error.PERMISSION_DENIED) status = 'LOCATION_DENIED';
-          if (error.code === error.POSITION_UNAVAILABLE) status = 'LOCATION_UNAVAILABLE';
-          if (error.code === error.TIMEOUT) status = 'TIMEOUT';
+      const handleSuccess = (position: GeolocationPosition) => {
+        console.log(`[GPS] GPS_POSITION_RECEIVED: accuracy=${Math.round(position.coords.accuracy)}m, timestamp=${position.timestamp}, coords=available`);
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          timestamp: position.timestamp,
+          status: 'SUCCESS'
+        });
+      };
 
-          resolve({
-            latitude: null, longitude: null, accuracy: null, timestamp: null,
-            status, error: error.message
-          });
+      const handleError = (error: GeolocationPositionError, phase: string) => {
+        let status: GeolocationResult['status'] = 'UNKNOWN_ERROR';
+        if (error.code === error.PERMISSION_DENIED) {
+          status = 'LOCATION_DENIED';
+          console.warn(`[GPS] GPS_PERMISSION_DENIED (${phase}): ${error.message}`);
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          status = 'LOCATION_UNAVAILABLE';
+          console.warn(`[GPS] GPS_POSITION_UNAVAILABLE (${phase}): ${error.message}`);
+        } else if (error.code === error.TIMEOUT) {
+          status = 'TIMEOUT';
+          console.warn(`[GPS] GPS_TIMEOUT (${phase}): ${error.message}`);
+        } else {
+          console.warn(`[GPS] GPS_UNKNOWN_ERROR (${phase}): ${error.message}`);
+        }
+        return { status, message: error.message };
+      };
+
+      // Phase 1: High accuracy, generous timeout, allow 30s cache
+      console.log('[GPS] GPS_REQUEST_STARTED: Phase 1 (highAccuracy=true, timeout=15000ms, maximumAge=30000ms)');
+      navigator.geolocation.getCurrentPosition(
+        handleSuccess,
+        (error) => {
+          const result = handleError(error, 'Phase1');
+          
+          // If permission denied, don't retry — it won't help
+          if (result.status === 'LOCATION_DENIED') {
+            resolve({
+              latitude: null, longitude: null, accuracy: null, timestamp: null,
+              status: result.status, error: result.message
+            });
+            return;
+          }
+
+          // Phase 2: Fallback to low accuracy (network/WiFi), shorter timeout
+          console.log('[GPS] GPS_REQUEST_STARTED: Phase 2 fallback (highAccuracy=false, timeout=10000ms, maximumAge=60000ms)');
+          navigator.geolocation.getCurrentPosition(
+            handleSuccess,
+            (error2) => {
+              const result2 = handleError(error2, 'Phase2');
+              resolve({
+                latitude: null, longitude: null, accuracy: null, timestamp: null,
+                status: result2.status, error: result2.message
+              });
+            },
+            { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+          );
         },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
       );
     });
   },
@@ -214,19 +257,30 @@ export const locationService = {
     // Ensure we do NOT store fake coordinates.
     // geo.latitude and geo.longitude are only from navigator.geolocation.
 
-    // 6. Create verification event
+    // 6. Today's open attendance (links location records to the attendance where the schema supports it)
+    const { data: openAttendance } = await supabase
+      .from('attendance')
+      .select('id')
+      .eq('employee_id', empId)
+      .eq('attendance_date', localDateStr)
+      .is('clock_out_at', null)
+      .maybeSingle() as any;
+    const attendanceId: string | null = openAttendance?.id ?? null;
+
+    // 7. Create verification event (records the explicit result, including DENIED / UNAVAILABLE / LOW_ACCURACY)
     const nowIso = new Date().toISOString();
     // @ts-ignore
     const { data: eventResult, error: insertErr } = await (supabase.from('location_verification_events') as any)
       .insert({
         employee_id: empId,
+        attendance_id: attendanceId,
         office_id: employeeData?.offices?.id || null,
         verification_type: type,
         result: result,
         latitude: geo.latitude,
         longitude: geo.longitude,
         accuracy_meters: geo.accuracy,
-        distance_from_office_meters: distance || null,
+        distance_from_office_meters: distance ?? null,
         geofence_radius_meters: radius,
         verified_at: nowIso,
         source: 'WEB',
@@ -253,39 +307,55 @@ export const locationService = {
       }).catch(e => console.error('[AUDIT]', e));
     });
 
-    // 7. Update Live Location (if GPS successful)
-    if (geo.status === 'SUCCESS') {
+    // 8. Update live location ONLY from a usable reading (INSIDE / OUTSIDE / WFH).
+    //    Denied, unavailable, low-accuracy or no-office readings never change the geofence status
+    //    and never refresh last_seen_at, so the admin sees an explicit stale state instead of a fake one.
+    const usableReading = geo.status === 'SUCCESS' && (result === 'INSIDE' || result === 'OUTSIDE' || result === 'WFH');
+    if (usableReading) {
       const locContext = isWfh ? 'WFH' : 'OFFICE';
-      
-      // UPSERT equivalent using RPC or just ignore error for now. 
-      // The schema has employee_id UNIQUE on live_locations.
-      // @ts-ignore
+      const readingStatus = result === 'WFH' ? 'WFH' : (result === 'OUTSIDE' ? 'OUTSIDE_GEOFENCE' : 'INSIDE_GEOFENCE');
+      const readingAtMs = geo.timestamp ?? Date.now();
+
       const { data: existingLiveLoc } = await supabase
         .from('employee_live_locations')
-        .select('id')
+        .select('id, location_status')
         .eq('employee_id', empId)
         .maybeSingle() as any;
-        
-      if (existingLiveLoc) {
-        const oldStatus = existingLiveLoc.location_status;
-        const newStatus = result === 'WFH' ? 'WFH' : (result === 'OUTSIDE' ? 'OUTSIDE_GEOFENCE' : 'INSIDE_GEOFENCE');
 
-        if (oldStatus && oldStatus !== newStatus) {
-          if (oldStatus === 'INSIDE_GEOFENCE' && newStatus === 'OUTSIDE_GEOFENCE') {
-            import('../audit/auditService').then(({ auditService }) => {
-              auditService.recordAuditLog({ action: 'GEOFENCE_LEFT', module: 'SECURITY', description: 'Employee left the geofenced area.' });
-            });
-            import('../attendance/breakService').then(({ breakService }) => {
-              breakService.handleAutoBreakTransition(empId, 'START', geo.timestamp ? new Date(geo.timestamp).toISOString() : nowIso).catch(console.error);
-            });
-          } else if (oldStatus === 'OUTSIDE_GEOFENCE' && newStatus === 'INSIDE_GEOFENCE') {
-            import('../audit/auditService').then(({ auditService }) => {
-              auditService.recordAuditLog({ action: 'GEOFENCE_RETURNED', module: 'SECURITY', description: 'Employee returned to the geofenced area.' });
-            });
-            import('../attendance/breakService').then(({ breakService }) => {
-              breakService.handleAutoBreakTransition(empId, 'END', geo.timestamp ? new Date(geo.timestamp).toISOString() : nowIso).catch(console.error);
-            });
-          }
+      const historyRow = {
+        employee_id: empId,
+        office_id: employeeData?.offices?.id || null,
+        latitude: geo.latitude,
+        longitude: geo.longitude,
+        accuracy_meters: geo.accuracy,
+        distance_from_office_meters: distance ?? null,
+        location_status: readingStatus,
+        location_context: locContext,
+        recorded_at: nowIso,
+        source: 'WEB'
+      };
+
+      if (existingLiveLoc) {
+        // Confirmed side comes from the stored live row; the stability filter debounces jitter.
+        const storedSide: GeofenceSide | null = existingLiveLoc.location_status === 'OUTSIDE_GEOFENCE' ? 'OUTSIDE' : existingLiveLoc.location_status === 'INSIDE_GEOFENCE' ? 'INSIDE' : null;
+        let newStatus = readingStatus;
+        let transition: { from: GeofenceSide | null; to: GeofenceSide; atMs: number } | null = null;
+
+        if (result === 'WFH') {
+          this._stability.delete(empId);
+        } else {
+          let state = this._stability.get(empId);
+          if (!state || state.confirmed !== storedSide) state = initialStability(storedSide);
+          const step = nextStability(state, {
+            ok: true,
+            distanceMeters: distance ?? null,
+            radiusMeters: radius,
+            accuracyMeters: geo.accuracy,
+            atMs: readingAtMs,
+          });
+          this._stability.set(empId, step.state);
+          transition = step.transition;
+          newStatus = step.state.confirmed === 'OUTSIDE' ? 'OUTSIDE_GEOFENCE' : step.state.confirmed === 'INSIDE' ? 'INSIDE_GEOFENCE' : existingLiveLoc.location_status;
         }
 
         // @ts-ignore
@@ -293,106 +363,85 @@ export const locationService = {
           latitude: geo.latitude,
           longitude: geo.longitude,
           accuracy_meters: geo.accuracy,
-          distance_from_office_meters: distance || null,
+          distance_from_office_meters: distance ?? null,
           location_status: newStatus,
           location_context: locContext,
+          attendance_id: attendanceId,
           last_seen_at: nowIso,
           source: 'WEB'
         }).eq('id', existingLiveLoc.id);
 
-        // Always write history record (the sender controls the interval)
-        const { error: histErr } = await (supabase.from('employee_location_history') as any).insert({
-          employee_id: empId,
-          office_id: employeeData?.offices?.id || null,
-          latitude: geo.latitude,
-          longitude: geo.longitude,
-          accuracy_meters: geo.accuracy,
-          distance_from_office_meters: distance || null,
-          location_status: newStatus,
-          location_context: locContext,
-          recorded_at: nowIso,
-          source: 'WEB'
-        });
+        const { error: histErr } = await (supabase.from('employee_location_history') as any).insert(historyRow);
         if (histErr) console.error('[HISTORY INSERT ERROR]', histErr);
 
-        if ((oldStatus === 'INSIDE_GEOFENCE' && newStatus === 'OUTSIDE_GEOFENCE') || (oldStatus === 'OUTSIDE_GEOFENCE' && newStatus === 'INSIDE_GEOFENCE')) {
-          const eventType = newStatus === 'INSIDE_GEOFENCE' ? 'ENTERED' : 'EXITED';
-          // Insert into geofence_events
+        if (transition && transition.from !== null) {
+          const transitionIso = new Date(transition.atMs).toISOString();
+          const eventType = transition.to === 'INSIDE' ? 'ENTERED' : 'EXITED';
           const { data: eventData } = await (supabase.from('geofence_events') as any).insert({
             employee_id: empId,
+            attendance_id: attendanceId,
             office_id: employeeData?.offices?.id || null,
             event_type: eventType,
             latitude: geo.latitude,
             longitude: geo.longitude,
-            distance_from_office_meters: distance || null,
+            distance_from_office_meters: distance ?? null,
             geofence_radius_meters: radius,
-            occurred_at: nowIso,
+            occurred_at: transitionIso,
             source: 'WEB'
           }).select('id').single();
+
+          import('../audit/auditService').then(({ auditService }) => {
+            auditService.recordAuditLog({
+              action: eventType === 'EXITED' ? 'GEOFENCE_LEFT' : 'GEOFENCE_RETURNED',
+              module: 'SECURITY',
+              description: eventType === 'EXITED' ? 'Employee left the geofenced area.' : 'Employee returned to the geofenced area.'
+            });
+          });
 
           if (eventData) {
             notificationService.notifyGeofenceEvent({
               event_type: eventType,
               employeeName: employeeData?.first_name || 'Employee',
               employeeCode: employeeData?.employee_code || 'Unknown',
-              distance: distance || null,
+              distance: distance ?? null,
               empId: empId,
               eventId: eventData.id
             });
           }
-          // Also insert into location_history
-          await (supabase.from('employee_location_history') as any).insert({
-             employee_id: empId,
-             office_id: employeeData?.offices?.id || null,
-             latitude: geo.latitude,
-             longitude: geo.longitude,
-             accuracy_meters: geo.accuracy,
-             distance_from_office_meters: distance || null,
-             location_status: newStatus,
-             location_context: locContext,
-             recorded_at: nowIso,
-             source: 'WEB'
-          });
+
+          // Automatic break uses the confirmed transition time (first reading on the new side)
+          const { breakService } = await import('../attendance/breakService');
+          await breakService.handleAutoBreakTransition(empId, transition.to === 'OUTSIDE' ? 'START' : 'END', transitionIso, { isWfhContext: isWfh })
+            .catch(e => console.error('[AUTO BREAK]', e));
         }
       } else {
         // @ts-ignore
         await (supabase.from('employee_live_locations') as any).insert({
           employee_id: empId,
+          attendance_id: attendanceId,
           office_id: employeeData?.offices?.id || null,
           latitude: geo.latitude,
           longitude: geo.longitude,
           accuracy_meters: geo.accuracy,
-          distance_from_office_meters: distance || null,
-          location_status: result === 'WFH' ? 'WFH' : (result === 'OUTSIDE' ? 'OUTSIDE_GEOFENCE' : 'INSIDE_GEOFENCE'),
+          distance_from_office_meters: distance ?? null,
+          location_status: readingStatus,
           location_context: locContext,
           is_tracking: false,
           last_seen_at: nowIso,
           source: 'WEB'
         });
 
-        // Insert initial history
-        await (supabase.from('employee_location_history') as any).insert({
-          employee_id: empId,
-          office_id: employeeData?.offices?.id || null,
-          latitude: geo.latitude,
-          longitude: geo.longitude,
-          accuracy_meters: geo.accuracy,
-          distance_from_office_meters: distance || null,
-          location_status: result === 'WFH' ? 'WFH' : (result === 'OUTSIDE' ? 'OUTSIDE_GEOFENCE' : 'INSIDE_GEOFENCE'),
-          location_context: locContext,
-          recorded_at: nowIso,
-          source: 'WEB'
-        });
+        await (supabase.from('employee_location_history') as any).insert(historyRow);
 
-        // Geofence event
         if (result === 'INSIDE') {
           const { data: eventData } = await (supabase.from('geofence_events') as any).insert({
             employee_id: empId,
+            attendance_id: attendanceId,
             office_id: employeeData?.offices?.id || null,
             event_type: 'ENTERED',
             latitude: geo.latitude,
             longitude: geo.longitude,
-            distance_from_office_meters: distance || null,
+            distance_from_office_meters: distance ?? null,
             geofence_radius_meters: radius,
             occurred_at: nowIso,
             source: 'WEB'
@@ -403,7 +452,7 @@ export const locationService = {
               event_type: 'ENTERED',
               employeeName: employeeData?.first_name || 'Employee',
               employeeCode: employeeData?.employee_code || 'Unknown',
-              distance: distance || null,
+              distance: distance ?? null,
               empId: empId,
               eventId: eventData.id
             });
@@ -433,6 +482,8 @@ export const locationService = {
   },
 
   _watchId: null as number | null,
+  // Per-employee geofence stability (debounce) state for this browser session
+  _stability: new Map<string, StabilityState>(),
   _lastUpdate: 0,
   _lastLat: null as number | null,
   _lastLon: null as number | null,

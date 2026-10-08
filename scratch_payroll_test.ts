@@ -1,6 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
 dotenv.config();
+if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
+  throw new Error('Set ADMIN_EMAIL and ADMIN_PASSWORD in your local .env (never commit them).');
+}
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
 const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || '';
@@ -9,7 +12,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function run() {
   console.log("Logging in as admin...");
-  await supabase.auth.signInWithPassword({ email: 'admin@gmail.com', password: 'admin@123' });
+  await supabase.auth.signInWithPassword({ email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD });
   
   const empId = '28d3e56c-cc78-4842-83df-09e91c2a031c';
   const shiftId = 'fa04986e-a27f-4059-b781-15871624db98';

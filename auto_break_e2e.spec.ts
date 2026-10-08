@@ -2,12 +2,13 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Auto Break Pause Logic', () => {
   test('should pause working timer when on auto break and resume after returning', async ({ page }) => {
-    // 1. Login
+    // 1. Login (credentials come from local env, never from source)
+    test.skip(!process.env.E2E_EMAIL || !process.env.E2E_PASSWORD, 'Set E2E_EMAIL and E2E_PASSWORD to run this test');
     await page.goto('http://localhost:5013/login');
     
     // Fill credentials
-    await page.fill('input[type="email"]', 'admin@gmail.com');
-    await page.fill('input[type="password"]', 'admin@123');
+    await page.fill('input[type="email"]', process.env.E2E_EMAIL!);
+    await page.fill('input[type="password"]', process.env.E2E_PASSWORD!);
     await page.click('button[type="submit"]');
 
     // Wait for dashboard to load

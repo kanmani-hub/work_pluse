@@ -94,11 +94,15 @@ export const reportService = {
     let totalWorkMinutes = 0;
     let presentDays = 0;
 
+    // All statuses that indicate the employee was physically present/working
+    const PRESENT_STATUSES = ['PRESENT', 'WORKING', 'COMPLETED', 'LATE', 'EARLY LOGOUT', 'ON_BREAK', 'HALF_DAY', 'AUTO LOGOUT'];
+
     let deptStats: any = {};
     let dailyStats: Record<string, { total: number; present: number }> = {};
     if (attendanceLogs) {
       for (const log of (attendanceLogs as any[])) {
-        if (log.status === 'PRESENT' || log.status === 'HALF_DAY') present++;
+        const statusUpper = (log.status || '').toUpperCase();
+        if (PRESENT_STATUSES.includes(statusUpper)) present++;
         if (log.late_minutes && log.late_minutes > 0) late++;
         if (log.early_logout_minutes && log.early_logout_minutes > 0) earlyLogout++;
         if (log.worked_hours) {
@@ -109,12 +113,12 @@ export const reportService = {
         const deptName = log.employees?.departments?.name || 'Unassigned';
         if (!deptStats[deptName]) deptStats[deptName] = { total: 0, present: 0 };
         deptStats[deptName].total++;
-        if (log.status === 'PRESENT' || log.status === 'HALF_DAY') deptStats[deptName].present++;
+        if (PRESENT_STATUSES.includes(statusUpper)) deptStats[deptName].present++;
         
         const dStr = log.attendance_date.split('T')[0];
         if (!dailyStats[dStr]) dailyStats[dStr] = { total: 0, present: 0 };
         dailyStats[dStr].total++;
-        if (log.status === 'PRESENT' || log.status === 'HALF_DAY') dailyStats[dStr].present++;
+        if (PRESENT_STATUSES.includes(statusUpper)) dailyStats[dStr].present++;
       }
     }
 

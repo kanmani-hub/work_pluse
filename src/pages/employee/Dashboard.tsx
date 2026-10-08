@@ -12,6 +12,7 @@ import { faceService } from '../../services/face/faceService';
 import { locationService } from '../../services/location/locationService';
 import { supabase } from '../../lib/supabase';
 import { qaTimeService } from '../../services/qa/qaTimeService';
+import { computeWorkTimer, findActiveBreak, resolveAllowedBreakMinutes } from '../../services/attendance/breakRules';
 
 type AttendanceState = 'not_clocked_in' | 'working' | 'on_break' | 'clocked_out';
 
@@ -35,6 +36,7 @@ const EmployeeDashboard: React.FC = () => {
   // Timers (Mock)
   const [workTime, setWorkTime] = useState(0); // in seconds
   const [breakTime, setBreakTime] = useState(0); // in seconds
+  const [todayBreaks, setTodayBreaks] = useState<any[]>([]);
 
   // Verification Flow States
   const [clockAction, setClockAction] = useState<'in'|'out'>('in');
@@ -77,11 +79,14 @@ const EmployeeDashboard: React.FC = () => {
     attendanceService.getCurrentEmployeeId().then(empId => {
       if (!empId) return;
       
-      (window as any)._testAutoBreak = async (action: 'START' | 'END', pastMins: number = 0) => {
-          const time = new Date(Date.now() - pastMins * 60000).toISOString();
-          await breakService.handleAutoBreakTransition(empId, action, time);
-          console.log(`Test Auto Break ${action} triggered at ${time}`);
-      };
+      // QA-only helper (VITE_QA_FAST_MODE): it can back-date breaks, so it must not exist in normal builds
+      if (qaTimeService.isEnabled) {
+        (window as any)._testAutoBreak = async (action: 'START' | 'END', pastMins: number = 0) => {
+            const time = new Date(Date.now() - pastMins * 60000).toISOString();
+            await breakService.handleAutoBreakTransition(empId, action, time);
+            console.log(`Test Auto Break ${action} triggered at ${time}`);
+        };
+      }
       
       const channel = supabase.channel('dashboard_attendance')
         .on(
@@ -100,11 +105,7 @@ const EmployeeDashboard: React.FC = () => {
   }, []);
 
   const getLocalDateStr = () => {
-    const d = new Date();
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
   };
 
   const fetchTodayAttendance = async () => {
@@ -117,8 +118,11 @@ const EmployeeDashboard: React.FC = () => {
     const { data, error } = await attendanceService.getTodayAttendance(dateStr);
     if (data) {
       setAttendanceRecord(data);
+      const { data: breaks } = await breakService.getAttendanceBreaks(data.id);
+      setTodayBreaks(breaks || []);
+      const hasActiveBreak = (breaks || []).some((b: any) => !b.ended_at);
       if (data.clock_in_at && !data.clock_out_at) {
-        if (data.status === 'ON_BREAK') {
+        if (data.status === 'ON_BREAK' || hasActiveBreak) {
           setAttendanceState('on_break');
         } else {
           setAttendanceState('working');
@@ -128,23 +132,9 @@ const EmployeeDashboard: React.FC = () => {
       }
       
       if (data.clock_in_at) {
-        const inTime = new Date(data.clock_in_at).getTime();
-        let currentWorkSecs = Math.floor((qaTimeService.now() - inTime) / 1000);
-        if (data.break_minutes) currentWorkSecs -= data.break_minutes * 60;
-        
-        if (data.status === 'ON_BREAK') {
-          const { data: breaks } = await breakService.getAttendanceBreaks(data.id);
-          if (breaks && breaks.length > 0) {
-            const activeBreak = breaks.find(b => b.ended_at === null);
-            if (activeBreak) {
-              const breakStart = new Date(activeBreak.started_at).getTime();
-              const currentBreakSecs = Math.floor((qaTimeService.now() - breakStart) / 1000);
-              setBreakTime(currentBreakSecs);
-              currentWorkSecs -= currentBreakSecs;
-            }
-          }
-        }
-        setWorkTime(Math.max(0, currentWorkSecs));
+        const timer = computeWorkTimer(data, breaks || [], qaTimeService.now());
+        setBreakTime(timer.activeBreakSeconds);
+        setWorkTime(timer.workSeconds);
       }
     } else {
       setAttendanceState('not_clocked_in');
@@ -153,14 +143,17 @@ const EmployeeDashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    if (attendanceState === 'working') {
-      interval = setInterval(() => setWorkTime(t => t + 1), qaTimeService.getRealToSimulatedInterval(1000));
-    } else if (attendanceState === 'on_break') {
-      interval = setInterval(() => setBreakTime(t => t + 1), qaTimeService.getRealToSimulatedInterval(1000));
-    }
+    // Recompute from stored timestamps: work pauses during an active break, break counts from started_at.
+    if (!attendanceRecord?.clock_in_at || attendanceRecord?.clock_out_at) return;
+    const tick = () => {
+      const timer = computeWorkTimer(attendanceRecord, todayBreaks, qaTimeService.now());
+      setWorkTime(timer.workSeconds);
+      setBreakTime(timer.activeBreakSeconds);
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [attendanceState]);
+  }, [attendanceRecord, todayBreaks]);
 
   const formatTime = (totalSeconds: number) => {
     const h = Math.floor(totalSeconds / 3600);
@@ -516,9 +509,9 @@ const EmployeeDashboard: React.FC = () => {
                     Break Duration: {formatTime(breakTime)}
                   </div>
                   <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                    {appSettings.maxBreakDurationMins ? `Max Allowed: ${appSettings.maxBreakDurationMins} mins` : ''}
+                    {(() => { const allowed = resolveAllowedBreakMinutes(attendanceRecord?.shift_template?.break_duration_minutes ?? currentShift?.break_duration_minutes, appSettings.breakDurationMins); return allowed !== null ? `Allowed: ${allowed} mins` : ''; })()}
                   </div>
-                  {attendanceRecord?.status === 'WFH' ? (
+                  {findActiveBreak(todayBreaks)?.break_type !== 'AUTO_GPS' ? (
                     <button onClick={confirmBreak} className="btn btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1.125rem', borderRadius: 'var(--radius-full)' }}>
                       End Break
                     </button>

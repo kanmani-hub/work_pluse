@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { KeyRound, AlertCircle, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { isAdminPortalRole } from '../lib/roles';
 
 const ChangePassword: React.FC = () => {
   const navigate = useNavigate();
@@ -46,7 +47,7 @@ const ChangePassword: React.FC = () => {
       } else {
         await checkAuth(); // Refresh context so ProtectedRoute sees the updated metadata
         // Redirect to appropriate dashboard based on role
-        if (role?.toUpperCase() === 'ADMIN' || role?.toUpperCase() === 'HR' || role === 'Admin' || role === 'HR/Staff') {
+        if (isAdminPortalRole(role)) {
           navigate('/admin/dashboard', { replace: true });
         } else {
           navigate('/employee/dashboard', { replace: true });

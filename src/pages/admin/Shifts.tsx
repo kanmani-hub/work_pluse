@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 
 import { shiftService } from '../../services/shifts/shiftService';
+import { validateShiftTimes, getShiftDurationMinutes, formatDurationMinutes } from '../../utils/shiftTime';
 
 const AdminShifts: React.FC = () => {
   const navigate = useNavigate();
@@ -89,6 +90,9 @@ const AdminShifts: React.FC = () => {
     setFormError('');
     if (!formData.name || !formData.code || !formData.start || !formData.end) return setFormError('Name, Code, Start Time, and End Time are required.');
     if (!formData.reqHours) return setFormError('Required hours must be configured.');
+
+    const timeError = validateShiftTimes(formData.start, formData.end, !!formData.overnight);
+    if (timeError) return setFormError(timeError);
     
     const startHour = parseInt(formData.start.split(':')[0], 10);
     let shiftType = 'GENERAL';
@@ -432,6 +436,14 @@ const AdminShifts: React.FC = () => {
                         {formData.overnight ? 'Overnight Shift (Ends on the following calendar day)' : 'Overnight Shift'}
                       </label>
                     </div>
+                    {formData.start && formData.end && (() => {
+                      const mins = getShiftDurationMinutes(formData.start, formData.end, !!formData.overnight);
+                      return (
+                        <div style={{ fontSize: '0.75rem', marginTop: '0.25rem', color: mins === null ? 'var(--danger)' : 'var(--text-secondary)' }}>
+                          {mins === null ? validateShiftTimes(formData.start, formData.end, !!formData.overnight) : `Shift length: ${formatDurationMinutes(mins)}`}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div>

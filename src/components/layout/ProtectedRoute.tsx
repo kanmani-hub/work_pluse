@@ -1,10 +1,11 @@
 import React from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { normalizeRole, isAdminPortalRole } from '../../lib/roles';
 import { Loader2 } from 'lucide-react';
 
 interface ProtectedRouteProps {
-  allowedRoles?: string[]; // e.g., ['Admin', 'HR/Staff', 'Employee']
+  allowedRoles?: string[]; // canonical roles from lib/roles, e.g. ['ADMIN', 'HR'] or ['EMPLOYEE']
 }
 
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles }) => {
@@ -32,13 +33,13 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles }) => {
 
   // Check role authorization if restricted
   if (allowedRoles && allowedRoles.length > 0) {
-    // Make checking case-insensitive to support DB roles (ADMIN, HR, EMPLOYEE)
-    const upperAllowed = allowedRoles.map(r => r.toUpperCase());
-    const upperRole = role?.toUpperCase() || '';
+    // Compare canonical roles (see lib/roles) so UI routing matches the database roles
+    const canonicalAllowed = allowedRoles.map(normalizeRole);
+    const canonicalRole = normalizeRole(role);
     
-    if (!role || !upperAllowed.includes(upperRole)) {
+    if (!canonicalRole || !canonicalAllowed.includes(canonicalRole)) {
       // Unauthorized, redirect appropriately based on what role they do have
-      if (upperRole === 'ADMIN' || upperRole === 'HR' || upperRole === 'HR/STAFF') {
+      if (isAdminPortalRole(canonicalRole)) {
         return <Navigate to="/admin/dashboard" replace />;
       }
       return <Navigate to="/employee/dashboard" replace />;

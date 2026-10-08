@@ -1,6 +1,9 @@
 const { chromium } = require('playwright');
 const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
+if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
+  throw new Error('Set ADMIN_EMAIL and ADMIN_PASSWORD in your local .env (never commit them).');
+}
 
 const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY);
 
@@ -20,7 +23,7 @@ const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SU
   });
 
   try {
-    const { data, error } = await supabase.auth.signInWithPassword({email: 'admin@gmail.com', password: 'admin@123'});
+    const { data, error } = await supabase.auth.signInWithPassword({email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD});
     const session = data.session;
     
     await page.goto('http://localhost:5173/');

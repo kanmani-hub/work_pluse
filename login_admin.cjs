@@ -4,48 +4,20 @@ const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY);
 
 async function loginAndRestore() {
+  if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
+    console.error('Set ADMIN_EMAIL and ADMIN_PASSWORD in your local .env (never commit them).');
+    return;
+  }
   try {
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: 'admin@gmail.com',
-      password: 'password' // usually default password for demo
+      email: process.env.ADMIN_EMAIL,
+      password: process.env.ADMIN_PASSWORD
     });
-
     if (error) {
-      // Maybe try password123 or admin123
-      console.log('Login failed with password:', error.message);
-      
-      const res2 = await supabase.auth.signInWithPassword({
-        email: 'admin@gmail.com',
-        password: 'password123'
-      });
-      if (res2.error) {
-         console.log('Login failed with password123:', res2.error.message);
-         
-         const res3 = await supabase.auth.signInWithPassword({
-            email: 'admin@gmail.com',
-            password: 'admin'
-         });
-         if (res3.error) {
-            console.log('Login failed with admin:', res3.error.message);
-            const res4 = await supabase.auth.signInWithPassword({
-               email: 'admin@gmail.com',
-               password: 'admin123'
-            });
-            if (res4.error) {
-               console.log('Could not guess admin password.');
-               return;
-            } else {
-               await restore(res4.data.user);
-            }
-         } else {
-            await restore(res3.data.user);
-         }
-      } else {
-        await restore(res2.data.user);
-      }
-    } else {
-      await restore(data.user);
+      console.log('Login failed:', error.message);
+      return;
     }
+    await restore(data.user);
   } catch (e) {
     console.error(e);
   }

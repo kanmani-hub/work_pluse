@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase';
+import { completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes } from './breakRules';
 import type { Database } from '../../types/database';
 import { auditService } from '../audit/auditService';
 import { qaTimeService } from '../qa/qaTimeService';
@@ -24,7 +25,8 @@ export const attendanceService = {
             last_name,
             employee_code,
             departments (name)
-          )
+          ),
+          shift_templates (name, start_time, end_time, crosses_midnight)
         `)
         .order('attendance_date', { ascending: false });
         
@@ -294,29 +296,18 @@ export const attendanceService = {
       .select('*')
       .eq('attendance_id', attendanceId) as any;
 
-    let actualBreakMins = 0;
-    if (breaks) {
-      breaks.forEach((b: any) => {
-         if (b.duration_minutes) {
-             actualBreakMins += b.duration_minutes;
-         } else if (b.started_at && b.ended_at) {
-             actualBreakMins += Math.floor((new Date(b.ended_at).getTime() - new Date(b.started_at).getTime()) / 60000);
-         }
-      });
-    }
+    // Sum of the actual stored break durations (same rule as the break service and timers)
+    const actualBreakMins = completedBreakMinutes(breaks || []);
 
     const requiredHours = existing.required_hours ?? 8;
-    const allowedBreakMins = existing.shift_template?.break_duration_minutes ?? globalSettings.app.breakDurationMins ?? 60;
+    const allowedBreakMins = resolveAllowedBreakMinutes(existing.shift_template?.break_duration_minutes, globalSettings.app.breakDurationMins);
     
     // Prevent clock out if any break is still active (fallback check)
     if (breaks?.some((b: any) => b.ended_at === null)) {
       return { data: null, error: new Error('Please end your active break before clocking out.') };
     }
 
-    let breakOverrunMins = 0;
-    if (globalSettings.payroll.enableBreakOverrunDetection) {
-      breakOverrunMins = Math.max(0, actualBreakMins - allowedBreakMins);
-    }
+    const breakOverrunMins = computeBreakOverrun(actualBreakMins, allowedBreakMins, globalSettings.payroll.enableBreakOverrunDetection);
 
     // Calculate effective working hours
     const actualBreakHrs = actualBreakMins / 60;

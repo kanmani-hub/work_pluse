@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase';
+import { canManagePayroll } from '../../lib/roles';
 import { salaryService } from './salaryService';
 import { auditService } from '../audit/auditService';
 import { notificationService } from '../notifications/notificationService';
@@ -86,15 +87,15 @@ export const payrollService = {
       console.log('[Payroll Auth Debug] user_id =', authData.user.id, 'resolved_role =', roleName);
     }
     
-    const validRoles = ['Admin', 'System Admin', 'HR Manager', 'HR'];
-    if (!validRoles.includes(roleName)) {
+    // Same rule as RLS on payroll tables: get_auth_role() IN ('ADMIN', 'HR')
+    if (!canManagePayroll(roleName)) {
       return { data: null, error: new Error('Access Denied: Admin/HR only') };
     }
 
     // Find all attendance records for this date
     const { data: attendanceRecords, error: attErr } = await supabase
       .from('attendance')
-      .select('employee_id, status, clock_in_at, clock_out_at, shift_template(name)')
+      .select('employee_id, status, clock_in_at, clock_out_at, shift_template:shift_template_id(name)')
       .eq('attendance_date', dateStr) as any;
 
     if (attErr || !attendanceRecords) {

@@ -3,14 +3,17 @@ import { breakService } from './src/services/attendance/breakService';
 import { supabase } from './src/lib/supabase';
 import { config } from 'dotenv';
 config();
+if (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD) {
+  throw new Error('Set ADMIN_EMAIL and ADMIN_PASSWORD in your local .env (never commit them).');
+}
 
 async function runTest() {
   console.log('--- STARTING AUTO BREAK E2E TEST ---');
 
   // 1. Authenticate as Admin
   const { data: { user }, error: authErr } = await supabase.auth.signInWithPassword({
-    email: 'admin@gmail.com',
-    password: 'admin@123'
+    email: process.env.ADMIN_EMAIL,
+    password: process.env.ADMIN_PASSWORD
   });
   if (authErr) throw authErr;
   

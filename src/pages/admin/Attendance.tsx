@@ -7,9 +7,9 @@ import {
   Camera, AlertCircle, CheckCircle2, AlertTriangle, 
   X, History, Activity, ShieldCheck, Map, Edit
 } from 'lucide-react';
-import { attendanceService } from '../../services/attendance/attendanceService';
+import { adminAttendanceService } from '../../services/attendance/adminAttendanceService';
+import { formatMinutes, formatTime } from '../../services/attendance/adminAttendanceRules';
 import { realtimeService } from '../../services/realtime/realtimeService';
-import { locationService } from '../../services/location/locationService';
 import { supabase } from '../../lib/supabase';
 import { useDepartments } from '../../hooks/useDepartments';
 
@@ -36,7 +36,8 @@ const AdminAttendance: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [liveStatus, setLiveStatus] = useState<any[]>([]);
   const [exceptions, setExceptions] = useState<any[]>([]);
-  const [totalEmployees, setTotalEmployees] = useState(0);
+  const [kpis, setKpis] = useState({ total: 0, present: 0, absent: 0, late: 0, onLeave: 0, wfh: 0, halfDay: 0, working: 0, notClockedIn: 0 });
+  const [isTodaySelected, setIsTodaySelected] = useState(true);
 
   const localDateStr = selectedDate.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
   const currentDateDisplay = selectedDate.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
@@ -51,86 +52,15 @@ const AdminAttendance: React.FC = () => {
   
   const fetchAttendance = async () => {
     setLoading(true);
-    
-    // 1. Fetch total employees
-    const { count, error: countErr } = await supabase.from('employees').select('*', { count: 'exact', head: true }).eq('status', 'ACTIVE');
-    if (countErr) console.error('Error fetching total employees:', countErr);
-    if (count !== null) setTotalEmployees(count);
-
-    // 2. Fetch Live Working status
-    const { data: liveData } = await locationService.getAllLiveLocations();
-    let workingEmployees = 0;
-    const mappedLiveStatus: any[] = [];
-    if (liveData) {
-      liveData.forEach((l: any) => {
-        if (l.location_context === 'WFH' || l.location_status === 'INSIDE_GEOFENCE' || l.location_status === 'OUTSIDE_GEOFENCE') {
-          workingEmployees++;
-          mappedLiveStatus.push({
-            emp: l.employees ? `${l.employees.first_name} ${l.employees.last_name}` : 'Unknown',
-            shift: 'Working',
-            status: 'Working',
-            since: new Date(l.last_seen_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            rawLastSeen: l.last_seen_at,
-            locationStatus: l.location_status,
-            distance: l.distance_from_office_meters
-          });
-        }
-      });
-      setLiveStatus(mappedLiveStatus);
-    }
-
-    // 3. Fetch historical attendance for selectedDate
-    const { data } = await attendanceService.getAllAttendance(localDateStr);
-    
-    // 4. Fetch Approved Leaves and WFH for selectedDate
-    // Not explicitly implemented with full queries for brevity, we'll map existing attendance.
-    // Assuming attendance table handles LEAVE and WFH records natively when present.
-    
-    if (data) {
-      const mapped = data.map((a: any) => ({
-        id: a.id,
-        employee_uuid: a.employee_id,
-        empId: a.employees?.employee_code || '-',
-        name: a.employees ? `${a.employees.first_name} ${a.employees.last_name}` : 'Unknown',
-        dept: a.employees?.departments?.name || '-',
-        department_id: a.employees?.department_id || null,
-        office: '-',
-        shift: a.shift_templates?.name || 'Shift Not Assigned',
-          shiftTime: a.shift_templates ? (a.shift_templates.start_time.substring(0, 5) + ' - ' + a.shift_templates.end_time.substring(0, 5)) : '-',
-          overnight: a.shift_templates?.is_overnight || false,
-        mode: a.work_mode || 'Office',
-        clockIn: a.clock_in_at ? new Date(a.clock_in_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--',
-        clockOut: a.clock_out_at ? new Date(a.clock_out_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--',
-        clockOutSource: a.clock_out_source || 'MANUAL',
-        workHours: '-',
-        breakMins: a.break_minutes || 0,
-        late: a.late_minutes ? `${a.late_minutes} min` : '-',
-        early: a.early_logout_minutes ? `${a.early_logout_minutes} min` : '-',
-        status: a.status || 'ABSENT',
-        locationVerified: true,
-        faceVerified: true,
-        missingOut: !a.clock_out_at && a.status !== 'WORKING',
-        autoLogout: a.is_auto_logged_out || false,
-        late_minutes: a.late_minutes || 0,
-        is_half_day: a.is_half_day || false,
-        timeline: [],
-        history: []
-      }));
-      setAttendanceData(mapped);
-
-      // Generate exceptions
-      const exps = [];
-      const lates = mapped.filter((a: any) => a.late_minutes > 0).length;
-      if (lates > 0) exps.push({ type: 'Late Arrival', count: lates });
-      
-      const missingOuts = mapped.filter((a: any) => a.missingOut).length;
-      if (missingOuts > 0) exps.push({ type: 'Missing Clock-out', count: missingOuts });
-      
-      const halfDays = mapped.filter((a: any) => a.is_half_day).length;
-      if (halfDays > 0) exps.push({ type: 'Half Day', count: halfDays });
-
-      setExceptions(exps);
-    }
+    // All values come from Supabase via adminAttendanceService (rules documented in adminAttendanceRules.ts)
+    const day = await adminAttendanceService.getDay(localDateStr);
+    if (day.errors.length) console.error('[Admin Attendance] Some data could not be loaded:', day.errors);
+    if (day.duplicateAttendance.length) console.warn('[Admin Attendance] Duplicate attendance records ignored:', day.duplicateAttendance);
+    setAttendanceData(day.rows);
+    setKpis(day.kpis);
+    setExceptions(day.exceptions);
+    setIsTodaySelected(day.isToday);
+    setLiveStatus(day.rows.filter((r: any) => r.currentlyWorking));
     setLoading(false);
   };
 
@@ -169,7 +99,11 @@ const AdminAttendance: React.FC = () => {
   const filteredData = attendanceData.filter(a => {
     const matchSearch = a.name.toLowerCase().includes(search.toLowerCase()) || a.empId.toLowerCase().includes(search.toLowerCase());
     const matchDept = filterDept === 'All' ? true : filterDept === 'Unassigned' ? a.department_id === null : a.department_id === filterDept;
-    const matchStatus = filterStatus === 'All' || a.status === filterStatus;
+    const matchStatus = filterStatus === 'All'
+      || (filterStatus === 'PRESENT' ? a.present
+        : filterStatus === 'LATE' ? a.late_minutes > 0
+        : filterStatus === 'EARLY LOGOUT' ? a.early_minutes > 0
+        : a.status === filterStatus);
     const matchMode = filterMode === 'All' || a.mode === filterMode;
     return matchSearch && matchDept && matchStatus && matchMode;
   });
@@ -177,6 +111,10 @@ const AdminAttendance: React.FC = () => {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'PRESENT': return <span className="badge badge-success">PRESENT</span>;
+      case 'WORKING': return <span className="badge badge-success">WORKING</span>;
+      case 'COMPLETED': return <span className="badge badge-success">COMPLETED</span>;
+      case 'ON_BREAK': return <span className="badge badge-warning">ON BREAK</span>;
+      case 'HALF_DAY': return <span className="badge badge-warning">HALF DAY</span>;
       case 'LATE': return <span className="badge badge-warning">LATE</span>;
       case 'EARLY LOGOUT': return <span className="badge badge-warning">EARLY LOGOUT</span>;
       case 'ABSENT': return <span className="badge badge-danger">ABSENT</span>;
@@ -187,16 +125,22 @@ const AdminAttendance: React.FC = () => {
   };
 
   
-  const kpis = {
-    total: totalEmployees,
-    present: attendanceData.filter(a => a.status === 'PRESENT' || a.status === 'LATE' || a.status === 'EARLY LOGOUT').length,
-    absent: attendanceData.filter(a => a.status === 'ABSENT').length,
-    late: attendanceData.filter(a => a.status === 'LATE').length,
-    onLeave: attendanceData.filter(a => a.status === 'LEAVE').length,
-    wfh: attendanceData.filter(a => a.mode === 'WFH').length,
-    halfDay: attendanceData.filter(a => a.is_half_day).length,
-    working: liveStatus.length
+
+  const locationLabel = (r: any) => {
+    switch (r.locationResult) {
+      case 'INSIDE': return 'Inside';
+      case 'OUTSIDE': return 'Outside';
+      case 'WFH': return 'WFH';
+      case 'LOW_ACCURACY': return 'Low accuracy';
+      case 'LOCATION_DENIED': return 'Denied';
+      case 'LOCATION_UNAVAILABLE': return 'Unavailable';
+      case 'NOT RECORDED': return 'Not recorded';
+      case null: case undefined: return '-';
+      default: return r.locationResult;
+    }
   };
+  const faceLabel = (r: any) => r.faceResult === 'SUCCESS' ? 'Verified' : r.faceResult === 'NOT REQUIRED' ? 'Not required' : r.faceResult === 'NOT VERIFIED' ? 'Not verified' : (r.faceResult || '-');
+  const verificationColor = (ok: boolean | null) => ok === true ? 'var(--success)' : ok === false ? 'var(--danger)' : 'var(--gray-500)';
 
   const handleViewDetail = async (a: any) => {
     try {
@@ -204,8 +148,8 @@ const AdminAttendance: React.FC = () => {
         .from('geofence_events')
         .select('*')
         .eq('employee_id', a.employee_uuid)
-        .gte('occurred_at', localDateStr + 'T00:00:00')
-        .lte('occurred_at', localDateStr + 'T23:59:59')
+        .gte('occurred_at', localDateStr + 'T00:00:00+05:30')
+        .lte('occurred_at', localDateStr + 'T23:59:59+05:30')
         .order('occurred_at', { ascending: true });
         
       let history: any[] = [];
@@ -227,25 +171,9 @@ const AdminAttendance: React.FC = () => {
     e.preventDefault();
     if (!cForm.reason) return;
     
-    // Mock update logic
-    if (detailDrawer) {
-      setDetailDrawer({
-        ...detailDrawer,
-        clockIn: cForm.clockIn,
-        clockOut: cForm.clockOut,
-        history: [
-          {
-            date: new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }),
-            action: `HR changed attendance`,
-            reason: cForm.reason,
-            by: 'Admin User'
-          },
-          ...detailDrawer.history
-        ]
-      });
-    }
+    // Corrections are not persisted yet: do not show edited values or a success message.
     setCorrectionModal(null);
-    showToast('Attendance updated successfully');
+    showToast('Correction NOT saved: attendance corrections are not available yet.');
   };
 
   return (
@@ -276,7 +204,7 @@ const AdminAttendance: React.FC = () => {
           <button className="btn btn-outline" onClick={handleToday} style={{ fontSize: '0.875rem' }}>Today</button>
 
           <button onClick={() => exportService.excel(filteredData.map(a => ({ empId: a.empId, name: a.name, dept: a.dept, shift: a.shiftTime, mode: a.mode, clockIn: a.clockIn, clockOut: a.clockOut, break: a.breakMins, status: a.status, late: a.late })), [{ header: 'Code', key: 'empId', width: 10 }, { header: 'Name', key: 'name', width: 22 }, { header: 'Department', key: 'dept', width: 16 }, { header: 'Shift Time', key: 'shift', width: 16 }, { header: 'Mode', key: 'mode', width: 10 }, { header: 'In', key: 'clockIn', width: 10 }, { header: 'Out', key: 'clockOut', width: 10 }, { header: 'Break (m)', key: 'break', width: 10 }, { header: 'Status', key: 'status', width: 12 }, { header: 'Late', key: 'late', width: 10 }], `attendance_export_${currentDateDisplay}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
-          <button onClick={() => { setLoading(true); setTimeout(() => setLoading(false), 500); }} className="icon-button  border"><RefreshCw size={16}/></button>
+          <button onClick={() => fetchAttendance()} className="icon-button  border"><RefreshCw size={16}/></button>
           <button className="icon-button  border"><Settings size={16}/></button>
         </div>
       </div>
@@ -346,33 +274,39 @@ const AdminAttendance: React.FC = () => {
           <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Activity size={18} color="var(--success)"/> Live Work Status
           </h3>
-          {liveStatus.length === 0 ? (
-            <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No live tracking data available.</div>
+          {!isTodaySelected ? (
+            <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Live work status is shown for today only.</div>
+          ) : liveStatus.length === 0 ? (
+            <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No employees are currently working.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {liveStatus.map((ls, i) => {
-                const diffMins = Math.floor((Date.now() - new Date(ls.rawLastSeen).getTime()) / 60000);
-                const isStale = diffMins > 5;
+                // Working status comes from attendance; location is shown separately and may be stale.
                 let locBadge = 'badge-gray';
-                let locText = 'LOCATION STALE';
-                if (!isStale) {
-                  if (ls.locationStatus === 'INSIDE_GEOFENCE') { locBadge = 'badge-success'; locText = 'Inside Office'; }
-                  else if (ls.locationStatus === 'OUTSIDE_GEOFENCE') { locBadge = 'badge-danger'; locText = 'Outside Office'; }
-                  else if (ls.locationStatus === 'WFH') { locBadge = 'badge-primary'; locText = 'WFH'; }
+                let locText = 'NO LOCATION TODAY';
+                if (ls.lastLocationAt) {
+                  if (ls.locationStale) { locText = 'LOCATION STALE'; }
+                  else if (ls.lastLocationStatus === 'INSIDE_GEOFENCE') { locBadge = 'badge-success'; locText = 'Inside Office'; }
+                  else if (ls.lastLocationStatus === 'OUTSIDE_GEOFENCE') { locBadge = 'badge-danger'; locText = 'Outside Office'; }
+                  else if (ls.lastLocationStatus === 'WFH') { locBadge = 'badge-primary'; locText = 'WFH'; }
+                  else if (ls.lastLocationStatus === 'LOW_ACCURACY') { locBadge = 'badge-warning'; locText = 'Low GPS Accuracy'; }
+                  else { locText = ls.lastLocationStatus || 'UNKNOWN'; }
                 }
 
                 return (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 0', borderBottom: i !== liveStatus.length-1 ? '1px solid var(--gray-200)' : 'none' }}>
+                  <div key={ls.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 0', borderBottom: i !== liveStatus.length-1 ? '1px solid var(--gray-200)' : 'none' }}>
                     <div>
-                      <div style={{ fontWeight: 500, fontSize: '0.875rem' }}>{ls.emp}</div>
+                      <div style={{ fontWeight: 500, fontSize: '0.875rem' }}>{ls.name}</div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                         <span className={`badge ${locBadge}`} style={{ fontSize: '0.65rem' }}>{locText}</span>
-                        {ls.distance !== null && !isStale && <span>Dist: {Math.round(ls.distance)}m</span>}
+                        {ls.lastLocationDistance !== null && ls.lastLocationAt && !ls.locationStale && <span>Dist: {Math.round(ls.lastLocationDistance)}m</span>}
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <span className={`badge ${ls.status === 'Working' ? 'badge-success' : 'badge-warning'}`}>{ls.status}</span>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Updated: {diffMins === 0 ? 'Just now' : `${diffMins}m ago`}</div>
+                      <span className="badge badge-success">Working</span>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                        {ls.lastLocationAt ? `Last location: ${formatTime(ls.lastLocationAt)} (${ls.lastLocationMinutesAgo === 0 ? 'just now' : `${ls.lastLocationMinutesAgo}m ago`})` : 'No location update today'}
+                      </div>
                     </div>
                   </div>
                 );
@@ -478,24 +412,27 @@ const AdminAttendance: React.FC = () => {
                       {a.missingOut && <div style={{ fontSize: '0.75rem', color: 'var(--danger)', fontWeight: 600 }}>MISSING</div>}
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      {a.clockOutSource === 'AUTO' ? <span className="badge badge-warning">AUTO</span> : <span className="badge badge-gray">MANUAL</span>}
+                      {a.clockOutSource === 'AUTO' ? <span className="badge badge-warning">AUTO</span> : a.clockOutSource === 'MANUAL' ? <span className="badge badge-gray">MANUAL</span> : <span style={{ color: 'var(--text-secondary)' }}>-</span>}
                     </td>
                     <td style={{ fontWeight: 600, color: 'var(--primary-700)', textAlign: 'center' }}>{a.workHours}</td>
                     <td style={{ color: 'var(--warning)', fontSize: '0.875rem', textAlign: 'center' }}>{a.late}</td>
                     <td style={{ color: 'var(--warning)', fontSize: '0.875rem', textAlign: 'center' }}>{a.early}</td>
                     <td style={{ textAlign: 'center' }}>{getStatusBadge(a.status)}</td>
                     <td style={{ textAlign: 'center' }}>
-                        {a.mode === 'Office' ? (
+                        {a.attendanceId ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem' }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: a.locationVerified ? 'var(--success)' : 'var(--danger)' }}>
-                            <MapPin size={12}/> Loc {a.locationVerified ? '✓' : '✕'}
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: verificationColor(a.locationVerified) }}>
+                            <MapPin size={12}/> Loc: {locationLabel(a)}
                           </span>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: a.faceVerified ? 'var(--success)' : a.faceVerified === false ? 'var(--danger)' : 'var(--gray-500)' }}>
-                            <Camera size={12}/> Face {a.faceVerified ? '✓' : a.faceVerified === false ? '✕' : 'Pending'}
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: verificationColor(a.faceVerified) }}>
+                            <Camera size={12}/> Face: {faceLabel(a)}{!a.faceRegistered && ' (not registered)'}
                           </span>
+                          {a.lastLocationAt && (
+                            <span style={{ color: 'var(--text-secondary)' }}>Last loc: {formatTime(a.lastLocationAt)}{a.locationStale ? ' (stale)' : ''}</span>
+                          )}
                         </div>
                       ) : (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>N/A</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{a.leave ? a.leave.type : 'N/A'}</span>
                       )}
                     </td>
                     <td style={{ textAlign: 'right' }}>
@@ -530,10 +467,10 @@ const AdminAttendance: React.FC = () => {
                   <div><span style={{ color: 'var(--text-secondary)' }}>Out:</span> {a.clockOut} {a.missingOut && <span style={{ color: 'var(--danger-600)', fontSize: '0.75rem', fontWeight: 600 }}>MISSING</span>}</div>
                   <div><span style={{ color: 'var(--text-secondary)' }}>Working:</span> <span style={{ fontWeight: 600 }}>{a.workHours}</span></div>
                   <div>
-                    {a.mode === 'Office' && (
-                      <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem' }}>
-                        <span style={{ color: a.locationVerified ? 'var(--success)' : 'var(--danger)' }}>Loc {a.locationVerified ? '✓' : '✕'}</span>
-                        <span style={{ color: a.faceVerified ? 'var(--success)' : 'var(--gray-500)' }}>Face {a.faceVerified ? '✓' : 'Pending'}</span>
+                    {a.attendanceId && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem' }}>
+                        <span style={{ color: verificationColor(a.locationVerified) }}>Loc: {locationLabel(a)}</span>
+                        <span style={{ color: verificationColor(a.faceVerified) }}>Face: {faceLabel(a)}</span>
                       </div>
                     )}
                   </div>
@@ -579,10 +516,10 @@ const AdminAttendance: React.FC = () => {
                 <h3 className="section-title">Shift Information</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
                   <div className="detail-item"><span className="detail-label">Assigned Shift</span><span className="detail-value">{detailDrawer.shift} Shift</span></div>
-                  <div className="detail-item"><span className="detail-label">Required Hours</span><span className="detail-value">8h 00m</span></div>
+                  <div className="detail-item"><span className="detail-label">Required Hours</span><span className="detail-value">{detailDrawer.requiredHours !== null ? formatMinutes(Number(detailDrawer.requiredHours) * 60) : '-'}</span></div>
                   <div className="detail-item"><span className="detail-label">Scheduled Start</span><span className="detail-value">{detailDrawer.shiftTime.split(' - ')[0]}</span></div>
                   <div className="detail-item"><span className="detail-label">Scheduled End</span><span className="detail-value">{detailDrawer.shiftTime.split(' - ')[1]} {detailDrawer.overnight && <span style={{ color: 'var(--purple-700)' }}>+1 Day</span>}</span></div>
-                  <div className="detail-item" style={{ gridColumn: '1 / -1' }}><span className="detail-label">Break Rule</span><span className="detail-value">60 mins (Flexible)</span></div>
+                  <div className="detail-item" style={{ gridColumn: '1 / -1' }}><span className="detail-label">Break Rule</span><span className="detail-value">{detailDrawer.breakRuleMins !== null ? `${detailDrawer.breakRuleMins} mins allowed` : '-'}</span></div>
                 </div>
               </div>
 
@@ -631,51 +568,30 @@ const AdminAttendance: React.FC = () => {
               )}
 
               {/* Verifications */}
-              {detailDrawer.mode === 'Office' && (
+              {detailDrawer.attendanceId && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
                   
-                  {/* Location */}
+                  {/* Location (clock-in verification from location_verification_events) */}
                   <div className="card" style={{ border: '1px solid var(--border-color)', boxShadow: 'none' }}>
                     <h4 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Map size={18}/> Location Verification</h4>
-                    {detailDrawer.locationVerified ? (
-                      <div>
-                        <div className="badge badge-success" style={{ marginBottom: '1rem' }}>VERIFIED</div>
-                        <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Assigned Office</span><span className="detail-value">{detailDrawer.office} Office</span></div>
-                        <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Distance</span><span className="detail-value">42 meters</span></div>
-                        <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Allowed Radius</span><span className="detail-value">100 meters</span></div>
-                        <div className="detail-item"><span className="detail-label">Status</span><span className="detail-value" style={{ color: 'var(--success)', fontWeight: 600 }}>INSIDE GEOFENCE</span></div>
-                      </div>
-                    ) : (
-                      <div>
-                        <div className="badge badge-danger" style={{ marginBottom: '1rem' }}>FAILED</div>
-                        <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Distance</span><span className="detail-value">240 meters</span></div>
-                        <div className="detail-item"><span className="detail-label">Status</span><span className="detail-value" style={{ color: 'var(--danger)', fontWeight: 600 }}>OUTSIDE GEOFENCE</span></div>
-                      </div>
-                    )}
+                    <div className={`badge ${detailDrawer.locationVerified === true ? 'badge-success' : detailDrawer.locationVerified === false ? 'badge-danger' : 'badge-gray'}`} style={{ marginBottom: '1rem' }}>{locationLabel(detailDrawer).toUpperCase()}</div>
+                    <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Assigned Office</span><span className="detail-value">{detailDrawer.office}</span></div>
+                    <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Distance</span><span className="detail-value">{detailDrawer.locationDistance !== null ? `${Math.round(detailDrawer.locationDistance)} meters` : '-'}</span></div>
+                    <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Allowed Radius</span><span className="detail-value">{detailDrawer.locationRadius !== null ? `${detailDrawer.locationRadius} meters` : '-'}</span></div>
+                    <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">GPS Accuracy</span><span className="detail-value">{detailDrawer.locationAccuracy !== null ? `±${Math.round(detailDrawer.locationAccuracy)} m` : '-'}</span></div>
+                    <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Checked At</span><span className="detail-value">{detailDrawer.locationVerifiedAt ? formatTime(detailDrawer.locationVerifiedAt) : '-'}</span></div>
+                    {detailDrawer.locationFailureReason && <div className="detail-item"><span className="detail-label">Reason</span><span className="detail-value">{detailDrawer.locationFailureReason}</span></div>}
+                    <div className="detail-item" style={{ marginTop: '0.5rem' }}><span className="detail-label">Last Known Location</span><span className="detail-value">{detailDrawer.lastLocationAt ? `${formatTime(detailDrawer.lastLocationAt)}${detailDrawer.locationStale ? ' (stale)' : ''}` : 'None on this date'}</span></div>
                   </div>
 
-                  {/* Face */}
+                  {/* Face (face_registrations / face_verification_events) */}
                   <div className="card" style={{ border: '1px solid var(--border-color)', boxShadow: 'none' }}>
                     <h4 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><ShieldCheck size={18}/> Face Verification</h4>
-                    {detailDrawer.faceVerified ? (
-                      <div>
-                        <div className="badge badge-success" style={{ marginBottom: '1rem' }}>VERIFIED</div>
-                        <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Face Registered</span><span className="detail-value">YES</span></div>
-                        <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Verified At</span><span className="detail-value">{detailDrawer.clockIn}</span></div>
-                        <div className="detail-item"><span className="detail-label">Attempts</span><span className="detail-value">1</span></div>
-                      </div>
-                    ) : detailDrawer.faceVerified === false ? (
-                      <div>
-                        <div className="badge badge-danger" style={{ marginBottom: '1rem' }}>FAILED</div>
-                        <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Face Registered</span><span className="detail-value">YES</span></div>
-                        <div className="detail-item"><span className="detail-label">Attempts</span><span className="detail-value">2</span></div>
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '1rem' }}>
-                        <div className="badge badge-warning">FACE NOT REGISTERED</div>
-                        <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Employee cannot complete biometric verification.</div>
-                        <button onClick={() => navigate('/admin/employees')} className="btn btn-outline" style={{ fontSize: '0.75rem' }}>Go to Employee Profile</button>
-                      </div>
+                    <div className={`badge ${detailDrawer.faceVerified === true ? 'badge-success' : detailDrawer.faceVerified === false ? 'badge-danger' : 'badge-gray'}`} style={{ marginBottom: '1rem' }}>{faceLabel(detailDrawer).toUpperCase()}</div>
+                    <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Face Registered</span><span className="detail-value">{detailDrawer.faceRegistered ? 'YES' : 'NO'}</span></div>
+                    <div className="detail-item" style={{ marginBottom: '0.5rem' }}><span className="detail-label">Verified At</span><span className="detail-value">{detailDrawer.faceVerifiedAt ? formatTime(detailDrawer.faceVerifiedAt) : '-'}</span></div>
+                    {!detailDrawer.faceRegistered && (
+                      <button onClick={() => navigate('/admin/face-registration')} className="btn btn-outline" style={{ fontSize: '0.75rem', marginTop: '0.5rem' }}>Go to Face Registration</button>
                     )}
                   </div>
                 </div>
@@ -685,22 +601,21 @@ const AdminAttendance: React.FC = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
                 <div>
                   <h3 className="section-title">Clock-In Event</h3>
-                  {detailDrawer.clockIn !== '—' ? (
+                  {detailDrawer.clockInAt ? (
                     <div style={{ backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)', fontSize: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                       <div><span style={{ color: 'var(--text-secondary)', display: 'inline-block', width: '80px' }}>Time:</span> {detailDrawer.clockIn}</div>
-                      <div><span style={{ color: 'var(--text-secondary)', display: 'inline-block', width: '80px' }}>Location:</span> {detailDrawer.locationVerified ? 'Verified' : 'Bypassed'}</div>
-                      <div><span style={{ color: 'var(--text-secondary)', display: 'inline-block', width: '80px' }}>Face:</span> {detailDrawer.faceVerified ? 'Verified' : 'Bypassed'}</div>
-                      <div><span style={{ color: 'var(--text-secondary)', display: 'inline-block', width: '80px' }}>Source:</span> Employee App</div>
+                      <div><span style={{ color: 'var(--text-secondary)', display: 'inline-block', width: '80px' }}>Location:</span> {locationLabel(detailDrawer)}</div>
+                      <div><span style={{ color: 'var(--text-secondary)', display: 'inline-block', width: '80px' }}>Face:</span> {faceLabel(detailDrawer)}</div>
+                      <div><span style={{ color: 'var(--text-secondary)', display: 'inline-block', width: '80px' }}>Source:</span> {detailDrawer.clockInSource || '-'}</div>
                     </div>
                   ) : <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>No record</div>}
                 </div>
                 <div>
                   <h3 className="section-title">Clock-Out Event</h3>
-                  {detailDrawer.clockOut !== '—' ? (
+                  {detailDrawer.clockOutAt ? (
                     <div style={{ backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)', fontSize: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                       <div><span style={{ color: 'var(--text-secondary)', display: 'inline-block', width: '80px' }}>Time:</span> {detailDrawer.clockOut}</div>
-                      <div><span style={{ color: 'var(--text-secondary)', display: 'inline-block', width: '80px' }}>Location:</span> {detailDrawer.locationVerified ? 'Verified' : 'Bypassed'}</div>
-                      <div><span style={{ color: 'var(--text-secondary)', display: 'inline-block', width: '80px' }}>Face:</span> {detailDrawer.faceVerified ? 'Verified' : 'Bypassed'}</div>
+                      <div><span style={{ color: 'var(--text-secondary)', display: 'inline-block', width: '80px' }}>Location:</span> Not linked to clock-out</div>
                       <div><span style={{ color: 'var(--text-secondary)', display: 'inline-block', width: '80px' }}>Type:</span> {detailDrawer.autoLogout ? 'AUTO' : 'MANUAL'}</div>
                     </div>
                   ) : detailDrawer.autoLogout ? (

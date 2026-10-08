@@ -4,6 +4,7 @@ import AppLayout from './components/layout/AppLayout';
 import ErrorBoundary from './ErrorBoundary';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import { AuthProvider } from './context/AuthContext';
+import { ROLES, ADMIN_PORTAL_ROLES } from './lib/roles';
 import { QaControlPanel } from './components/QaControlPanel';
 import './App.css';
 import './responsive.css';
@@ -58,7 +59,7 @@ function App() {
             <Route path="/" element={<Navigate to="/login" replace />} />
             
             {/* Admin/HR Routes (Prefix /admin) */}
-            <Route element={<ProtectedRoute allowedRoles={['Admin', 'HR', 'HR/Staff']} />}>
+            <Route element={<ProtectedRoute allowedRoles={[...ADMIN_PORTAL_ROLES]} />}>
               <Route path="/admin" element={<AppLayout role="admin" />}>
                 <Route index element={<Navigate to="dashboard" replace />} />
                 <Route path="dashboard" element={<AdminDashboard />} />
@@ -83,7 +84,7 @@ function App() {
             </Route>
 
             {/* Employee Routes */}
-            <Route element={<ProtectedRoute allowedRoles={['Employee']} />}>
+            <Route element={<ProtectedRoute allowedRoles={[ROLES.EMPLOYEE]} />}>
               <Route path="/employee" element={<AppLayout role="employee" />}>
                 <Route index element={<Navigate to="/employee/dashboard" replace />} />
                 <Route path="dashboard" element={<EmployeeDashboard />} />

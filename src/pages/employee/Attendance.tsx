@@ -10,6 +10,7 @@ import { breakService } from '../../services/attendance/breakService';
 import { faceService } from '../../services/face/faceService';
 import { locationService } from '../../services/location/locationService';
 import { qaTimeService } from '../../services/qa/qaTimeService';
+import { computeWorkTimer } from '../../services/attendance/breakRules';
 import { supabase } from '../../lib/supabase';
 
 const SearchIcon = ({size, color}: any) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
@@ -29,6 +30,8 @@ const EmployeeAttendance: React.FC = () => {
   const [currentShift, setCurrentShift] = useState<any>(null);
   const [summaryStats, setSummaryStats] = useState({ workingDays: 0, present: 0, late: 0, halfDay: 0, leave: 0, wfh: 0, totalHours: '0h 0m' });
   const [effectiveTime, setEffectiveTime] = useState(0);
+  const [breakSeconds, setBreakSeconds] = useState(0);
+  const [activeBreakInfo, setActiveBreakInfo] = useState<any>(null);
 
   const [filterMode, setFilterMode] = useState('All');
   const [filterStatus, setFilterStatus] = useState('All');
@@ -59,7 +62,7 @@ const EmployeeAttendance: React.FC = () => {
 
     currentMonthHistory.forEach(row => {
       workingDays++;
-      if (row.status === 'PRESENT' || row.status === 'COMPLETED' || row.status === 'WORKING' || row.status === 'ON_BREAK') present++;
+      if (['PRESENT', 'COMPLETED', 'WORKING', 'ON_BREAK', 'LATE', 'EARLY LOGOUT', 'HALF_DAY'].includes(row.status?.toUpperCase())) present++;
       if (row.lateMin > 0) {
         late++;
         totalLateMins += row.lateMin;
@@ -128,12 +131,22 @@ const EmployeeAttendance: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    if (todayAttendance?.status === 'WORKING') {
-      interval = setInterval(() => setEffectiveTime(t => t + 1), qaTimeService.getRealToSimulatedInterval(1000));
+    // Work = elapsed - completed breaks - active break, recomputed from stored timestamps.
+    // Works for WORKING and LATE, pauses while a break is active, and survives a page refresh.
+    if (!todayAttendance?.clock_in_at || todayAttendance?.clock_out_at) {
+      setActiveBreakInfo(null);
+      return;
     }
+    const tick = () => {
+      const timer = computeWorkTimer(todayAttendance, todayBreaks, qaTimeService.now());
+      setEffectiveTime(timer.workSeconds);
+      setBreakSeconds(timer.breakSeconds);
+      setActiveBreakInfo(timer.activeBreak ? { ...timer.activeBreak, seconds: timer.activeBreakSeconds } : null);
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [todayAttendance?.status]);
+  }, [todayAttendance, todayBreaks]);
 
   const stopCamera = () => {
     if (streamRef.current) {
@@ -251,7 +264,7 @@ const EmployeeAttendance: React.FC = () => {
 
       setHistory(mapped);
       
-      const localDateStr = new Date().toISOString().split('T')[0];
+      const localDateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
       const today = mapped.find((m: any) => m.rawDate === localDateStr);
       setTodayAttendance(today || null);
 
@@ -260,27 +273,18 @@ const EmployeeAttendance: React.FC = () => {
         const { data: breaks } = await breakService.getAttendanceBreaks(today.id);
         
         if (today.clock_in_at) {
-           const inTime = new Date(today.clock_in_at).getTime();
-           currentWorkSecs = Math.floor((qaTimeService.now() - inTime) / 1000);
-           if (today.break_minutes) currentWorkSecs -= today.break_minutes * 60;
-           
-           if (today.status === 'ON_BREAK' && breaks && breaks.length > 0) {
-             const activeBreak = breaks.find(b => b.ended_at === null);
-             if (activeBreak) {
-               const breakStart = new Date(activeBreak.started_at).getTime();
-               const currentBreakSecs = Math.floor((qaTimeService.now() - breakStart) / 1000);
-               currentWorkSecs -= currentBreakSecs;
-             }
-           }
-           setEffectiveTime(Math.max(0, currentWorkSecs));
+           const timer = computeWorkTimer(today, breaks || [], qaTimeService.now());
+           currentWorkSecs = timer.workSeconds;
+           setEffectiveTime(currentWorkSecs);
+           setBreakSeconds(timer.breakSeconds);
         }
 
         if (breaks) {
            setTodayBreaks(breaks);
         }
 
-        // Resume Live Tracking if working
-        if (today.status === 'WORKING' || today.status === 'ON_BREAK') {
+        // Resume Live Tracking while clocked in (WORKING, LATE or ON_BREAK)
+        if (today.clock_in_at && !today.clock_out_at) {
            locationService.startLiveTracking();
         }
       } else {
@@ -298,7 +302,16 @@ const EmployeeAttendance: React.FC = () => {
     setLocationVerification(locResult);
     
     if (appSettings?.requireGeolocation && locResult.result !== 'INSIDE') {
-      alert("You are outside the office location. " + (action === 'CLOCK_IN' ? "Clock In" : "Face Registration") + " is unavailable.");
+      const msg = locResult.result === 'LOCATION_UNAVAILABLE' // includes GPS timeouts (mapped by locationService)
+        ? 'Unable to determine your location. Please ensure GPS is enabled and try again.'
+        : locResult.result === 'LOCATION_DENIED'
+        ? 'Location permission denied. Please enable location access in your browser settings.'
+        : locResult.result === 'LOW_ACCURACY'
+        ? 'GPS accuracy is too low. Please move to an open area and retry.'
+        : locResult.result === 'OUTSIDE'
+        ? 'You are outside the office geofence. Clock In requires you to be at the office location.'
+        : `Location verification failed: ${locResult.result}`;
+      alert(msg);
       setClockInFlowStep(0);
       return;
     }
@@ -330,7 +343,16 @@ const EmployeeAttendance: React.FC = () => {
       setLocationVerification(locResult);
       
       if (appSettings?.requireGeolocation && locResult.result !== 'INSIDE') {
-        alert("You are outside the office location. Clock In is unavailable.");
+        const msg = locResult.result === 'LOCATION_UNAVAILABLE' // includes GPS timeouts (mapped by locationService)
+          ? 'Unable to determine your location. Please ensure GPS is enabled and try again.'
+          : locResult.result === 'LOCATION_DENIED'
+          ? 'Location permission denied. Please enable location access in your browser settings.'
+          : locResult.result === 'LOW_ACCURACY'
+          ? 'GPS accuracy is too low. Please move to an open area and retry.'
+          : locResult.result === 'OUTSIDE'
+          ? 'You are outside the office geofence. Clock In requires you to be at the office location.'
+          : `Location verification failed: ${locResult.result}`;
+        alert(msg);
         setClockInFlowStep(0);
         return;
       }
@@ -645,7 +667,7 @@ const EmployeeAttendance: React.FC = () => {
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Break</div>
-                <div style={{ fontWeight: 600, fontSize: '1.125rem' }}>{todayAttendance.break}</div>
+                <div style={{ fontWeight: 600, fontSize: '1.125rem' }}>{todayAttendance.clock_out_at ? todayAttendance.break : formatTimeSeconds(breakSeconds)}</div>
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Clock Out</div>
@@ -661,7 +683,7 @@ const EmployeeAttendance: React.FC = () => {
             </div>
   
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem', justifyContent: 'center' }}>
-              {todayAttendance.originalStatus === 'WORKING' && (
+              {todayAttendance.clock_in_at && !todayAttendance.clock_out_at && !activeBreakInfo && todayAttendance.originalStatus !== 'ON_BREAK' && (
                 <>
                   {appSettings?.breakEnabled && (
                     <button onClick={() => handleAction('startBreak')} className="btn btn-warning" style={{ flex: 1 }}>Start Break</button>
@@ -669,13 +691,21 @@ const EmployeeAttendance: React.FC = () => {
                   <button onClick={handleClockOut} className="btn btn-danger" style={{ flex: 1 }}>Clock Out</button>
                 </>
               )}
-              {todayAttendance.originalStatus === 'ON_BREAK' && (
-                <>
-                  {appSettings?.breakEnabled && (
-                    <button onClick={() => handleAction('endBreak')} className="btn btn-primary" style={{ flex: 1 }}>End Break</button>
+              {todayAttendance.clock_in_at && !todayAttendance.clock_out_at && (activeBreakInfo || todayAttendance.originalStatus === 'ON_BREAK') && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', width: '100%', textAlign: 'center' }}>
+                  <div className="badge badge-warning" style={{ alignSelf: 'center' }}>ON BREAK</div>
+                  <div style={{ fontSize: '0.875rem' }}>Break Duration: <strong>{formatTimeSeconds(activeBreakInfo?.seconds ?? 0)}</strong></div>
+                  {activeBreakInfo?.break_type === 'AUTO_GPS' ? (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Automatic break: you are outside the office. It ends when you return inside. Clock-out is available after the break ends.</div>
+                  ) : (
+                    <>
+                      {appSettings?.breakEnabled && (
+                        <button onClick={() => handleAction('endBreak')} className="btn btn-primary" style={{ flex: 1 }}>End Break</button>
+                      )}
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>End your break before clocking out.</div>
+                    </>
                   )}
-                  <button onClick={handleClockOut} className="btn btn-danger" style={{ flex: 1 }}>Clock Out</button>
-                </>
+                </div>
               )}
             </div>
           </div>

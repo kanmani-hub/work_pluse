@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Activity, Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { isAdminPortalRole } from '../lib/roles';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
@@ -26,7 +27,7 @@ const Login: React.FC = () => {
       const from = (location.state as any)?.from?.pathname;
       if (from && from !== '/login') {
         navigate(from, { replace: true });
-      } else if (role.toUpperCase() === 'ADMIN' || role.toUpperCase() === 'HR' || role === 'Admin' || role === 'HR/Staff') {
+      } else if (isAdminPortalRole(role)) {
         navigate('/admin/dashboard', { replace: true });
       } else {
         navigate('/employee/dashboard', { replace: true });
@@ -95,7 +96,7 @@ const Login: React.FC = () => {
         loginEmail = resolvedEmail;
       }
 
-      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+      const { error: signInError } = await supabase.auth.signInWithPassword({
         email: loginEmail,
         password,
       });
@@ -110,40 +111,6 @@ const Login: React.FC = () => {
             description: `User logged in: ${loginEmail}`
           }).catch((e: any) => console.error('[AUDIT]', e));
         });
-
-        if (signInData?.user?.email === 'admin@gmail.com') {
-          // Auto-restore admin profile if missing (Note: Requires RLS bypass or existing admin role)
-          try {
-          const userId = signInData.user.id;
-          
-          // First try to get the ADMIN role_id
-          const { data: roleData } = await supabase.from('roles').select('id').eq('name', 'ADMIN').single();
-          const roleId = (roleData as any)?.id;
-          if (roleId) {
-            await supabase.from('employees').upsert({
-              id: userId,
-              employee_code: 'ADMIN-001',
-              first_name: 'System',
-              last_name: 'Admin',
-              email: 'admin@gmail.com',
-              phone: '0000000000',
-              designation: 'System Administrator',
-              status: 'ACTIVE',
-              role_id: roleId
-            } as any, { onConflict: 'id' } as any);
-            
-            await supabase.from('profiles').upsert({
-              id: userId,
-              auth_user_id: userId,
-              employee_id: userId,
-              role_id: roleId,
-              is_active: true
-            } as any, { onConflict: 'id' } as any);
-          }
-        } catch (e) {
-          console.error('Failed to auto-restore admin profile from client (RLS likely blocks this). Please run the SQL migration.', e);
-        }
-      }
       }
       // If successful, the AuthContext listener will detect SIGNED_IN and handle navigation
     } catch (err) {
