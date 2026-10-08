@@ -8,7 +8,8 @@ import {
   X, History, Activity, ShieldCheck, Map, Edit
 } from 'lucide-react';
 import { adminAttendanceService } from '../../services/attendance/adminAttendanceService';
-import { formatMinutes, formatTime } from '../../services/attendance/adminAttendanceRules';
+import { formatMinutes, formatTime, KPI_LABELS, type AttendanceKpiFilter } from '../../services/attendance/adminAttendanceRules';
+import KpiDetailModal from '../../components/attendance/KpiDetailModal';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { supabase } from '../../lib/supabase';
 import { useDepartments } from '../../hooks/useDepartments';
@@ -25,6 +26,8 @@ const AdminAttendance: React.FC = () => {
   const [filterDept, setFilterDept] = useState('All');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterMode, setFilterMode] = useState('All');
+  // KPI card → detail modal (filters with the same KPI_PREDICATES as the counts)
+  const [kpiModal, setKpiModal] = useState<AttendanceKpiFilter | null>(null);
   const { departments, loading: deptLoading } = useDepartments();
   
   // Drawers & Modals
@@ -94,6 +97,20 @@ const AdminAttendance: React.FC = () => {
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(''), 3000);
+  };
+
+  const kpiCardProps = (k: AttendanceKpiFilter) => ({
+    role: 'button' as const,
+    tabIndex: 0,
+    'aria-haspopup': 'dialog' as const,
+    title: `View ${KPI_LABELS[k]} details`,
+    onClick: () => setKpiModal(k),
+    onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setKpiModal(k); } },
+  });
+  const kpiCardClass = (base: string, k: AttendanceKpiFilter) => `${base} kpi-clickable${kpiModal === k ? ' kpi-active' : ''}`;
+  const kpiCountFor: Record<AttendanceKpiFilter, number> = {
+    ALL: kpis.total, PRESENT: kpis.present, ABSENT: kpis.absent, LATE: kpis.late,
+    ON_LEAVE: kpis.onLeave, WFH: kpis.wfh, HALF_DAY: kpis.halfDay, CURRENTLY_WORKING: kpis.working,
   };
 
   const filteredData = attendanceData.filter(a => {
@@ -215,39 +232,49 @@ const AdminAttendance: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="tracking-kpi-card">
+          <div className={kpiCardClass('tracking-kpi-card', 'ALL')} {...kpiCardProps('ALL')}>
             <div className="sc-val">{kpis.total}</div>
             <div className="sc-title">Total Employees</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('PRESENT')}>
+          <div className={kpiCardClass('summary-card-small', 'PRESENT')} {...kpiCardProps('PRESENT')}>
             <div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.present}</div>
             <div className="sc-title">Present</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('ABSENT')}>
+          <div className={kpiCardClass('summary-card-small', 'ABSENT')} {...kpiCardProps('ABSENT')}>
             <div className="sc-val" style={{ color: 'var(--danger)' }}>{kpis.absent}</div>
             <div className="sc-title">Absent</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('LATE')}>
+          <div className={kpiCardClass('summary-card-small', 'LATE')} {...kpiCardProps('LATE')}>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.late}</div>
             <div className="sc-title">Late</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => setFilterStatus('LEAVE')}>
+          <div className={kpiCardClass('summary-card-small', 'ON_LEAVE')} {...kpiCardProps('ON_LEAVE')}>
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.onLeave}</div>
             <div className="sc-title">On Leave</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => setFilterMode('WFH')}>
+          <div className={kpiCardClass('summary-card-small', 'WFH')} {...kpiCardProps('WFH')}>
             <div className="sc-val" style={{ color: 'var(--purple-700)' }}>{kpis.wfh}</div>
             <div className="sc-title">WFH</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className={kpiCardClass('tracking-kpi-card', 'HALF_DAY')} {...kpiCardProps('HALF_DAY')}>
             <div className="sc-val">{kpis.halfDay}</div>
             <div className="sc-title">Half Day</div>
           </div>
-          <div className="tracking-kpi-card" style={{ backgroundColor: 'var(--success-50)', borderColor: 'var(--success-200)' }}>
+          <div className={kpiCardClass('tracking-kpi-card', 'CURRENTLY_WORKING')} {...kpiCardProps('CURRENTLY_WORKING')} style={{ backgroundColor: 'var(--success-50)', borderColor: 'var(--success-200)' }}>
             <div className="sc-val" style={{ color: 'var(--success-800)' }}>{kpis.working}</div>
             <div className="sc-title" style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}><Activity size={12}/> Currently Working</div>
           </div>
         </div>
+      )}
+
+      {kpiModal && !loading && (
+        <KpiDetailModal
+          kpi={kpiModal}
+          rows={attendanceData}
+          expectedCount={kpiCountFor[kpiModal]}
+          dateLabel={currentDateDisplay}
+          onClose={() => setKpiModal(null)}
+        />
       )}
 
       {/* Exceptions & Live Status Row */}
@@ -397,6 +424,7 @@ const AdminAttendance: React.FC = () => {
                     <td>
                       <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{a.name}</div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{a.empId}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{a.dept} • {a.office}</div>
                     </td>
                     <td>
                       <div style={{ fontWeight: 500 }}>{a.shift}</div>
@@ -417,7 +445,14 @@ const AdminAttendance: React.FC = () => {
                     <td style={{ fontWeight: 600, color: 'var(--primary-700)', textAlign: 'center' }}>{a.workHours}</td>
                     <td style={{ color: 'var(--warning)', fontSize: '0.875rem', textAlign: 'center' }}>{a.late}</td>
                     <td style={{ color: 'var(--warning)', fontSize: '0.875rem', textAlign: 'center' }}>{a.early}</td>
-                    <td style={{ textAlign: 'center' }}>{getStatusBadge(a.status)}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      {getStatusBadge(a.status)}
+                      {a.is_half_day && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                          {a.leave?.isHalfDay ? `Half-day leave${a.leave.halfDayType ? ` (${a.leave.halfDayType.replace('_', ' ').toLowerCase()})` : ''}` : 'Half day: under 50% of required hours'}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ textAlign: 'center' }}>
                         {a.attendanceId ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem' }}>

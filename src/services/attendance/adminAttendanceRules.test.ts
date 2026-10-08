@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildAdminAttendanceDay, companyDateTime } from './adminAttendanceRules';
+import { buildAdminAttendanceDay, companyDateTime, KPI_PREDICATES, type AttendanceKpiFilter } from './adminAttendanceRules';
 
 // In-memory fixtures only (nothing is written to the database).
 const general = { name: 'General Shift', start_time: '10:00:00', end_time: '19:30:00', crosses_midnight: false, break_duration_minutes: 80, required_hours: 9.5 };
@@ -89,5 +89,25 @@ describe('admin attendance rules', () => {
     const d = buildAdminAttendanceDay(base({ attendance: [att('a1', 'e1', '09:55', null), att('a1b', 'e1', '10:05', null)] }));
     expect(d.rows.filter(r => r.empId === 'EMP001').length).toBe(1);
     expect(d.duplicateAttendance).toEqual(['a1b']);
+  });
+
+  it('every KPI count equals the number of rows its card filter shows (mixed day)', () => {
+    const d = buildAdminAttendanceDay(base({
+      attendance: [
+        att('a1', 'e1', '09:55', null),
+        att('a2', 'e2', '10:40', null, { status: 'LATE', late_minutes: 40 }),
+        att('a3', 'e3', '09:50', '11:30', { worked_hours: 1.5, is_half_day: true, status: 'HALF_DAY' }),
+        att('a5', 'e5', '09:58', null),
+        att('aA', 'admin', '09:00', null), // ADMIN clocked in: shown, but not in Total
+      ],
+      leaves: [{ employee_id: 'e4', start_date: '2026-10-07', end_date: '2026-10-07', status: 'APPROVED', is_half_day: false, leave_types: { name: 'Sick Leave' } }],
+      wfh: [{ employee_id: 'e5', request_date: '2026-10-07', status: 'APPROVED' }],
+    }));
+    const keyOf: Record<AttendanceKpiFilter, keyof typeof d.kpis> = { ALL: 'total', PRESENT: 'present', ABSENT: 'absent', LATE: 'late', ON_LEAVE: 'onLeave', WFH: 'wfh', HALF_DAY: 'halfDay', CURRENTLY_WORKING: 'working' };
+    for (const k of Object.keys(keyOf) as AttendanceKpiFilter[]) {
+      expect(d.rows.filter(KPI_PREDICATES[k]).length).toBe(d.kpis[keyOf[k]]);
+    }
+    expect(d.kpis).toEqual({ total: 5, present: 5, absent: 0, late: 1, onLeave: 1, wfh: 1, halfDay: 1, working: 4, notClockedIn: 0 });
+    expect(d.rows.filter(KPI_PREDICATES.ALL).map(r => r.empId).sort()).toEqual(['EMP001', 'EMP002', 'EMP003', 'EMP004', 'EMP005']);
   });
 });

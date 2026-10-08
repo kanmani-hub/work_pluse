@@ -18,7 +18,8 @@
  */
 import { normalizeRole } from '../../lib/roles';
 
-export const COMPANY_TIMEZONE = 'Asia/Kolkata';
+import { COMPANY_TIMEZONE } from '../../utils/companyDate';
+export { COMPANY_TIMEZONE };
 const COMPANY_UTC_OFFSET = '+05:30'; // Asia/Kolkata has no daylight saving
 export const LOCATION_STALE_MINUTES = 5;
 export const LOW_ACCURACY_METERS = 150; // same threshold as locationService.verifyCurrentLocation
@@ -57,6 +58,39 @@ export function formatTime(iso: string | null | undefined): string {
   if (!iso) return '--:--';
   return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: COMPANY_TIMEZONE });
 }
+
+/**
+ * KPI categories. Each KPI count is the number of rows matching its predicate, and clicking the KPI
+ * card filters the table with the SAME predicate, so count == filtered rows by construction.
+ */
+export type AttendanceKpiFilter = 'ALL' | 'PRESENT' | 'ABSENT' | 'LATE' | 'ON_LEAVE' | 'WFH' | 'HALF_DAY' | 'CURRENTLY_WORKING';
+
+export const KPI_PREDICATES: Record<AttendanceKpiFilter, (row: any) => boolean> = {
+  ALL: r => r.inWorkforce,                                   // Total Employees population
+  PRESENT: r => r.present,
+  ABSENT: r => r.status === 'ABSENT' && r.inWorkforce,
+  LATE: r => r.late_minutes > 0,
+  ON_LEAVE: r => !!r.leave,
+  WFH: r => r.mode === 'WFH',
+  HALF_DAY: r => r.is_half_day,
+  CURRENTLY_WORKING: r => r.currentlyWorking,
+};
+
+export const KPI_LABELS: Record<AttendanceKpiFilter, string> = {
+  ALL: 'Total Employees', PRESENT: 'Present', ABSENT: 'Absent', LATE: 'Late', ON_LEAVE: 'On Leave',
+  WFH: 'WFH', HALF_DAY: 'Half Day', CURRENTLY_WORKING: 'Currently Working',
+};
+
+export const KPI_EMPTY_MESSAGES: Record<AttendanceKpiFilter, string> = {
+  ALL: 'No employees for this date.',
+  PRESENT: 'No employees are present for this date.',
+  ABSENT: 'No employees are absent for this date.',
+  LATE: 'No late arrivals for this date.',
+  ON_LEAVE: 'No employees are on leave for this date.',
+  WFH: 'No employees are working from home for this date.',
+  HALF_DAY: 'No half-day attendance for this date.',
+  CURRENTLY_WORKING: 'No employees are currently working.',
+};
 
 const isWorkforce = (e: any) => e.status === 'ACTIVE' && normalizeRole(e.role?.name) !== 'ADMIN';
 
@@ -156,6 +190,7 @@ export function buildAdminAttendanceDay(input: AdminAttendanceInput) {
 
     rows.push({
       id: att?.id ?? `no-attendance-${empId}`,
+      inWorkforce: !!emp && isWorkforce(emp),
       attendanceId: att?.id ?? null,
       employee_uuid: empId,
       empId: emp?.employee_code ?? '-',
@@ -219,17 +254,16 @@ export function buildAdminAttendanceDay(input: AdminAttendanceInput) {
 
   rows.sort((a, b) => (a.clockInAt && b.clockInAt ? a.clockInAt.localeCompare(b.clockInAt) : a.clockInAt ? -1 : b.clockInAt ? 1 : a.empId.localeCompare(b.empId)));
 
-  const workforceIds = new Set(workforce.map(e => e.id));
-  const inWorkforce = (r: any) => workforceIds.has(r.employee_uuid);
+  const count = (k: AttendanceKpiFilter) => rows.filter(KPI_PREDICATES[k]).length;
   const kpis = {
-    total: workforce.length,
-    present: rows.filter(r => r.present).length,
-    absent: rows.filter(r => r.status === 'ABSENT' && inWorkforce(r)).length,
-    late: rows.filter(r => r.late_minutes > 0).length,
-    onLeave: rows.filter(r => r.leave).length,
-    wfh: rows.filter(r => r.mode === 'WFH').length,
-    halfDay: rows.filter(r => r.is_half_day).length,
-    working: rows.filter(r => r.currentlyWorking).length,
+    total: count('ALL'),
+    present: count('PRESENT'),
+    absent: count('ABSENT'),
+    late: count('LATE'),
+    onLeave: count('ON_LEAVE'),
+    wfh: count('WFH'),
+    halfDay: count('HALF_DAY'),
+    working: count('CURRENTLY_WORKING'),
     notClockedIn: rows.filter(r => r.status === 'NOT CLOCKED IN').length,
   };
 

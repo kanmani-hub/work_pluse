@@ -1,3 +1,6 @@
+/// <reference types="@types/google.maps" />
+// LEGACY: Google Maps renderer, no longer used by Live Tracking (replaced by components/tracking/LeafletLiveMap.tsx).
+// Kept until the Leaflet map is verified in the browser; safe to delete together with services/maps/googleMapsLoader.ts.
 import React, { useEffect, useRef, useState } from 'react';
 import { loadGoogleMaps } from '../../services/maps/googleMapsLoader';
 

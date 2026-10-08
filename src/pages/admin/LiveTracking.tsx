@@ -1,20 +1,21 @@
-/// <reference types="@types/google.maps" />
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   MapPin, Clock, Search, Filter, 
   RefreshCw, AlertCircle, X, 
   AlertTriangle, ShieldAlert, Calendar, Download
 } from 'lucide-react';
-import { locationService } from '../../services/location/locationService';
 import { realtimeService } from '../../services/realtime/realtimeService';
-import { deriveLiveWorkStatus } from '../../services/location/liveStatusRules';
+import { loadLiveTrackingInput } from '../../services/location/liveTrackingService';
+import { buildLiveTrackingRows, liveKpiCounts, type LiveTrackingInput, type LiveTrackingKpi } from '../../services/location/liveTrackingRules';
+import LiveTrackingKpiModal from '../../components/tracking/LiveTrackingKpiModal';
 import { supabase } from '../../lib/supabase';
 import { useDepartments } from '../../hooks/useDepartments';
 
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
-import { LiveTrackingMap } from '../../components/maps/LiveTrackingMap';
+import LeafletLiveMap from '../../components/tracking/LeafletLiveMap';
+import LiveActivityLogs from '../../components/tracking/LiveActivityLogs';
 type EmployeeStatus = 'Working' | 'On Break' | 'WFH' | 'Outside Geofence' | 'Location Unavailable' | 'Offline' | 'Clocked Out';
 type WorkMode = 'Office' | 'WFH' | 'Hybrid';
 
@@ -53,6 +54,30 @@ const getStatusColor = (status: string) => {
   }
 };
 
+/** Adapt shared Live Tracking rows to the fields the existing list, drawer and map read. */
+function toDisplayRows(input: LiveTrackingInput, nowMs: number) {
+  return buildLiveTrackingRows(input, nowMs).map((r: any) => {
+    const stale = !r.lastSeenAt || (nowMs - new Date(r.lastSeenAt).getTime()) / 60000 > 15;
+    const locationStatus = !r.lastSeenAt ? 'No location'
+      : stale ? 'STALE / LAST KNOWN'
+      : r.geofence === 'INSIDE' ? 'Inside Geofence' : r.geofence === 'OUTSIDE' ? 'Outside Geofence' : (r.geofence || 'Unknown');
+    const dist = r.distanceMeters != null ? `${Math.round(r.distanceMeters)}m` : 'N/A';
+    const emp = input.employees.find((e: any) => e.id === r.employeeId);
+    const officeLat = emp?.offices?.latitude ?? null;
+    const officeLng = emp?.offices?.longitude ?? null;
+    return {
+      ...r,
+      locationStatus,
+      distance: stale && r.distanceMeters != null ? `Last known: ${dist}` : dist,
+      lastUpdated: r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) : '-',
+      workingSince: r.clockInAt ? new Date(r.clockInAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '-',
+      officeLat, officeLng,
+      x: r.lng != null && officeLng != null ? 50 + ((r.lng - officeLng) * 10000) : 50,
+      y: r.lat != null && officeLat != null ? 50 - ((r.lat - officeLat) * 10000) : 50,
+    };
+  });
+}
+
 const AdminLiveTracking: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'Live View' | 'History'>('Live View');
   
@@ -62,7 +87,11 @@ const AdminLiveTracking: React.FC = () => {
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [employees, setEmployees] = useState<LiveEmployee[]>([]);
-  const workStateRef = useRef<{ attendance: Map<string, any>; activeBreaks: Set<string> }>({ attendance: new Map(), activeBreaks: new Set() });
+  // Last loaded Live Tracking inputs; realtime location updates rebuild rows from these (same rules as the KPIs)
+  const inputRef = useRef<LiveTrackingInput | null>(null);
+  const refetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [nowTick, setNowTick] = useState(Date.now());
+  const [liveKpi, setLiveKpi] = useState<LiveTrackingKpi | null>(null);
   const [activeOffices, setActiveOffices] = useState<any[]>([]);
   const [lastUpdatedTime, setLastUpdatedTime] = useState(new Date().toLocaleTimeString('en-US'));
   
@@ -99,35 +128,11 @@ const AdminLiveTracking: React.FC = () => {
         const newData = payload.new;
         if (!newData) return;
 
-        setEmployees(prev => prev.map(emp => {
-          if (emp.id !== newData.id && (emp as any).employee_id !== newData.employee_id && emp.name !== 'Unknown') return emp;
-          
-          // Match found - update fields
-          const now = new Date();
-          const lastSeen = new Date(newData.last_seen_at);
-          const diffMins = (now.getTime() - lastSeen.getTime()) / 60000;
-          const ws = workStateRef.current;
-          const status: EmployeeStatus = deriveLiveWorkStatus(newData, ws.attendance.get(newData.employee_id), ws.activeBreaks.has(newData.employee_id));
-          let locationStatus = newData.location_status === 'INSIDE_GEOFENCE' ? 'Inside Geofence' : (newData.location_status === 'OUTSIDE_GEOFENCE' ? 'Outside Geofence' : newData.location_status);
-          let distanceStr = newData.distance_from_office_meters != null ? `${Math.round(newData.distance_from_office_meters)}m` : 'N/A';
-
-          if (diffMins > 15) {
-             locationStatus = 'STALE / LAST KNOWN';
-             distanceStr = newData.distance_from_office_meters != null ? `Last known: ${Math.round(newData.distance_from_office_meters)}m` : 'N/A';
-          }
-
-          return {
-            ...emp,
-            status,
-            locationStatus,
-            distance: distanceStr,
-            lastUpdated: new Date(newData.last_seen_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            lat: newData.latitude || emp.lat,
-            lng: newData.longitude || emp.lng,
-            x: newData.longitude && emp.officeLng ? 50 + ((newData.longitude - emp.officeLng) * 10000) : 50,
-            y: newData.latitude && emp.officeLat ? 50 - ((newData.latitude - emp.officeLat) * 10000) : 50
-          };
-        }));
+        const input = inputRef.current;
+        if (!input) return;
+        const others = input.liveLocations.filter((l: any) => l.employee_id !== newData.employee_id);
+        inputRef.current = { ...input, liveLocations: [...others, newData] };
+        setEmployees(toDisplayRows(inputRef.current, Date.now()));
       }
     });
 
@@ -157,15 +162,30 @@ const AdminLiveTracking: React.FC = () => {
       }
     });
 
-    // Break start/end and clock-in/out update the attendance row: refresh work status in realtime
-    const attendanceChannel = realtimeService.subscribeToAdminAttendance(() => {
-      fetchLocations();
-    });
+    // Clock-in/out, break start/end and WFH approvals: refetch (debounced) so KPIs and details update in realtime
+    const scheduleRefetch = () => {
+      if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current);
+      refetchTimerRef.current = setTimeout(() => { fetchLocations(true); }, 800);
+    };
+    const attendanceChannel = realtimeService.subscribeToAdminAttendance(scheduleRefetch);
+    const breaksChannel = realtimeService.subscribeToAdminBreaks(scheduleRefetch);
+    const wfhChannel = realtimeService.subscribeToAdminWFH(scheduleRefetch);
+
+    // GPS staleness depends on time passing: re-evaluate every minute from data already loaded
+    const tick = setInterval(() => {
+      const now = Date.now();
+      setNowTick(now);
+      if (inputRef.current) setEmployees(toDisplayRows(inputRef.current, now));
+    }, 60000);
 
     return () => {
+      clearInterval(tick);
+      if (refetchTimerRef.current) clearTimeout(refetchTimerRef.current);
       realtimeService.unsubscribe(liveChannel);
       realtimeService.unsubscribe(historyChannel);
       realtimeService.unsubscribe(attendanceChannel);
+      realtimeService.unsubscribe(breaksChannel);
+      realtimeService.unsubscribe(wfhChannel);
     };
   }, []);
 
@@ -180,60 +200,16 @@ const AdminLiveTracking: React.FC = () => {
     if (data) setActiveOffices(data);
   };
 
-  const fetchLocations = async () => {
-    setLoading(true);
-    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-    const [{ data }, { data: todayAttendance }, { data: openBreaks }] = await Promise.all([
-      locationService.getAllLiveLocations(),
-      supabase.from('attendance').select('employee_id, status, clock_in_at, clock_out_at').eq('attendance_date', todayStr) as any,
-      supabase.from('attendance_breaks').select('employee_id, attendance:attendance_id!inner(attendance_date)').is('ended_at', null).eq('attendance.attendance_date', todayStr) as any,
-    ]);
-    workStateRef.current = {
-      attendance: new Map((todayAttendance || []).map((a: any) => [a.employee_id, a])),
-      activeBreaks: new Set((openBreaks || []).map((b: any) => b.employee_id)),
-    };
-    if (data) {
-      const now = new Date();
-      setEmployees(data.map((l: any) => {
-        const lastSeen = new Date(l.last_seen_at);
-        const diffMins = (now.getTime() - lastSeen.getTime()) / 60000;
-        const att = workStateRef.current.attendance.get(l.employee_id);
-        const status: EmployeeStatus = deriveLiveWorkStatus(l, att, workStateRef.current.activeBreaks.has(l.employee_id));
-        let locationStatus = l.location_status === 'INSIDE_GEOFENCE' ? 'Inside Geofence' : (l.location_status === 'OUTSIDE_GEOFENCE' ? 'Outside Geofence' : l.location_status);
-        let distanceStr = l.distance_from_office_meters != null ? `${Math.round(l.distance_from_office_meters)}m` : 'N/A';
-
-        if (diffMins > 15) {
-           locationStatus = 'STALE / LAST KNOWN';
-           distanceStr = l.distance_from_office_meters != null ? `Last known: ${Math.round(l.distance_from_office_meters)}m` : 'N/A';
-        }
-
-        return {
-          id: l.id,
-          empId: l.employees?.employee_code || '-',
-          name: l.employees ? `${l.employees.first_name} ${l.employees.last_name}` : 'Unknown',
-          department: l.employees?.departments?.name || '-',
-          departmentId: l.employees?.department_id || null,
-          shift: 'General', 
-          workMode: l.location_context === 'WFH' ? 'WFH' : 'Office',
-          status: status,
-          locationStatus,
-          distance: distanceStr,
-          lastUpdated: new Date(l.last_seen_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-          workingSince: att?.clock_in_at ? new Date(att.clock_in_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '-',
-          office: l.employees?.offices?.name || '-',
-          officeId: l.employees?.offices?.id || null,
-          officeLat: l.employees?.offices?.latitude || 13.0827,
-          officeLng: l.employees?.offices?.longitude || 80.2707,
-          officeRadius: l.employees?.offices?.geofence_radius ?? null,
-          lat: l.latitude || null,
-          lng: l.longitude || null,
-          x: l.longitude && l.employees?.offices?.longitude ? 50 + ((l.longitude - l.employees.offices.longitude) * 10000) : 50,
-          y: l.latitude && l.employees?.offices?.latitude ? 50 - ((l.latitude - l.employees.offices.latitude) * 10000) : 50
-        };
-      }));
-      setLastUpdatedTime(new Date().toLocaleTimeString('en-US'));
-    }
-    setLoading(false);
+  const fetchLocations = async (silent = false) => {
+    if (!silent) setLoading(true);
+    const { input, errors } = await loadLiveTrackingInput();
+    if (errors.length) console.error('[Live Tracking] load errors:', errors);
+    inputRef.current = input;
+    const now = Date.now();
+    setNowTick(now);
+    setEmployees(toDisplayRows(input, now));
+    setLastUpdatedTime(new Date().toLocaleTimeString('en-US'));
+    if (!silent) setLoading(false);
   };
 
   const fetchHistory = async () => {
@@ -356,12 +332,22 @@ const AdminLiveTracking: React.FC = () => {
     XLSX.writeFile(workbook, `Tracking_History_${hDate}.xlsx`);
   };
 
+  // Same predicates as the KPI detail modal (liveTrackingRules.liveKpiPredicate)
+  const kpiCounts = liveKpiCounts(employees, nowTick);
   const kpis = {
-    working: employees.filter(e => e.status === 'Working' || e.status === 'Outside Geofence' || e.status === 'WFH').length,
-    inOffice: employees.filter(e => e.locationStatus === 'Inside Geofence').length,
-    wfh: employees.filter(e => e.status === 'WFH').length,
-    outside: employees.filter(e => e.status === 'Outside Geofence').length,
+    working: kpiCounts.CURRENTLY_WORKING,
+    inOffice: kpiCounts.IN_OFFICE,
+    wfh: kpiCounts.WFH,
+    outside: kpiCounts.OUTSIDE_GEOFENCE,
   };
+  const liveKpiCardProps = (k: LiveTrackingKpi) => ({
+    role: 'button' as const,
+    tabIndex: 0,
+    'aria-haspopup': 'dialog' as const,
+    className: `tracking-kpi-card kpi-clickable${liveKpi === k ? ' kpi-active' : ''}`,
+    onClick: () => setLiveKpi(k),
+    onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLiveKpi(k); } },
+  });
 
 
 
@@ -428,50 +414,70 @@ const AdminLiveTracking: React.FC = () => {
           ) : (
             <>
               <div className="responsive-grid">
-                <div className="tracking-kpi-card">
+                <div {...liveKpiCardProps('CURRENTLY_WORKING')}>
                   <div className="sc-title">Currently Working</div>
                   <div className="sc-val" style={{ color: "var(--success)" }}>{kpis.working}</div>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", marginTop: "0.25rem" }}>Employees Working</div>
                 </div>
-                <div className="tracking-kpi-card">
+                <div {...liveKpiCardProps('IN_OFFICE')}>
                   <div className="sc-title">In Office</div>
                   <div className="sc-val">{kpis.inOffice}</div>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", marginTop: "0.25rem" }}>Inside Office</div>
                 </div>
-                <div className="tracking-kpi-card">
+                <div {...liveKpiCardProps('WFH')}>
                   <div className="sc-title">WFH</div>
                   <div className="sc-val" style={{ color: "var(--primary-600)" }}>{kpis.wfh}</div>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", marginTop: "0.25rem" }}>Working Remotely</div>
                 </div>
-                <div className="tracking-kpi-card">
+                <div {...liveKpiCardProps('OUTSIDE_GEOFENCE')}>
                   <div className="sc-title">Outside Geofence</div>
                   <div className="sc-val" style={{ color: "var(--danger-600)" }}>{kpis.outside}</div>
                   <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", marginTop: "0.25rem" }}>Attention Required</div>
                 </div>
               </div>
 
+              {liveKpi && (
+                <LiveTrackingKpiModal
+                  kpi={liveKpi}
+                  rows={employees}
+                  nowMs={nowTick}
+                  expectedCount={kpiCounts[liveKpi]}
+                  onClose={() => setLiveKpi(null)}
+                  onViewEmployee={(row) => { setLiveKpi(null); setSelectedEmp(row as any); }}
+                />
+              )}
+
               <div className="tracking-layout">
-                <div className="card map-container" style={{ position: "relative", minHeight: "350px", display: "flex", flexDirection: "column" }}>
-                  <h3 className="card-title" style={{ marginBottom: "1rem", display: "flex", justifyContent: "space-between" }}>
-                    Map View
-                  </h3>
+                <div className="lt-map-activity">
+                  <div className="card map-container" style={{ position: "relative", minHeight: "350px", display: "flex", flexDirection: "column" }}>
+                    <h3 className="card-title" style={{ marginBottom: "1rem", display: "flex", justifyContent: "space-between" }}>
+                      Map View
+                    </h3>
                   
-                  <div style={{ width: "100%", flex: 1, minHeight: "400px", borderRadius: "var(--radius-lg)", position: "relative", overflow: "hidden" }}>
-                    <LiveTrackingMap 
-                      employees={filteredEmployees}
-                      office={officeFilter !== 'All' ? activeOffices.find(o => o.id === officeFilter) || activeOffices[0] : activeOffices[0]}
-                      selectedEmpId={selectedEmp?.id}
-                    />
-                  </div>
+                    <div style={{ width: "100%", flex: 1, minHeight: "400px", borderRadius: "var(--radius-lg)", position: "relative", overflow: "hidden" }}>
+                      <LeafletLiveMap 
+                        employees={filteredEmployees}
+                        office={officeFilter !== 'All' ? activeOffices.find(o => o.id === officeFilter) || activeOffices[0] : activeOffices[0]}
+                        selectedEmpId={selectedEmp?.id}
+                      />
+                    </div>
                   
-                  <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginTop: "1rem", fontSize: "0.75rem", justifyContent: "center" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}><span style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: "var(--success)" }}></span> Working / In Office</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}><span style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: "var(--primary-500)" }}></span> WFH</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}><span style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: "var(--danger)" }}></span> Outside Geofence</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}><span style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: "var(--gray-500)" }}></span> Last Known (Stale)</div>
+                    <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginTop: "1rem", fontSize: "0.75rem", justifyContent: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}><span style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: "var(--success)" }}></span> Working / In Office</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}><span style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: "var(--primary-500)" }}></span> WFH</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}><span style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: "var(--danger)" }}></span> Outside Geofence</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}><span style={{ width: 10, height: 10, borderRadius: "50%", backgroundColor: "var(--gray-500)" }}></span> Last Known (Stale)</div>
+                    </div>
                   </div>
+                  <LiveActivityLogs
+                    onSelectEmployee={(_employeeId, employeeCode) => {
+                      // Reuse the page's existing selection: opens the employee drawer and the map pans to the marker
+                      const emp = employees.find(e => e.empId === employeeCode);
+                      if (emp) setSelectedEmp(emp);
+                    }}
+                  />
                 </div>
-                
+
                 <div className="card list-container" style={{ padding: 0, display: "flex", flexDirection: "column" }}>
                   <div style={{ padding: "1.25rem", borderBottom: "1px solid var(--border-color)" }}>
                     <h3 className="card-title" style={{ marginBottom: "1rem" }}>Employee List</h3>

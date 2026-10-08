@@ -1,5 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes } from './breakRules';
+import { selectCurrentAttendance } from './currentAttendance';
+import { companyDateStr, previousDateStr } from '../../utils/companyDate';
 import type { Database } from '../../types/database';
 import { auditService } from '../audit/auditService';
 import { qaTimeService } from '../qa/qaTimeService';
@@ -101,6 +103,26 @@ export const attendanceService = {
   },
 
   /**
+   * The employee's CURRENT attendance: today's record (company date), or yesterday's overnight
+   * session that is still open. Never "the latest record". See currentAttendance.ts.
+   */
+  async getCurrentAttendance(): Promise<{ data: AttendanceRow | null; error: Error | null; today: string }> {
+    const today = companyDateStr();
+    const empId = await this.getCurrentEmployeeId();
+    if (!empId) return { data: null, error: new Error('Unauthorized'), today };
+
+    const yesterday = previousDateStr(today);
+    const { data, error } = await supabase
+      .from('attendance')
+      .select('*, shift_template:shift_template_id (*)')
+      .eq('employee_id', empId)
+      .in('attendance_date', [today, yesterday]);
+
+    if (error) return { data: null, error: new Error(error.message), today };
+    return { data: selectCurrentAttendance((data || []) as any[], today, yesterday) as any, error: null, today };
+  },
+
+  /**
    * Get the current assigned shift for the authenticated employee
    */
   async getCurrentShift(localDateStr: string): Promise<{ data: any | null; error: Error | null }> {
@@ -141,14 +163,25 @@ export const attendanceService = {
     const globalGracePeriod = settings.gracePeriodMins ?? 0;
     const timezone = settings.timezone === 'UTC' ? 'UTC' : 'Asia/Kolkata';
 
-    // 1. Check if attendance already exists for today
-    const { data: existing } = await supabase
-      .from('attendance')
-      .select('id')
-      .eq('employee_id', empId)
-      .eq('attendance_date', input.localDateStr)
-      .maybeSingle();
+    // The business date is always the company date, never the caller's (possibly UTC) date
+    const attendanceDate = companyDateStr();
+    if (input.localDateStr !== attendanceDate) {
+      console.warn(`[Attendance] clockIn received date ${input.localDateStr}; using company date ${attendanceDate}`);
+    }
+    input = { ...input, localDateStr: attendanceDate };
 
+    // 1. Check if attendance already exists for today, or an overnight session is still open
+    const { data: existingRows } = await supabase
+      .from('attendance')
+      .select('id, attendance_date, clock_in_at, clock_out_at, shift_template:shift_template_id(crosses_midnight)')
+      .eq('employee_id', empId)
+      .in('attendance_date', [attendanceDate, previousDateStr(attendanceDate)]) as any;
+    const existing = (existingRows || []).find((r: any) => r.attendance_date === attendanceDate);
+    const openOvernight = selectCurrentAttendance(existingRows || [], attendanceDate, previousDateStr(attendanceDate));
+
+    if (openOvernight && openOvernight.attendance_date !== attendanceDate) {
+      return { data: null, error: new Error('You are still clocked in to your overnight shift. Clock out of it first.') };
+    }
     if (existing) {
       return { data: null, error: new Error('Attendance already exists for today.') };
     }

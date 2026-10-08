@@ -8,6 +8,7 @@ import {
 
 import { supabase } from '../../lib/supabase';
 import { realtimeService } from '../../services/realtime/realtimeService';
+import { companyDateStr } from '../../utils/companyDate';
 
 const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -42,9 +43,9 @@ const AdminDashboard: React.FC = () => {
           supabase.from('wfh_requests').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
           supabase.from('leave_requests').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
           supabase.from('permission_requests').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
-          supabase.from('attendance').select('status, clock_in_at, clock_out_at').eq('attendance_date', new Date().toISOString().split('T')[0]),
+          supabase.from('attendance').select('status, clock_in_at, clock_out_at').eq('attendance_date', companyDateStr()),
           supabase.from('shift_templates').select('*').eq('is_active', true).order('start_time'),
-          supabase.from('wfh_requests').select('*', { count: 'exact', head: true }).eq('status', 'APPROVED').eq('request_date', new Date().toISOString().split('T')[0])
+          supabase.from('wfh_requests').select('*', { count: 'exact', head: true }).eq('status', 'APPROVED').eq('request_date', companyDateStr())
         ]);
 
         if (queries.some(q => q.error)) {

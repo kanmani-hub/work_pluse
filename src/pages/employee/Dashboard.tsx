@@ -13,8 +13,60 @@ import { locationService } from '../../services/location/locationService';
 import { supabase } from '../../lib/supabase';
 import { qaTimeService } from '../../services/qa/qaTimeService';
 import { computeWorkTimer, findActiveBreak, resolveAllowedBreakMinutes } from '../../services/attendance/breakRules';
+import { companyDateStr } from '../../utils/companyDate';
 
 type AttendanceState = 'not_clocked_in' | 'working' | 'on_break' | 'clocked_out';
+
+// --------------------------------------------------------
+// Reusable Security Status Component
+// --------------------------------------------------------
+const SecurityStatusSteps = ({ secStep }: { secStep: string }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--gray-200)', marginBottom: '1.5rem' }}>
+    
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <span style={{ fontSize: '0.875rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        1. Shift
+      </span>
+      <span className="badge badge-success" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><CheckCircle2 size={12}/> Assigned</span>
+    </div>
+    
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <span style={{ fontSize: '0.875rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.5rem', color: secStep === 'init' ? 'var(--gray-400)' : 'inherit' }}>
+        2. Location
+      </span>
+      {secStep === 'init' ? <span className="badge badge-gray">Pending</span> : 
+       secStep === 'location_check' ? <span className="badge badge-warning" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><RefreshCw size={12} className="spin"/> Checking</span> :
+       secStep === 'location_failed' ? <span className="badge badge-danger">Failed</span> :
+       <span className="badge badge-success" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><CheckCircle2 size={12}/> Verified</span>
+      }
+    </div>
+
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <span style={{ fontSize: '0.875rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.5rem', color: ['init', 'location_check', 'location_failed'].includes(secStep) ? 'var(--gray-400)' : 'inherit' }}>
+        3. Face Identity
+      </span>
+      <div>
+        {['init', 'location_check', 'location_failed'].includes(secStep) ? <span className="badge badge-gray">Pending</span> :
+         secStep === 'face_ready' ? <span className="badge badge-primary" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}>Ready</span> : 
+         secStep === 'face_detecting' ? <span className="badge badge-warning" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><RefreshCw size={12} className="spin"/> Verifying</span> :
+         secStep === 'face_failed' || secStep === 'override' ? <span className="badge badge-danger">Failed</span> :
+         <span className="badge badge-success" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><CheckCircle2 size={12}/> Verified</span>
+        }
+      </div>
+    </div>
+
+    <div style={{ borderTop: '1px solid var(--gray-200)', margin: '0.25rem 0' }} />
+    
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>Action Status</span>
+      {secStep === 'success' ? <span className="badge badge-success" style={{ fontSize: '0.875rem', padding: '0.25rem 0.5rem' }}>ALLOWED</span> :
+       ['location_failed', 'face_failed', 'override'].includes(secStep) ? <span className="badge badge-danger" style={{ fontSize: '0.875rem', padding: '0.25rem 0.5rem' }}>BLOCKED</span> :
+       <span className="badge badge-warning" style={{ fontSize: '0.875rem', padding: '0.25rem 0.5rem' }}>VERIFYING</span>
+      }
+    </div>
+
+  </div>
+);
 
 const EmployeeDashboard: React.FC = () => {
   const { settings } = useGlobalSettings();
@@ -105,7 +157,7 @@ const EmployeeDashboard: React.FC = () => {
   }, []);
 
   const getLocalDateStr = () => {
-    return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    return companyDateStr();
   };
 
   const fetchTodayAttendance = async () => {
@@ -115,7 +167,8 @@ const EmployeeDashboard: React.FC = () => {
     const { data: shiftData } = await attendanceService.getCurrentShift(dateStr);
     setCurrentShift(shiftData);
 
-    const { data, error } = await attendanceService.getTodayAttendance(dateStr);
+    // Today's attendance (or an overnight session still in progress) — never yesterday's completed record
+    const { data, error } = await attendanceService.getCurrentAttendance();
     if (data) {
       setAttendanceRecord(data);
       const { data: breaks } = await breakService.getAttendanceBreaks(data.id);
@@ -320,54 +373,7 @@ const EmployeeDashboard: React.FC = () => {
     setShowSecurityModal(false);
   };
 
-  // --------------------------------------------------------
-  // Reusable Security Status Component
-  // --------------------------------------------------------
-  const SecurityStatusSteps = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--gray-200)', marginBottom: '1.5rem' }}>
-      
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: '0.875rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          1. Shift
-        </span>
-        <span className="badge badge-success" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><CheckCircle2 size={12}/> Assigned</span>
-      </div>
-      
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: '0.875rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.5rem', color: secStep === 'init' ? 'var(--gray-400)' : 'inherit' }}>
-          2. Location
-        </span>
-        {secStep === 'init' ? <span className="badge badge-gray">Pending</span> : 
-         secStep === 'location_check' ? <span className="badge badge-warning" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><RefreshCw size={12} className="spin"/> Checking</span> :
-         secStep === 'location_failed' ? <span className="badge badge-danger">Failed</span> :
-         <span className="badge badge-success" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><CheckCircle2 size={12}/> Verified</span>
-        }
-      </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: '0.875rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.5rem', color: ['init', 'location_check', 'location_failed'].includes(secStep) ? 'var(--gray-400)' : 'inherit' }}>
-          3. Face Identity
-        </span>
-        {['init', 'location_check', 'location_failed'].includes(secStep) ? <span className="badge badge-gray">Pending</span> :
-         secStep === 'face_ready' ? <span className="badge badge-primary" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}>Ready</span> : 
-         secStep === 'face_detecting' ? <span className="badge badge-warning" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><RefreshCw size={12} className="spin"/> Verifying</span> :
-         secStep === 'face_failed' || secStep === 'override' ? <span className="badge badge-danger">Failed</span> :
-         <span className="badge badge-success" style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}><CheckCircle2 size={12}/> Verified</span>
-        }
-      </div>
-
-      <div style={{ borderTop: '1px solid var(--gray-200)', margin: '0.25rem 0' }} />
-      
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>Action Status</span>
-        {secStep === 'success' ? <span className="badge badge-success" style={{ fontSize: '0.875rem', padding: '0.25rem 0.5rem' }}>ALLOWED</span> :
-         ['location_failed', 'face_failed', 'override'].includes(secStep) ? <span className="badge badge-danger" style={{ fontSize: '0.875rem', padding: '0.25rem 0.5rem' }}>BLOCKED</span> :
-         <span className="badge badge-warning" style={{ fontSize: '0.875rem', padding: '0.25rem 0.5rem' }}>VERIFYING</span>
-        }
-      </div>
-
-    </div>
-  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -627,7 +633,7 @@ const EmployeeDashboard: React.FC = () => {
 
             <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               
-              <SecurityStatusSteps />
+              <SecurityStatusSteps secStep={secStep} />
 
               {/* Dynamic Content Area based on Step */}
               
