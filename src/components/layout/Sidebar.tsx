@@ -17,7 +17,8 @@ import {
   Clock,
   MapPin,
   ShieldCheck,
-  FileText
+  FileText,
+  Hourglass
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -111,6 +112,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, role }) => {
                   <Clock className="nav-icon" />
                   Permissions
                 </NavLink>
+                <NavLink to="/admin/overtime" onClick={onClose} className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`}>
+                  <Hourglass className="nav-icon" />
+                  Overtime
+                </NavLink>
                 <NavLink to="/admin/payroll" onClick={onClose} className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`}>
                   <Wallet className="nav-icon" />
                   Payroll
@@ -167,6 +172,10 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, role }) => {
               <NavLink to="/employee/permission" onClick={onClose} className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`}>
                 <Clock className="nav-icon" />
                 Permissions
+              </NavLink>
+              <NavLink to="/employee/overtime" onClick={onClose} className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`}>
+                <Hourglass className="nav-icon" />
+                Overtime
               </NavLink>
               <NavLink to="/employee/payslip" onClick={onClose} className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`}>
                 <Wallet className="nav-icon" />

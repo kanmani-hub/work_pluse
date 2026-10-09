@@ -4,10 +4,12 @@ import { KeyRound, AlertCircle, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { isAdminPortalRole } from '../lib/roles';
+import { notificationService } from '../services/notifications/notificationService';
+import { passwordChanged } from '../services/notifications/notificationRules';
 
 const ChangePassword: React.FC = () => {
   const navigate = useNavigate();
-  const { user, role, isLoading, checkAuth } = useAuth();
+  const { user, role, employee, isLoading, checkAuth } = useAuth();
   
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -45,6 +47,9 @@ const ChangePassword: React.FC = () => {
       if (updateError) {
         setError(updateError.message);
       } else {
+        if (employee?.id) {
+          await notificationService.notifyEmployee(employee.id, passwordChanged({ employeeId: employee.id, atIso: new Date().toISOString() }));
+        }
         await checkAuth(); // Refresh context so ProtectedRoute sees the updated metadata
         // Redirect to appropriate dashboard based on role
         if (isAdminPortalRole(role)) {

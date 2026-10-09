@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { auditService } from '../audit/auditService';
 import { notificationService } from '../notifications/notificationService';
+import { permissionReviewed } from '../notifications/notificationRules';
 
 export interface PermissionRequestInput {
   permission_date: string; // YYYY-MM-DD
@@ -137,14 +138,19 @@ export const permissionService = {
       .eq('id', id)
       .single() as any;
 
-    const { error } = await (supabase.from('permission_requests') as any)
+    // Only a real status change counts (double click / second tab: nothing changes, no repeat notification)
+    const { data: changedRows, error } = await (supabase.from('permission_requests') as any)
       .update({
         status,
         reviewed_by: adminId,
         reviewed_at: new Date().toISOString(),
         reviewer_remarks: remarks || null
       })
-      .eq('id', id);
+      .eq('id', id)
+      .neq('status', status)
+      .select('id');
+
+    if (!error && (!changedRows || changedRows.length === 0)) return { error: null };
 
     if (!error) {
       auditService.recordAuditLog({
@@ -156,14 +162,10 @@ export const permissionService = {
         metadata: { remarks }
       }).catch(e => console.error('[AUDIT] Permission review audit failed:', e));
 
-      if ((status === 'APPROVED' || status === 'REJECTED') && req) {
-        notificationService.createNotification({
-          recipient_employee_id: req.employee_id,
-          notification_type: 'PERMISSION',
-          title: `Permission Request ${status === 'APPROVED' ? 'Approved' : 'Rejected'}`,
-          message: `Your permission request for ${req.permission_date} (${req.start_time}–${req.end_time}) has been ${status.toLowerCase()}.${remarks ? ' Remarks: ' + remarks : ''}`,
-          action_url: '/employee/permission'
-        }).catch(e => console.error('[NOTIFY] Employee permission notification failed:', e));
+      if (req) {
+        await notificationService.notifyEmployee(req.employee_id, permissionReviewed({
+          id, status, date: req.permission_date, start: req.start_time, end: req.end_time, remarks,
+        }));
       }
     }
 

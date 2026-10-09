@@ -6,12 +6,17 @@ export const realtimeService = {
    */
   subscribeToNotifications(
     employeeId: string, 
-    callback: (payload: any) => void
+    callback: (payload: any) => void,
+    /** Distinct per subscriber (e.g. 'header', 'page') so two views never share/replace one channel */
+    key: string = 'header',
+    /** Called on every (re)subscribe, e.g. to fetch notifications missed while disconnected */
+    onSubscribed?: () => void
   ) {
     if (!employeeId) return null;
     
+    // Server-side filter: only this employee's rows are streamed (RLS applies as well)
     return supabase
-      .channel(`notifications:emp_${employeeId}`)
+      .channel(`notifications:emp_${employeeId}:${key}`)
       .on(
         'postgres_changes',
         {
@@ -32,7 +37,10 @@ export const realtimeService = {
         },
         (payload) => callback(payload)
       )
-      .subscribe();
+      .subscribe((status: string, err?: any) => {
+        if (import.meta.env?.DEV) console.info(`[Realtime] notifications:${key} for ${employeeId} → ${status}`, err?.message ?? '');
+        if (status === 'SUBSCRIBED') onSubscribed?.();
+      });
   },
 
   /**

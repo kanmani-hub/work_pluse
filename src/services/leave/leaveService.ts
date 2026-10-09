@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { auditService } from '../audit/auditService';
 import { notificationService } from '../notifications/notificationService';
+import { leaveReviewed } from '../notifications/notificationRules';
 
 export interface LeaveRequestInput {
   leave_type_id: string;
@@ -204,16 +205,21 @@ export const leaveService = {
     const adminId = await this.getCurrentEmployeeId();
     if (!adminId) return { error: new Error('Unauthorized') };
 
-    const { error } = await (supabase.from('leave_requests') as any)
+    // Only a real status change counts: a double click / second tab / retry finds the
+    // request already in that status, changes nothing and notifies nobody again.
+    const { data: changedRows, error } = await (supabase.from('leave_requests') as any)
       .update({
         status,
         reviewed_by: adminId,
         reviewed_at: new Date().toISOString(),
         reviewer_remarks: remarks || null
       })
-      .eq('id', id);
+      .eq('id', id)
+      .neq('status', status)
+      .select('id');
 
     if (error) return { error };
+    if (!changedRows || changedRows.length === 0) return { error: null };
 
     // --- AUDIT LOG ---
     auditService.recordAuditLog({
@@ -225,22 +231,19 @@ export const leaveService = {
       metadata: { remarks }
     }).catch(e => console.error('[AUDIT] Leave review audit failed:', e));
 
-    if (status === 'APPROVED' || status === 'REJECTED') {
-      // Fetch employee for notification
+    // Notify the employee (approved, rejected or cancelled by admin)
+    {
       const { data: leaveReq } = await supabase
         .from('leave_requests')
-        .select('employee_id, start_date, end_date')
+        .select('employee_id, start_date, end_date, is_half_day, leave_types(name)')
         .eq('id', id)
         .single() as any;
 
       if (leaveReq) {
-        notificationService.createNotification({
-          recipient_employee_id: leaveReq.employee_id,
-          notification_type: 'LEAVE',
-          title: `Leave Request ${status === 'APPROVED' ? 'Approved' : 'Rejected'}`,
-          message: `Your leave request from ${leaveReq.start_date} to ${leaveReq.end_date} has been ${status.toLowerCase()}.${remarks ? ' Remarks: ' + remarks : ''}`,
-          action_url: '/employee/leave'
-        }).catch(e => console.error('[NOTIFY] Employee leave notification failed:', e));
+        await notificationService.notifyEmployee(leaveReq.employee_id, leaveReviewed({
+          id, status, startDate: leaveReq.start_date, endDate: leaveReq.end_date,
+          leaveType: leaveReq.leave_types?.name ?? null, isHalfDay: !!leaveReq.is_half_day, remarks,
+        }));
       }
     }
 

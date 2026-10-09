@@ -20,6 +20,16 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
   const { theme, toggleTheme } = useTheme();
   const { employee, role: actualRole } = useAuth();
 
+  // Latest list + unread count (also used when the bell is opened)
+  const refreshNotifications = React.useCallback(async () => {
+    const [{ count }, { data }] = await Promise.all([
+      notificationService.getUnreadNotificationCount(),
+      notificationService.getMyNotifications(),
+    ]);
+    setUnreadCount(count);
+    if (data) setNotifications(data.slice(0, 5));
+  }, []);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -40,26 +50,38 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
     };
     
     if (employee?.id) {
-      fetchCount();
-      fetchNotifications();
+      const refresh = () => { fetchCount(); fetchNotifications(); };
+      refresh();
       
-      // Subscribe to realtime notifications
-      const channel = realtimeService.subscribeToNotifications(employee.id, (payload) => {
-        // Simple logic: re-fetch count when any change happens to this employee's notifications
-        fetchCount();
-        fetchNotifications();
-      });
+      // Realtime: only this employee's notifications. Badge + list update without a page refresh.
+      // On every (re)subscribe the list is fetched again, so notifications created while the
+      // connection was down are not lost (rows are keyed by id, so nothing is duplicated).
+      const channel = realtimeService.subscribeToNotifications(employee.id, () => refresh(), 'header', refresh);
+
+      // Back online / tab visible again: catch up with anything missed
+      const onOnline = () => refresh();
+      const onFocus = () => refresh(); // admin and employee windows side by side: clicking back into this window catches up
+      const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+      window.addEventListener('online', onOnline);
+      window.addEventListener('focus', onFocus);
+      document.addEventListener('visibilitychange', onVisible);
       
       return () => {
         document.removeEventListener('mousedown', handleClickOutside);
+        window.removeEventListener('online', onOnline);
+        window.removeEventListener('focus', onFocus);
+        document.removeEventListener('visibilitychange', onVisible);
         realtimeService.unsubscribe(channel);
       };
     }
 
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [employee]);
+    // Re-subscribe only when the signed-in employee changes (not on every profile refresh)
+  }, [employee?.id]);
 
   const handleNotificationClick = () => {
+    // Opening the bell always fetches the latest notifications (no stale "No notifications yet")
+    if (!showDropdown && employee?.id) refreshNotifications();
     setShowDropdown(!showDropdown);
   };
 
@@ -191,7 +213,7 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
                   notifications.map(notif => (
                     <div 
                       key={notif.id}
-                      style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-color)', backgroundColor: notif.is_read ? 'transparent' : 'rgba(255,255,255,0.02)', cursor: 'pointer' }} 
+                      style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-color)', borderLeft: notif.is_read ? '3px solid transparent' : '3px solid var(--primary-500)', backgroundColor: notif.is_read ? 'transparent' : 'var(--primary-50)', cursor: 'pointer' }} 
                       onClick={async () => {
                         if (!notif.is_read) {
                           await notificationService.markNotificationAsRead(notif.id);

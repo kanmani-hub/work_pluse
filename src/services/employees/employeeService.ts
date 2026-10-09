@@ -1,6 +1,17 @@
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database';
 import { auditService } from '../audit/auditService';
+import { notificationService } from '../notifications/notificationService';
+import { shiftAssigned, profileChanged, changedProfileFields } from '../notifications/notificationRules';
+
+/** Tell the employee which shift they now have (only after a successful save). */
+async function notifyShiftAssignment(employeeId: string, assignmentId: string | null | undefined, shiftTemplateId: string, effectiveDate: string) {
+  if (!assignmentId) return;
+  const { data: shift } = await supabase.from('shift_templates').select('name, start_time, end_time').eq('id', shiftTemplateId).maybeSingle() as any;
+  await notificationService.notifyEmployee(employeeId, shiftAssigned({
+    assignmentId, shiftId: shiftTemplateId, shiftName: shift?.name || 'a new shift', start: shift?.start_time, end: shift?.end_time, effectiveDate,
+  }));
+}
 
 export type EmployeeRow = Database['public']['Tables']['employees']['Row'];
 export type EmployeeInsert = Database['public']['Tables']['employees']['Insert'];
@@ -8,7 +19,7 @@ export type EmployeeUpdate = Database['public']['Tables']['employees']['Update']
 
 export interface EmployeeWithRelations extends EmployeeRow {
   department: { name: string } | null;
-  office: { name: string } | null;
+  office: { name: string; address?: string | null; latitude?: number | null; longitude?: number | null; geofence_radius?: number | null } | null;
   role: { name: string } | null;
   shift_assignments?: any[];
   salary_structures?: any[];
@@ -58,7 +69,7 @@ export const employeeService = {
         .select(`
           *,
           department:department_id (name),
-          office:office_id (name),
+          office:office_id (name, address, latitude, longitude, geofence_radius),
           role:role_id (name),
           shift_assignments!shift_assignments_employee_id_fkey(effective_date, shift_templates(name, start_time, end_time))
         `)
@@ -145,6 +156,13 @@ export const employeeService = {
         ...safeInput
       } = input as any;
 
+      // Values before the edit, to notify the employee only about real changes
+      const { data: before } = await supabase
+        .from('employees')
+        .select('status, department_id, office_id, role_id, designation')
+        .eq('id', id)
+        .maybeSingle() as any;
+
       const { data, error } = await supabase
         .from('employees')
         // @ts-ignore: Supabase types can be overly strict here
@@ -174,6 +192,20 @@ export const employeeService = {
         description: `Employee record updated.`,
         new_values: safeInput
       }).catch(e => console.error('[AUDIT] EMPLOYEE_UPDATED failed:', e));
+
+      // Department / office / role / designation changes → notify the affected employee only
+      const changed = String((data as any)?.status || '').toUpperCase() === 'ACTIVE' ? changedProfileFields(before, safeInput) : [];
+      for (const field of changed) {
+        let name: string = String((safeInput as any).designation ?? '');
+        let newId: string | null = null;
+        if (field !== 'designation') {
+          const table = field === 'department' ? 'departments' : field === 'office' ? 'offices' : 'roles';
+          newId = (safeInput as any)[`${field}_id`] ?? null;
+          const { data: ref } = newId ? await supabase.from(table).select('name').eq('id', newId).maybeSingle() as any : { data: null };
+          name = ref?.name || (newId ? 'a new value' : 'none');
+        }
+        await notificationService.notifyEmployee(id, profileChanged({ employeeId: id, field, newValue: name, newId }));
+      }
 
       return { data, error: null };
     } catch (err) {
@@ -331,6 +363,7 @@ export const employeeService = {
         // @ts-ignore
         .eq('id', existing.id);
       if (!error) {
+        await notifyShiftAssignment(employeeId, (existing as any).id, shiftTemplateId, effectiveDate);
         import('../audit/auditService').then(({ auditService }) => {
           auditService.recordAuditLog({
             action: 'ROSTER_UPDATED',
@@ -356,6 +389,7 @@ export const employeeService = {
         .single();
         
       if (!error) {
+        await notifyShiftAssignment(employeeId, (data as any)?.id, shiftTemplateId, effectiveDate);
         import('../audit/auditService').then(({ auditService }) => {
           auditService.recordAuditLog({
             action: 'ROSTER_CREATED',

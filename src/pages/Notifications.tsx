@@ -5,13 +5,19 @@ import {
   CalendarDays, Briefcase, Activity, ChevronRight
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-
-const mockNotifications: any[] = [];
+import { useAuth } from '../context/AuthContext';
+import { notificationService } from '../services/notifications/notificationService';
+import { realtimeService } from '../services/realtime/realtimeService';
+import { toNotificationItem, mergeNotificationRows, type NotificationRowLike } from '../services/notifications/notificationRules';
 
 const Notifications: React.FC = () => {
   const navigate = useNavigate();
+  const { employee } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [notifications, setNotifications] = useState(mockNotifications);
+  const [loadError, setLoadError] = useState(false);
+  // Database rows (own notifications only); mapped to display items below
+  const [rows, setRows] = useState<NotificationRowLike[]>([]);
+  const notifications = rows.map(r => toNotificationItem(r, Date.now()));
   const [selectedNotif, setSelectedNotif] = useState<any>(null);
   
   // Filters
@@ -24,24 +30,53 @@ const Notifications: React.FC = () => {
   // Preference Drawer
   const [showPreferences, setShowPreferences] = useState(false);
 
+  // Load + realtime (INSERT and UPDATE for this employee only). Refetch on (re)subscribe and when
+  // the browser comes back online, so nothing created while offline is missed; rows merge by id.
   useEffect(() => {
-    const timer = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(timer);
-  }, []);
+    if (!employee?.id) return;
+    let cancelled = false;
+    const load = async () => {
+      const { data, error } = await notificationService.getMyNotifications();
+      if (cancelled) return;
+      if (error) setLoadError(true);
+      else { setLoadError(false); setRows(prev => mergeNotificationRows(prev, (data || []) as any)); }
+      setLoading(false);
+    };
+    load();
+    const channel = realtimeService.subscribeToNotifications(employee.id, (payload: any) => {
+      if (payload?.new?.id) setRows(prev => mergeNotificationRows(prev, [payload.new]));
+    }, 'page', load);
+    const onOnline = () => load();
+    window.addEventListener('online', onOnline);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('online', onOnline);
+      realtimeService.unsubscribe(channel);
+    };
+  }, [employee?.id]);
 
-  const handleMarkAllRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-  };
-
-  const handleClearRead = () => {
-    if (window.confirm('Clear read notifications? They will be removed from your list.')) {
-      setNotifications(prev => prev.filter(n => !n.read));
+  const handleMarkAllRead = async () => {
+    const { error } = await notificationService.markAllNotificationsAsRead();
+    if (!error) {
+      const nowIso = new Date().toISOString();
+      setRows(prev => prev.map(r => (r.is_read ? r : { ...r, is_read: true, read_at: nowIso })));
     }
   };
 
-  const handleMarkRead = (id: number, e?: React.MouseEvent) => {
+  const handleClearRead = async () => {
+    if (window.confirm('Clear read notifications? They will be removed from your list.')) {
+      const { error } = await notificationService.clearReadNotifications();
+      if (!error) setRows(prev => prev.filter(r => !r.is_read));
+    }
+  };
+
+  const handleMarkRead = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    const { error } = await notificationService.markNotificationAsRead(id);
+    if (!error) {
+      const nowIso = new Date().toISOString();
+      setRows(prev => prev.map(r => (r.id === id ? { ...r, is_read: true, read_at: nowIso } : r)));
+    }
   };
 
   const handleOpenDrawer = (notif: any) => {
@@ -209,6 +244,10 @@ const Notifications: React.FC = () => {
 
       {loading ? (
         <div className="skeleton" style={{ height: '400px', borderRadius: 'var(--radius-lg)' }} />
+      ) : loadError && notifications.length === 0 ? (
+        <div className="card" role="alert" style={{ textAlign: 'center', color: 'var(--danger)' }}>
+          Unable to load your notifications. Check your connection and refresh the page.
+        </div>
       ) : filteredNotifications.length === 0 ? (
         <div className="card" style={{ padding: '4rem', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <Bell size={48} color="var(--gray-300)" style={{ marginBottom: '1rem' }}/>

@@ -1,14 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Activity, Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { isAdminPortalRole } from '../lib/roles';
+import { AUTH_MESSAGES, accountErrorMessage, signInErrorMessage, normalizeEmployeeCode } from '../services/auth/authErrors';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, role, isLoading: isAuthLoading } = useAuth();
+  const { user, role, isLoading: isAuthLoading, authError, clearAuthError, signOut } = useAuth();
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -16,10 +17,22 @@ const Login: React.FC = () => {
   const [error, setError] = useState('');
   const [resetMessage, setResetMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const signingOutRef = useRef(false);
+
+  // Account problems found after sign-in (inactive / no profile / no role):
+  // show a clear message and end the half-open session so the form can be used again.
+  useEffect(() => {
+    if (isAuthLoading || !authError) return;
+    setError(accountErrorMessage(authError));
+    if (user && !signingOutRef.current) {
+      signingOutRef.current = true;
+      signOut().finally(() => { signingOutRef.current = false; });
+    }
+  }, [authError, user, isAuthLoading, signOut]);
 
   // Redirect if already logged in
   useEffect(() => {
-    if (user && !isAuthLoading && role) {
+    if (user && !isAuthLoading && role && !authError) {
       if (user.user_metadata?.force_password_change) {
         navigate('/change-password', { replace: true });
         return;
@@ -33,7 +46,7 @@ const Login: React.FC = () => {
         navigate('/employee/dashboard', { replace: true });
       }
     }
-  }, [user, role, isAuthLoading, navigate, location]);
+  }, [user, role, isAuthLoading, authError, navigate, location]);
 
   const handleForgotPassword = async () => {
     setError('');
@@ -70,6 +83,8 @@ const Login: React.FC = () => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setResetMessage('');
+    clearAuthError();
 
     if (!email || !password) {
       setError('Please enter both email/ID and password.');
@@ -83,12 +98,15 @@ const Login: React.FC = () => {
 
       // If it doesn't look like an email, assume it's an Employee Code
       if (!loginEmail.includes('@')) {
+        // Employee IDs are stored upper-case (EMP001); accept emp001 / Emp001 too.
         const { data: resolvedEmail, error: rpcError } = await (supabase.rpc as any)('get_email_by_employee_code', { 
-          p_employee_code: loginEmail 
+          p_employee_code: normalizeEmployeeCode(loginEmail) 
         });
         
         if (rpcError || !resolvedEmail) {
-          setError('Invalid Employee ID or user not found.');
+          // Same message as a wrong password, so the form does not reveal which Employee IDs exist.
+          if (rpcError && import.meta.env.DEV) console.warn('[Login] Employee ID lookup failed:', rpcError.message);
+          setError(AUTH_MESSAGES.INVALID_CREDENTIALS);
           setLoading(false);
           return;
         }
@@ -102,7 +120,8 @@ const Login: React.FC = () => {
       });
 
       if (signInError) {
-        setError(signInError.message);
+        if (import.meta.env.DEV) console.warn('[Login] sign-in failed:', signInError.message);
+        setError(signInErrorMessage(signInError));
       } else {
         import('../services/audit/auditService').then(({ auditService }) => {
           auditService.recordAuditLog({
@@ -115,7 +134,7 @@ const Login: React.FC = () => {
       // If successful, the AuthContext listener will detect SIGNED_IN and handle navigation
     } catch (err) {
       console.error(err);
-      setError('An unexpected network error occurred.');
+      setError(AUTH_MESSAGES.NETWORK);
     } finally {
       setLoading(false);
     }

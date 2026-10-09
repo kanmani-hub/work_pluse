@@ -1,10 +1,13 @@
 import { supabase } from '../../lib/supabase';
-import { completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes } from './breakRules';
+import { completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes, findActiveBreak, closeActiveBreakAt, statusAfterBreakEnds } from './breakRules';
 import { selectCurrentAttendance } from './currentAttendance';
 import { companyDateStr, previousDateStr } from '../../utils/companyDate';
 import type { Database } from '../../types/database';
 import { auditService } from '../audit/auditService';
 import { qaTimeService } from '../qa/qaTimeService';
+import { resolveClockInSession, computeClockOutTotals } from './clockRules';
+import { notificationService } from '../notifications/notificationService';
+import { autoBreakClosedAtClockOut } from '../notifications/notificationRules';
 
 export type AttendanceRow = Database['public']['Tables']['attendance']['Row'];
 export type AttendanceInsert = Database['public']['Tables']['attendance']['Insert'];
@@ -164,27 +167,19 @@ export const attendanceService = {
     const timezone = settings.timezone === 'UTC' ? 'UTC' : 'Asia/Kolkata';
 
     // The business date is always the company date, never the caller's (possibly UTC) date
-    const attendanceDate = companyDateStr();
-    if (input.localDateStr !== attendanceDate) {
-      console.warn(`[Attendance] clockIn received date ${input.localDateStr}; using company date ${attendanceDate}`);
+    const companyToday = companyDateStr();
+    if (input.localDateStr !== companyToday) {
+      console.warn(`[Attendance] clockIn received date ${input.localDateStr}; using company date ${companyToday}`);
     }
-    input = { ...input, localDateStr: attendanceDate };
+    input = { ...input, localDateStr: companyToday };
 
-    // 1. Check if attendance already exists for today, or an overnight session is still open
-    const { data: existingRows } = await supabase
+    // 1. Load today's and yesterday's rows (duplicate / open-overnight checks below)
+    const { data: existingRows, error: existingErr } = await supabase
       .from('attendance')
       .select('id, attendance_date, clock_in_at, clock_out_at, shift_template:shift_template_id(crosses_midnight)')
       .eq('employee_id', empId)
-      .in('attendance_date', [attendanceDate, previousDateStr(attendanceDate)]) as any;
-    const existing = (existingRows || []).find((r: any) => r.attendance_date === attendanceDate);
-    const openOvernight = selectCurrentAttendance(existingRows || [], attendanceDate, previousDateStr(attendanceDate));
-
-    if (openOvernight && openOvernight.attendance_date !== attendanceDate) {
-      return { data: null, error: new Error('You are still clocked in to your overnight shift. Clock out of it first.') };
-    }
-    if (existing) {
-      return { data: null, error: new Error('Attendance already exists for today.') };
-    }
+      .in('attendance_date', [companyToday, previousDateStr(companyToday)]) as any;
+    if (existingErr) return { data: null, error: new Error(existingErr.message) };
 
     // 2. Resolve applicable shift
     const { data: shiftAssignments } = await supabase
@@ -218,21 +213,33 @@ export const attendanceService = {
     }
 
     const now = qaTimeService.getDate();
-    const nowIso = qaTimeService.getIsoString();
+    const nowIso = now.toISOString();
 
-    if (shiftTemplateId) {
-      // Calculate late based on shift start + grace
-      const nowInTz = new Date(now.toLocaleString('en-US', { timeZone: timezone }));
-      const [hrs, mins, secs = 0] = shiftStartStr.split(':').map(Number);
-      
-      const shiftStartInTz = new Date(nowInTz);
-      shiftStartInTz.setHours(hrs, mins, secs, 0);
-      
-      const allowedStartInTz = new Date(shiftStartInTz.getTime() + finalGracePeriod * 60000);
-      
-      if (nowInTz > allowedStartInTz) {
-        lateMinutes = Math.floor((nowInTz.getTime() - shiftStartInTz.getTime()) / 60000);
-      }
+    // Late + attendance date from the assigned shift (shift start + Admin Settings grace).
+    // An overnight shift clocked into after midnight belongs to the shift that started yesterday.
+    const session = resolveClockInSession({
+      nowMs: now.getTime(),
+      today: companyToday,
+      shift: {
+        start_time: shiftStartStr,
+        end_time: shiftAssignments?.shift_template?.end_time ?? null,
+        crosses_midnight: !!shiftAssignments?.shift_template?.crosses_midnight,
+      },
+      graceMinutes: finalGracePeriod,
+      timeZone: timezone,
+    });
+    const attendanceDate = session.attendanceDate;
+    lateMinutes = session.lateMinutes;
+    input = { ...input, localDateStr: attendanceDate };
+
+    // 3. Never a second record for the same shift date, and never while an overnight session is open
+    const existing = (existingRows || []).find((r: any) => r.attendance_date === attendanceDate);
+    const openOvernight = selectCurrentAttendance(existingRows || [], companyToday, previousDateStr(companyToday));
+    if (openOvernight && openOvernight.attendance_date !== attendanceDate) {
+      return { data: null, error: new Error('You are still clocked in to your overnight shift. Clock out of it first.') };
+    }
+    if (existing) {
+      return { data: null, error: new Error('Attendance already exists for today.') };
     }
 
     const initialStatus = lateMinutes > 0 ? 'LATE' : 'WORKING';
@@ -260,7 +267,11 @@ export const attendanceService = {
       .select()
       .single();
 
-    if (error) return { data: null, error: new Error(error.message) };
+    if (error) {
+      // unique_attendance_per_day (employee_id, attendance_date): a second click / tab got there first
+      if ((error as any).code === '23505') return { data: null, error: new Error('Attendance already exists for today.') };
+      return { data: null, error: new Error(error.message) };
+    }
 
     // Audit: CLOCK_IN
     auditService.recordAuditLog({
@@ -310,9 +321,8 @@ export const attendanceService = {
     if (existing.status === 'COMPLETED' || existing.clock_out_at) {
       return { data: null, error: new Error('Attendance is already completed.') };
     }
-    if (existing.status === 'ON_BREAK') {
-      return { data: null, error: new Error('Please end your active break before clocking out.') };
-    }
+    // Whether a break blocks clock-out is decided from the actual break rows below
+    // (a stale ON_BREAK status alone must not block it).
 
     const { globalSettingsService } = await import('../settings/globalSettingsService');
     const globalSettings = await globalSettingsService.loadSettings();
@@ -321,58 +331,73 @@ export const attendanceService = {
     
     const inTime = new Date(existing.clock_in_at!).getTime();
     const outTime = new Date(nowIso).getTime();
-    const totalDurationHrs = (outTime - inTime) / (1000 * 60 * 60);
     
     // Fetch Break durations to calculate actual break minutes accurately
-    const { data: breaks } = await supabase
+    const { data: breakRows, error: breaksErr } = await supabase
       .from('attendance_breaks')
       .select('*')
       .eq('attendance_id', attendanceId) as any;
+    if (breaksErr) return { data: null, error: new Error(breaksErr.message) };
+    let breaks: any[] = breakRows || [];
+
+    // An active MANUAL break must be ended by the employee first (existing rule).
+    // An active AUTOMATIC (GPS) break is closed at the clock-out time: the employee does not
+    // have to walk back into the office just to clock out, and no break stays open afterwards.
+    const activeBreak = findActiveBreak(breaks);
+    if (activeBreak && activeBreak.break_type !== 'AUTO_GPS') {
+      return { data: null, error: new Error('Please end your active break before clocking out.') };
+    }
+    let closedAutoBreak: any = null;
+    if (activeBreak) {
+      const { breaks: withClosed, closed } = closeActiveBreakAt(breaks, nowIso);
+      const { data: closedRow, error: closeErr } = await (supabase.from('attendance_breaks') as any)
+        .update({ ended_at: closed!.ended_at, duration_minutes: closed!.duration_minutes })
+        .eq('id', activeBreak.id)
+        .is('ended_at', null) // only if still open (the return-to-office transition may have just closed it)
+        .select()
+        .maybeSingle();
+      if (closeErr) return { data: null, error: new Error(closeErr.message) };
+      if (closedRow) {
+        breaks = withClosed;
+        closedAutoBreak = closed;
+      } else {
+        // Closed concurrently: use the stored end time
+        const { data: fresh } = await supabase.from('attendance_breaks').select('*').eq('attendance_id', attendanceId) as any;
+        breaks = fresh || [];
+        if (findActiveBreak(breaks)) return { data: null, error: new Error('Please try again.') };
+      }
+    }
 
     // Sum of the actual stored break durations (same rule as the break service and timers)
-    const actualBreakMins = completedBreakMinutes(breaks || []);
+    const actualBreakMins = completedBreakMinutes(breaks);
 
     const requiredHours = existing.required_hours ?? 8;
     const allowedBreakMins = resolveAllowedBreakMinutes(existing.shift_template?.break_duration_minutes, globalSettings.app.breakDurationMins);
     
-    // Prevent clock out if any break is still active (fallback check)
-    if (breaks?.some((b: any) => b.ended_at === null)) {
+    // Fallback: never complete attendance with a break still open
+    if (breaks.some((b: any) => !b.ended_at)) {
       return { data: null, error: new Error('Please end your active break before clocking out.') };
     }
 
     const breakOverrunMins = computeBreakOverrun(actualBreakMins, allowedBreakMins, globalSettings.payroll.enableBreakOverrunDetection);
 
-    // Calculate effective working hours
-    const actualBreakHrs = actualBreakMins / 60;
-    const effectiveWorkedHrs = Math.max(0, totalDurationHrs - actualBreakHrs);
-
-    // Calculate Early Logout / Overtime
-    let earlyLogoutMins = 0;
-    let overtimeMins = 0;
-    const effectiveWorkedMins = Math.floor(effectiveWorkedHrs * 60);
-    const requiredMins = Math.floor(requiredHours * 60);
-
-    if (effectiveWorkedMins < requiredMins) {
-      earlyLogoutMins = requiredMins - effectiveWorkedMins;
-    } else if (effectiveWorkedMins > requiredMins) {
-      overtimeMins = effectiveWorkedMins - requiredMins;
-    }
-
-    // Determine status
-    let status = 'COMPLETED';
-    let isHalfDay = false;
-    
-    if (effectiveWorkedMins < requiredMins * 0.5) {
-      // Worked less than half of required shift
-      isHalfDay = true;
-      status = 'HALF_DAY';
-    }
+    // Worked = elapsed - completed breaks; half day < 50% of required (see clockRules).
+    // Extra time is NOT overtime: overtime only exists once an employee request is approved
+    // by an admin, so it is never written automatically (payroll pays overtime_minutes).
+    const totals = computeClockOutTotals({ clockInMs: inTime, clockOutMs: outTime, breakMinutes: actualBreakMins, requiredHours });
+    const effectiveWorkedHrs = totals.workedHours;
+    const effectiveWorkedMins = totals.workedMinutes;
+    const earlyLogoutMins = totals.earlyLogoutMinutes;
+    const overtimeMins = totals.overtimeMinutes; // always 0 until approved overtime exists
+    const extraMins = totals.extraMinutes;
+    const status = totals.status;
+    const isHalfDay = totals.isHalfDay;
 
     // @ts-ignore
     const { data: updated, error } = await (supabase.from('attendance') as any)
       .update({
         clock_out_at: nowIso,
-        worked_hours: Number(effectiveWorkedHrs.toFixed(2)),
+        worked_hours: effectiveWorkedHrs,
         break_minutes: actualBreakMins,
         break_overrun_minutes: breakOverrunMins,
         early_logout_minutes: earlyLogoutMins,
@@ -381,10 +406,23 @@ export const attendanceService = {
         status: status
       } as any)
       .eq('id', attendanceId)
+      .eq('employee_id', empId)
+      .is('clock_out_at', null) // a second click / tab cannot overwrite an existing clock-out
       .select()
-      .single() as any;
+      .maybeSingle() as any;
 
-    if (error) return { data: null, error: new Error(error.message) };
+    if (error || !updated) {
+      if (error && closedAutoBreak) {
+        // The automatic break was closed but the clock-out could not be saved: the employee is
+        // still clocked in and no longer on a break, so do not leave a stale ON_BREAK status.
+        await (supabase.from('attendance') as any)
+          .update({ status: statusAfterBreakEnds(existing) })
+          .eq('id', attendanceId)
+          .is('clock_out_at', null);
+      }
+      if (error) return { data: null, error: new Error(error.message) };
+      return { data: null, error: new Error('Attendance is already completed.') };
+    }
 
     // Audit: CLOCK_OUT
     auditService.recordAuditLog({
@@ -392,9 +430,30 @@ export const attendanceService = {
       module: 'ATTENDANCE',
       entity_type: 'attendance',
       entity_id: attendanceId,
-      description: `Employee clocked out. Status: ${status}. Worked: ${effectiveWorkedMins}m. Overtime: ${overtimeMins}m. Early logout: ${earlyLogoutMins}m.`,
+      description: `Employee clocked out. Status: ${status}. Worked: ${effectiveWorkedMins}m. Extra time (not overtime): ${extraMins}m. Early logout: ${earlyLogoutMins}m.`,
       new_values: { status, worked_minutes: effectiveWorkedMins, break_minutes: actualBreakMins, overtime_minutes: overtimeMins }
     }).catch(e => console.error('[AUDIT] CLOCK_OUT failed:', e));
+
+    if (closedAutoBreak) {
+      // The automatic break ended because the employee clocked out (logged once: only the
+      // request that actually closed the break gets here)
+      await supabase.from('attendance_events').insert({
+        attendance_id: attendanceId,
+        employee_id: empId,
+        event_type: 'BREAK_END',
+        event_at: closedAutoBreak.ended_at,
+        source: 'SYSTEM',
+        metadata: { trigger: 'CLOCK_OUT', break_type: 'AUTO_GPS', break_id: closedAutoBreak.id, duration_minutes: closedAutoBreak.duration_minutes },
+      } as any);
+      auditService.recordAuditLog({
+        action: 'AUTOMATIC_BREAK_ENDED',
+        module: 'ATTENDANCE',
+        entity_type: 'attendance_breaks',
+        entity_id: closedAutoBreak.id,
+        description: `Automatic GPS break closed at clock-out. Duration: ${closedAutoBreak.duration_minutes}m.`,
+      }).catch(e => console.error('[AUDIT] AUTOMATIC_BREAK_ENDED failed:', e));
+      await notificationService.notifyEmployee(empId, autoBreakClosedAtClockOut({ breakId: closedAutoBreak.id, attendanceId }));
+    }
 
     // @ts-ignore
     await supabase.from('attendance_events').insert({
@@ -402,7 +461,8 @@ export const attendanceService = {
       employee_id: empId,
       event_type: 'CLOCK_OUT',
       event_at: nowIso,
-      source: 'WEB'
+      source: 'WEB',
+      ...(closedAutoBreak ? { metadata: { during_auto_break: true } } : {}),
     } as any);
 
     return { data: updated, error: null };

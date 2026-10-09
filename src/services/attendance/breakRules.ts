@@ -73,3 +73,31 @@ export function computeBreakOverrun(actualMinutes: number, allowedMinutes: numbe
   if (!detectionEnabled || allowedMinutes === null) return 0;
   return Math.max(0, actualMinutes - allowedMinutes);
 }
+
+/**
+ * Attendance status once a break ends. The break only changes the work/break state:
+ * the clock-in result is kept, so a late arrival stays LATE (same rule clock-in uses:
+ * late_minutes > 0 → LATE, otherwise WORKING). late_minutes, is_half_day, clock-in
+ * time and shift are never touched by a break.
+ */
+export function statusAfterBreakEnds(attendance: { late_minutes?: number | null } | null | undefined): 'LATE' | 'WORKING' {
+  return (attendance?.late_minutes ?? 0) > 0 ? 'LATE' : 'WORKING';
+}
+
+/**
+ * Close the active break (if any) at the given time, e.g. clock-out during an automatic
+ * break. Returns the break list with that break closed plus what was closed, so the
+ * caller uses the same completedBreakMinutes() rule for the final worked hours.
+ */
+export function closeActiveBreakAt<T extends BreakLike>(breaks: T[] | null | undefined, endIso: string): {
+  breaks: T[];
+  closed: (Omit<T, 'ended_at' | 'duration_minutes'> & { ended_at: string; duration_minutes: number }) | null;
+} {
+  const list = breaks || [];
+  const active = findActiveBreak(list);
+  if (!active) return { breaks: list, closed: null };
+  const endMs = Math.max(new Date(endIso).getTime(), new Date(active.started_at).getTime());
+  const end = new Date(endMs).toISOString();
+  const closed = { ...active, ended_at: end, duration_minutes: breakDurationMinutes(active.started_at, end) };
+  return { breaks: list.map(b => (b === active ? (closed as unknown as T) : b)), closed };
+}

@@ -1,4 +1,7 @@
 import { supabase } from '../../lib/supabase';
+import { notificationService } from '../notifications/notificationService';
+import { shiftTimingChanged } from '../notifications/notificationRules';
+import { companyDateStr } from '../../utils/companyDate';
 
 export const shiftService = {
   async getShifts() {
@@ -30,6 +33,8 @@ export const shiftService = {
   },
 
   async updateShift(shiftId: string, shiftData: any) {
+    const { data: before } = await (supabase.from('shift_templates') as any)
+      .select('start_time, end_time').eq('id', shiftId).maybeSingle();
     // @ts-ignore
     const { data, error } = await (supabase.from('shift_templates') as any)
       .update(shiftData)
@@ -37,6 +42,24 @@ export const shiftService = {
       .select()
       .single();
     if (error) return { data: null, error };
+
+    // Timing changed → notify only employees whose CURRENT shift is this one
+    if (before && data && (before.start_time !== data.start_time || before.end_time !== data.end_time)) {
+      const today = companyDateStr();
+      const { data: rows } = await (supabase.from('shift_assignments') as any)
+        .select('employee_id, shift_template_id, effective_date')
+        .lte('effective_date', today)
+        .order('effective_date', { ascending: false });
+      // Each employee's current assignment = the latest effective_date on or before today
+      const latest = new Map<string, { date: string; sid: string }>();
+      for (const r of (rows || []) as any[]) {
+        const cur = latest.get(r.employee_id);
+        if (!cur || r.effective_date > cur.date) latest.set(r.employee_id, { date: r.effective_date, sid: r.shift_template_id });
+      }
+      const affected = [...latest.entries()].filter(([, v]) => v.sid === shiftId).map(([emp]) => emp);
+      const n = shiftTimingChanged({ shiftId, shiftName: data.name, start: data.start_time, end: data.end_time });
+      for (const emp of affected) await notificationService.notifyEmployee(emp, n);
+    }
     import('../audit/auditService').then(({ auditService }) => {
       auditService.recordAuditLog({
         action: 'SHIFT_UPDATED',

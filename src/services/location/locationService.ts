@@ -3,6 +3,9 @@ import { calculateHaversineDistance } from '../../utils/geofence';
 import { notificationService } from '../notifications/notificationService';
 import { qaTimeService } from '../qa/qaTimeService';
 import { initialStability, nextStability, type GeofenceSide, type StabilityState } from './geofenceStability';
+import { classifyLocation, isUsableReading, shouldPersistCheck, isExplicitCheck, liveStatusFor } from './locationRules';
+import { selectCurrentAttendance } from '../attendance/currentAttendance';
+import { companyDateStr, previousDateStr } from '../../utils/companyDate';
 
 export interface GeolocationResult {
   latitude: number | null;
@@ -171,7 +174,10 @@ export const locationService = {
   /**
    * Verify location and return event ID to be passed to attendance
    */
-  async verifyCurrentLocation(type: 'CLOCK_IN' | 'CLOCK_OUT' | 'LOCATION_CHECK'): Promise<LocationVerificationResponse> {
+  async verifyCurrentLocation(
+    type: 'CLOCK_IN' | 'CLOCK_OUT' | 'LOCATION_CHECK',
+    opts: { geo?: GeolocationResult } = {},
+  ): Promise<LocationVerificationResponse> {
     const empId = await this.getCurrentEmployeeId();
     if (!empId) return { eventId: null, result: 'ERROR', error: new Error('Unauthorized') };
 
@@ -190,8 +196,8 @@ export const locationService = {
 
     if (empErr) return { eventId: null, result: 'ERROR', error: new Error('Database error') };
 
-    // 2. Check if there's an approved WFH request today
-    const localDateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // Approximate local date
+    // 2. Check if there's an approved WFH request today (company date)
+    const localDateStr = companyDateStr();
     const { data: wfhData } = await supabase
       .from('wfh_requests')
       .select('id, status')
@@ -202,70 +208,59 @@ export const locationService = {
 
     const isWfh = !!wfhData;
 
-    // 3. Obtain browser location
-    const geo = await this.getCurrentLocation();
-    
-    // Default values if GPS fails
-    let result: VerificationResult = isWfh ? 'WFH' : 'ERROR';
+    // 3. Obtain location: the live-tracking watcher passes the position it just received,
+    //    explicit checks (clock in/out) request a fresh one.
+    const geo = opts.geo ?? await this.getCurrentLocation();
+
+    // 4/5. Accuracy + geofence via the shared rules (GPS failure never means OUTSIDE; WFH bypasses the office geofence)
+    const office = employeeData?.offices;
+    let radius = office?.geofence_radius || 200;
     let distance: number | undefined;
-    let failureReason = geo.error || null;
-    let radius = employeeData?.offices?.geofence_radius || 200;
-
-    // We still log the location event even if GPS fails or if WFH is approved,
-    // to keep an audit trail.
-
-    if (geo.status !== 'SUCCESS') {
-      if (geo.status === 'LOCATION_DENIED') result = 'LOCATION_DENIED';
-      else if (geo.status === 'LOCATION_UNAVAILABLE' || geo.status === 'TIMEOUT') result = 'LOCATION_UNAVAILABLE';
-      else result = 'ERROR';
-      
-      // If they are WFH, they might not need GPS for geofencing, but we still record they tried
-      if (isWfh) result = 'WFH';
-    } else {
-      // 4. Validate accuracy
-      if (geo.accuracy && geo.accuracy > 150) { // e.g., > 150m is low accuracy
-        result = isWfh ? 'WFH' : 'LOW_ACCURACY';
-        failureReason = 'GPS accuracy too low';
-      } else {
-        // 5. Check geofence
-        const office = employeeData?.offices;
-        if (!office) {
-          result = isWfh ? 'WFH' : 'ERROR';
-          failureReason = 'No office has been assigned to your employee profile.';
-        } else if (!office.is_active) {
-          result = isWfh ? 'WFH' : 'ERROR';
-          failureReason = 'Assigned office is inactive.';
-        } else {
-          radius = office.geofence_radius || 200;
-          distance = calculateHaversineDistance(
-            geo.latitude!, geo.longitude!,
-            office.latitude, office.longitude
-          );
-
-          if (distance <= radius) {
-            result = isWfh ? 'WFH' : 'INSIDE';
-          } else {
-            result = isWfh ? 'WFH' : 'OUTSIDE';
-            if (!isWfh) {
-              failureReason = `Distance: ${Math.round(distance)}m (Allowed: ${radius}m)`;
-            }
-          }
-        }
-      }
+    if (geo.status === 'SUCCESS' && office && office.is_active && geo.latitude !== null && geo.longitude !== null) {
+      radius = office.geofence_radius || 200;
+      distance = calculateHaversineDistance(geo.latitude, geo.longitude, office.latitude, office.longitude);
     }
+    const classified = classifyLocation({
+      geoStatus: geo.status,
+      accuracyMeters: geo.accuracy,
+      distanceMeters: distance ?? null,
+      radiusMeters: radius,
+      isWfh,
+      office: !office ? 'MISSING' : !office.is_active ? 'INACTIVE' : 'OK',
+    });
+    const result: VerificationResult = classified.result;
+    const failureReason: string | null = geo.error || classified.failureReason;
 
     // Ensure we do NOT store fake coordinates.
     // geo.latitude and geo.longitude are only from navigator.geolocation.
 
-    // 6. Today's open attendance (links location records to the attendance where the schema supports it)
-    const { data: openAttendance } = await supabase
+    // 6. Current open attendance: today's, or last night's overnight shift still in progress
+    //    (the old query only looked at today's date, so overnight sessions lost their link after midnight)
+    const { data: recentAttendance } = await supabase
       .from('attendance')
-      .select('id')
+      .select('id, attendance_date, clock_in_at, clock_out_at, shift_template:shift_template_id(crosses_midnight)')
       .eq('employee_id', empId)
-      .eq('attendance_date', localDateStr)
-      .is('clock_out_at', null)
-      .maybeSingle() as any;
+      .in('attendance_date', [localDateStr, previousDateStr(localDateStr)]) as any;
+    const current = selectCurrentAttendance((recentAttendance || []) as any[], localDateStr, previousDateStr(localDateStr)) as any;
+    const openAttendance = current && current.clock_in_at && !current.clock_out_at ? current : null;
     const attendanceId: string | null = openAttendance?.id ?? null;
+
+    const buildResponse = (eventId: string | null): LocationVerificationResponse => {
+      if (result === 'OUTSIDE' || result === 'LOCATION_DENIED' || result === 'LOW_ACCURACY' || result === 'ERROR' || result === 'LOCATION_UNAVAILABLE') {
+        let msg = failureReason || 'Location verification failed.';
+        if (result === 'LOCATION_DENIED') msg = 'Location permission is required for office attendance. Please enable location access and try again.';
+        if (result === 'OUTSIDE') msg = `You are outside the assigned office geofence. ${classified.failureReason ?? ''}`.trim();
+        if (result === 'LOW_ACCURACY') msg = 'GPS accuracy is too low to verify location.';
+        if (result === 'LOCATION_UNAVAILABLE') msg = 'Unable to determine your location. Please make sure GPS is on and try again.';
+        return { eventId, result, distance, radius, error: new Error(msg) };
+      }
+      return { eventId, result, distance, radius, error: undefined };
+    };
+
+    // Background checks are stored only while clocked in (no off-duty tracking, no needless writes)
+    if (!shouldPersistCheck(type, !!openAttendance)) {
+      return buildResponse(null);
+    }
 
     // 7. Create verification event (records the explicit result, including DENIED / UNAVAILABLE / LOW_ACCURACY)
     const nowIso = new Date().toISOString();
@@ -293,7 +288,8 @@ export const locationService = {
       return { eventId: null, result: 'ERROR', error: new Error(insertErr.message) };
     }
 
-    import('../audit/auditService').then(({ auditService }) => {
+    // Audit only explicit clock-in/out verifications (not every 10-second background check)
+    if (isExplicitCheck(type)) import('../audit/auditService').then(({ auditService }) => {
       let actionStr = 'LOCATION_VERIFICATION_FAILED';
       if (result === 'INSIDE' || result === 'WFH') actionStr = 'LOCATION_VERIFICATION_SUCCESS';
       else if (result === 'LOCATION_DENIED') actionStr = 'LOCATION_DENIED';
@@ -310,10 +306,10 @@ export const locationService = {
     // 8. Update live location ONLY from a usable reading (INSIDE / OUTSIDE / WFH).
     //    Denied, unavailable, low-accuracy or no-office readings never change the geofence status
     //    and never refresh last_seen_at, so the admin sees an explicit stale state instead of a fake one.
-    const usableReading = geo.status === 'SUCCESS' && (result === 'INSIDE' || result === 'OUTSIDE' || result === 'WFH');
+    const usableReading = isUsableReading(geo.status, result);
     if (usableReading) {
       const locContext = isWfh ? 'WFH' : 'OFFICE';
-      const readingStatus = result === 'WFH' ? 'WFH' : (result === 'OUTSIDE' ? 'OUTSIDE_GEOFENCE' : 'INSIDE_GEOFENCE');
+      const readingStatus = liveStatusFor(result);
       const readingAtMs = geo.timestamp ?? Date.now();
 
       const { data: existingLiveLoc } = await supabase
@@ -358,8 +354,10 @@ export const locationService = {
           newStatus = step.state.confirmed === 'OUTSIDE' ? 'OUTSIDE_GEOFENCE' : step.state.confirmed === 'INSIDE' ? 'INSIDE_GEOFENCE' : existingLiveLoc.location_status;
         }
 
+        // Compare-and-set on the status we read: if another tab/device changed it in the
+        // meantime, this update matches no row and we do NOT emit a second ENTER/EXIT event.
         // @ts-ignore
-        await (supabase.from('employee_live_locations') as any).update({
+        const { data: updatedRows } = await (supabase.from('employee_live_locations') as any).update({
           latitude: geo.latitude,
           longitude: geo.longitude,
           accuracy_meters: geo.accuracy,
@@ -369,7 +367,10 @@ export const locationService = {
           attendance_id: attendanceId,
           last_seen_at: nowIso,
           source: 'WEB'
-        }).eq('id', existingLiveLoc.id);
+        }).eq('id', existingLiveLoc.id).eq('location_status', existingLiveLoc.location_status).select('id');
+        if (transition && (!updatedRows || updatedRows.length === 0)) {
+          transition = null; // already handled elsewhere: no duplicate event / auto-break
+        }
 
         const { error: histErr } = await (supabase.from('employee_location_history') as any).insert(historyRow);
         if (histErr) console.error('[HISTORY INSERT ERROR]', histErr);
@@ -411,8 +412,15 @@ export const locationService = {
 
           // Automatic break uses the confirmed transition time (first reading on the new side)
           const { breakService } = await import('../attendance/breakService');
-          await breakService.handleAutoBreakTransition(empId, transition.to === 'OUTSIDE' ? 'START' : 'END', transitionIso, { isWfhContext: isWfh })
-            .catch(e => console.error('[AUTO BREAK]', e));
+          const breakResult: any = await breakService.handleAutoBreakTransition(empId, transition.to === 'OUTSIDE' ? 'START' : 'END', transitionIso, { isWfhContext: isWfh })
+            .catch(e => { console.error('[AUTO BREAK]', e); return null; });
+          // The employee already got "Automatic Break Started/Ended"; otherwise (e.g. manual break
+          // active) tell them about the confirmed geofence change itself. Confirmed transitions only:
+          // never for GPS failure, low accuracy or jitter.
+          if (eventData?.id && breakResult && breakResult.action !== 'STARTED' && breakResult.action !== 'ENDED') {
+            const { geofenceTransition } = await import('../notifications/notificationRules');
+            await notificationService.notifyEmployee(empId, geofenceTransition({ eventId: eventData.id, to: transition.to }));
+          }
         }
       } else {
         // @ts-ignore
@@ -461,24 +469,19 @@ export const locationService = {
       }
     }
 
-    if (result === 'OUTSIDE' || result === 'LOCATION_DENIED' || result === 'LOW_ACCURACY' || result === 'ERROR' || result === 'LOCATION_UNAVAILABLE') {
-      let msg = failureReason || 'Location verification failed.';
-      if (result === 'LOCATION_DENIED') {
-        msg = 'Location permission is required for office attendance. Please enable location access and try again.';
-        notificationService.notifyGeofenceEvent({
-          event_type: 'LOCATION_DENIED',
-          employeeName: employeeData?.first_name || 'Employee',
-          employeeCode: employeeData?.employee_code || 'Unknown',
-          empId: empId,
-          eventId: eventResult?.id
-        });
-      }
-      if (result === 'OUTSIDE') msg = `You are outside the assigned office geofence. ${failureReason}`;
-      if (result === 'LOW_ACCURACY') msg = 'GPS accuracy is too low to verify location.';
-      return { eventId: eventResult?.id || null, result, distance, radius, error: new Error(msg) };
+    // Admins are told about denied location only on an explicit clock-in/out attempt
+    // (the background check would otherwise notify them every 10 seconds).
+    if (result === 'LOCATION_DENIED' && isExplicitCheck(type)) {
+      notificationService.notifyGeofenceEvent({
+        event_type: 'LOCATION_DENIED',
+        employeeName: employeeData?.first_name || 'Employee',
+        employeeCode: employeeData?.employee_code || 'Unknown',
+        empId: empId,
+        eventId: eventResult?.id
+      });
     }
 
-    return { eventId: eventResult?.id || null, result, distance, radius, error: undefined };
+    return buildResponse(eventResult?.id || null);
   },
 
   _watchId: null as number | null,
@@ -519,12 +522,26 @@ export const locationService = {
           this._lastUpdate = now;
           this._lastLat = lat;
           this._lastLon = lon;
-          // Silently verify and persist (which does live update + history insert)
-          await this.verifyCurrentLocation('LOCATION_CHECK').catch(() => {});
+          // Verify + persist using THIS position (no second GPS request per update)
+          await this.verifyCurrentLocation('LOCATION_CHECK', {
+            geo: {
+              latitude: lat,
+              longitude: lon,
+              accuracy: position.coords.accuracy,
+              timestamp: position.timestamp,
+              status: 'SUCCESS',
+            },
+          }).catch(() => {});
         }
       },
       (error) => {
         console.warn('Live tracking error:', error);
+        // Permission denied ends this watch; clear it so the next startLiveTracking()
+        // (clock in, opening Attendance/Dashboard) can start a new one after access is granted.
+        if (error.code === error.PERMISSION_DENIED && this._watchId !== null) {
+          navigator.geolocation.clearWatch(this._watchId);
+          this._watchId = null;
+        }
       },
       { enableHighAccuracy: true, maximumAge: 0, timeout: this.LOCATION_TRACKING_INTERVAL_MS }
     );

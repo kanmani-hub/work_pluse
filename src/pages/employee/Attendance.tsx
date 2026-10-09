@@ -12,7 +12,8 @@ import { locationService } from '../../services/location/locationService';
 import { qaTimeService } from '../../services/qa/qaTimeService';
 import { computeWorkTimer } from '../../services/attendance/breakRules';
 import { selectCurrentAttendance } from '../../services/attendance/currentAttendance';
-import { companyDateStr, previousDateStr } from '../../utils/companyDate';
+import { companyDateStr, previousDateStr, COMPANY_TIMEZONE } from '../../utils/companyDate';
+import { attendanceActionMessage } from '../../services/attendance/employeeDashboardRules';
 import { supabase } from '../../lib/supabase';
 
 const SearchIcon = ({size, color}: any) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
@@ -49,7 +50,7 @@ const EmployeeAttendance: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const locVerificationIdRef = useRef<string | null>(null);
-  const fetchCalledRef = useRef(false);
+  const [clockOutBusy, setClockOutBusy] = useState(false);
 
 
   useEffect(() => {
@@ -90,6 +91,9 @@ const EmployeeAttendance: React.FC = () => {
   }, [history, currentDate]);
 
   const currentMonthStr = currentDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  // Clock In is allowed inside the office, or on an approved WFH day (locationService returns 'WFH')
+  const locationAllowsClockIn = (result?: string | null) => result === 'INSIDE' || result === 'WFH';
+
   const handlePrevMonth = () => setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
   const handleNextMonth = () => setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
 
@@ -101,34 +105,31 @@ const EmployeeAttendance: React.FC = () => {
   const monthDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
   useEffect(() => {
-    // eslint-disable-next-line react-compiler/react-compiler
-    if (!fetchCalledRef.current) {
-      fetchCalledRef.current = true;
-      fetchData();
-      
-      attendanceService.getCurrentEmployeeId().then(empId => {
-        if (!empId) return;
-        const channel = supabase.channel('attendance_page')
-          .on(
-            'postgres_changes',
-            { event: '*', schema: 'public', table: 'attendance', filter: `employee_id=eq.${empId}` },
-            () => {
-              fetchData();
-            }
-          )
-          .subscribe();
-        
-        // attach to window for cleanup or just let it live since we can't easily return it here without complex state
-        (window as any)._attChannel = channel;
-      });
-    }
+    let cancelled = false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    fetchData(true);
+
+    attendanceService.getCurrentEmployeeId().then(empId => {
+      if (!empId || cancelled) return;
+      channel = supabase.channel(`employee_attendance:${empId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'attendance', filter: `employee_id=eq.${empId}` },
+          () => {
+            // Background refresh: no skeleton, no extra GPS check
+            fetchData(false);
+          }
+        )
+        .subscribe();
+    });
+
     return () => {
-      // eslint-disable-next-line react-compiler/react-compiler
+      cancelled = true;
       stopCamera();
-      locationService.stopLiveTracking();
-      if ((window as any)._attChannel) {
-        supabase.removeChannel((window as any)._attChannel);
-      }
+      // Live GPS tracking is started/stopped by AppLayout and clock in/out, not by this page:
+      // stopping it here broke automatic breaks after leaving the Attendance page.
+      if (channel) supabase.removeChannel(channel);
     };
   }, []);
 
@@ -157,8 +158,9 @@ const EmployeeAttendance: React.FC = () => {
     }
   };
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (initial = false) => {
+    if (initial) setLoading(true);
+    try {
     const { data: allData } = await attendanceService.getMyAttendance();
     
     const empId = await attendanceService.getCurrentEmployeeId();
@@ -189,24 +191,26 @@ const EmployeeAttendance: React.FC = () => {
          if (shiftAssignmentsFallback && shiftAssignmentsFallback.shift_template) {
             setCurrentShift(shiftAssignmentsFallback.shift_template);
          } else {
-            const { data: fallbackShift } = await supabase.from('shift_templates').select('*').eq('is_active', true).limit(1).maybeSingle() as any;
-            setCurrentShift(fallbackShift);
+            // No assigned shift: show none (never borrow another shift template)
+            setCurrentShift(null);
          }
       }
 
-      // Office assignment
-      const { data: empData } = await supabase.from('employees').select('office:office_id(*)').eq('id', empId).maybeSingle() as any;
-      if (empData && empData.office) {
-        setAssignedOffice(empData.office);
+      if (initial) {
+        // Office assignment
+        const { data: empData } = await supabase.from('employees').select('office:office_id(*)').eq('id', empId).maybeSingle() as any;
+        if (empData && empData.office) {
+          setAssignedOffice(empData.office);
+        }
+
+        // Face Registration
+        const { data: faceReg } = await faceService.getMyFaceRegistration();
+        setFaceRegistration(faceReg);
+
+        // Initial GPS Location Check (once per visit, not on every realtime refresh)
+        const locResult = await locationService.verifyCurrentLocation('LOCATION_CHECK');
+        setLocationVerification(locResult);
       }
-
-      // Face Registration
-      const { data: faceReg } = await faceService.getMyFaceRegistration();
-      setFaceRegistration(faceReg);
-
-      // Initial GPS Location Check
-      const locResult = await locationService.verifyCurrentLocation('LOCATION_CHECK');
-      setLocationVerification(locResult);
     }
 
     if (allData) {
@@ -215,9 +219,11 @@ const EmployeeAttendance: React.FC = () => {
       let totalLateMins = 0;
 
       const mapped = allData.map((row: any) => {
-        const d = new Date(row.attendance_date);
-        const inTime = row.clock_in_at ? new Date(row.clock_in_at).toLocaleTimeString('en-US', {hour: '2-digit', minute:'2-digit'}) : '--:--';
-        const outTime = row.clock_out_at ? new Date(row.clock_out_at).toLocaleTimeString('en-US', {hour: '2-digit', minute:'2-digit'}) : '--:--';
+        const d = new Date(`${row.attendance_date}T00:00:00`);
+        const inTime = row.clock_in_at ? new Date(row.clock_in_at).toLocaleTimeString('en-US', {hour: '2-digit', minute:'2-digit', timeZone: COMPANY_TIMEZONE}) : '--:--';
+        const outTime = row.clock_out_at ? new Date(row.clock_out_at).toLocaleTimeString('en-US', {hour: '2-digit', minute:'2-digit', timeZone: COMPANY_TIMEZONE}) : '--:--';
+        // Clock-out on a later company date than the clock-in (overnight shift)
+        const crossedMidnight = !!(row.clock_in_at && row.clock_out_at && companyDateStr(row.clock_out_at) !== companyDateStr(row.clock_in_at));
         
         let hoursStr = '--:--';
         if (row.worked_hours) {
@@ -245,15 +251,16 @@ const EmployeeAttendance: React.FC = () => {
           id: row.id,
           date: d.toLocaleDateString('en-US', {day:'numeric', month:'short', year:'numeric'}),
           rawDate: row.attendance_date,
-          shift: row.shift_template?.name || 'General Shift',
-          mode: 'OFFICE',
+          shift: row.shift_template?.name || 'No shift',
+          mode: row.status === 'WFH' ? 'WFH' : 'OFFICE',
           in: inTime,
           out: outTime,
           break: `${row.break_minutes || 0}m`,
           hours: hoursStr,
           status: displayStatus,
           originalStatus: row.status,
-          overnight: false,
+          overnight: crossedMidnight,
+          is_half_day: !!row.is_half_day,
           lateMin: row.late_minutes || 0,
           earlyMin: row.early_logout_minutes || 0,
           autoLogout: row.is_auto_logged_out,
@@ -296,7 +303,11 @@ const EmployeeAttendance: React.FC = () => {
         setTodayBreaks([]);
       }
     }
-    setLoading(false);
+    } catch (err) {
+      console.error('[Attendance] load failed:', err);
+    } finally {
+      if (initial) setLoading(false);
+    }
   };
 
   const startCameraFlow = async (action: 'REGISTER_FACE' | 'CLOCK_IN') => {
@@ -305,7 +316,7 @@ const EmployeeAttendance: React.FC = () => {
     const locResult = await locationService.verifyCurrentLocation(action === 'CLOCK_IN' ? 'CLOCK_IN' : 'LOCATION_CHECK');
     setLocationVerification(locResult);
     
-    if (appSettings?.requireGeolocation && locResult.result !== 'INSIDE') {
+    if (appSettings?.requireGeolocation && !locationAllowsClockIn(locResult.result)) {
       const msg = locResult.result === 'LOCATION_UNAVAILABLE' // includes GPS timeouts (mapped by locationService)
         ? 'Unable to determine your location. Please ensure GPS is enabled and try again.'
         : locResult.result === 'LOCATION_DENIED'
@@ -314,7 +325,7 @@ const EmployeeAttendance: React.FC = () => {
         ? 'GPS accuracy is too low. Please move to an open area and retry.'
         : locResult.result === 'OUTSIDE'
         ? 'You are outside the office geofence. Clock In requires you to be at the office location.'
-        : `Location verification failed: ${locResult.result}`;
+        : 'Unable to verify your location. Please try again.';
       alert(msg);
       setClockInFlowStep(0);
       return;
@@ -346,7 +357,7 @@ const EmployeeAttendance: React.FC = () => {
       const locResult = await locationService.verifyCurrentLocation('CLOCK_IN');
       setLocationVerification(locResult);
       
-      if (appSettings?.requireGeolocation && locResult.result !== 'INSIDE') {
+      if (appSettings?.requireGeolocation && !locationAllowsClockIn(locResult.result)) {
         const msg = locResult.result === 'LOCATION_UNAVAILABLE' // includes GPS timeouts (mapped by locationService)
           ? 'Unable to determine your location. Please ensure GPS is enabled and try again.'
           : locResult.result === 'LOCATION_DENIED'
@@ -355,7 +366,7 @@ const EmployeeAttendance: React.FC = () => {
           ? 'GPS accuracy is too low. Please move to an open area and retry.'
           : locResult.result === 'OUTSIDE'
           ? 'You are outside the office geofence. Clock In requires you to be at the office location.'
-          : `Location verification failed: ${locResult.result}`;
+          : 'Unable to verify your location. Please try again.';
         alert(msg);
         setClockInFlowStep(0);
         return;
@@ -369,12 +380,13 @@ const EmployeeAttendance: React.FC = () => {
       });
 
       if (res.error) {
-        alert(res.error.message);
+        alert(attendanceActionMessage(res.error, 'in'));
       } else {
         locationService.startLiveTracking();
       }
     } catch (e: any) {
-      alert(e.message);
+      console.error('[Attendance] clock in failed:', e);
+      alert(attendanceActionMessage(null, 'in'));
     }
 
     setClockInFlowStep(0);
@@ -427,7 +439,7 @@ const EmployeeAttendance: React.FC = () => {
            });
            
            if (res.error) {
-             alert(res.error.message);
+             alert(attendanceActionMessage(res.error, 'in'));
            } else {
              locationService.startLiveTracking();
            }
@@ -442,15 +454,23 @@ const EmployeeAttendance: React.FC = () => {
   };
 
   const handleClockOut = async () => {
-    if (!todayAttendance) return;
+    if (!todayAttendance || clockOutBusy) return;
+    setClockOutBusy(true);
     try {
       await locationService.verifyCurrentLocation('CLOCK_OUT');
       const res = await attendanceService.clockOut(todayAttendance.id);
-      if (res.error) alert(res.error.message);
-      locationService.stopLiveTracking();
+      if (res.error) {
+        alert(attendanceActionMessage(res.error, 'out'));
+      } else {
+        // Only a successful clock-out ends live tracking (a failed one keeps GPS running)
+        locationService.stopLiveTracking();
+      }
       fetchData();
     } catch(e: any) {
-      alert(e.message);
+      console.error('[Attendance] clock out failed:', e);
+      alert(attendanceActionMessage(null, 'out'));
+    } finally {
+      setClockOutBusy(false);
     }
   };
 
@@ -646,7 +666,7 @@ const EmployeeAttendance: React.FC = () => {
               )}
             </div>
             
-            {assignedOffice && (!appSettings?.requireGeolocation || locationVerification?.result === 'INSIDE') && (
+            {assignedOffice && (!appSettings?.requireGeolocation || locationAllowsClockIn(locationVerification?.result)) && (
               <div style={{ display: 'flex', justifyContent: 'center' }}>
                 {appSettings?.requireFaceVerification ? (
                   // Face verification is ON — require registration then face check
@@ -682,7 +702,7 @@ const EmployeeAttendance: React.FC = () => {
             <div style={{ textAlign: 'center', padding: '1rem', border: '1px dashed var(--border-color)', borderRadius: 'var(--radius-md)' }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Effective Working Hours</div>
               <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--primary-600)', fontVariantNumeric: 'tabular-nums' }}>
-                {todayAttendance.status === 'COMPLETED' ? todayAttendance.hours : formatTimeSeconds(effectiveTime)}
+                {todayAttendance.clock_out_at ? todayAttendance.hours : formatTimeSeconds(effectiveTime)}
               </div>
             </div>
   
@@ -692,7 +712,7 @@ const EmployeeAttendance: React.FC = () => {
                   {appSettings?.breakEnabled && (
                     <button onClick={() => handleAction('startBreak')} className="btn btn-warning" style={{ flex: 1 }}>Start Break</button>
                   )}
-                  <button onClick={handleClockOut} className="btn btn-danger" style={{ flex: 1 }}>Clock Out</button>
+                  <button onClick={handleClockOut} disabled={clockOutBusy} className="btn btn-danger" style={{ flex: 1 }}>{clockOutBusy ? 'Clocking Out…' : 'Clock Out'}</button>
                 </>
               )}
               {todayAttendance.clock_in_at && !todayAttendance.clock_out_at && (activeBreakInfo || todayAttendance.originalStatus === 'ON_BREAK') && (
@@ -700,7 +720,10 @@ const EmployeeAttendance: React.FC = () => {
                   <div className="badge badge-warning" style={{ alignSelf: 'center' }}>ON BREAK</div>
                   <div style={{ fontSize: '0.875rem' }}>Break Duration: <strong>{formatTimeSeconds(activeBreakInfo?.seconds ?? 0)}</strong></div>
                   {activeBreakInfo?.break_type === 'AUTO_GPS' ? (
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Automatic break: you are outside the office. It ends when you return inside. Clock-out is available after the break ends.</div>
+                    <>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Automatic break: you are outside the office. It ends when you return inside. If you are leaving for the day, you can clock out now — the break is closed at your clock-out time.</div>
+                      <button onClick={handleClockOut} disabled={clockOutBusy} className="btn btn-danger" style={{ alignSelf: 'center', minWidth: '160px' }}>{clockOutBusy ? 'Clocking Out…' : 'Clock Out'}</button>
+                    </>
                   ) : (
                     <>
                       {appSettings?.breakEnabled && (

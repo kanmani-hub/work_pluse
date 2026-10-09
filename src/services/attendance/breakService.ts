@@ -3,7 +3,9 @@ import type { Database } from '../../types/database';
 import { attendanceService } from './attendanceService';
 import { auditService } from '../audit/auditService';
 import { qaTimeService } from '../qa/qaTimeService';
-import { breakDurationMinutes, completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes } from './breakRules';
+import { notificationService } from '../notifications/notificationService';
+import { autoBreakStarted, autoBreakEnded } from '../notifications/notificationRules';
+import { breakDurationMinutes, completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes, statusAfterBreakEnds } from './breakRules';
 
 import { companyDateStr as companyDate } from '../../utils/companyDate';
 
@@ -13,7 +15,7 @@ import { companyDateStr as companyDate } from '../../utils/companyDate';
  */
 async function recalculateBreakTotals(attendanceId: string) {
   const [{ data: att }, { data: breaks }, { globalSettingsService }] = await Promise.all([
-    supabase.from('attendance').select('shift_template:shift_template_id(break_duration_minutes)').eq('id', attendanceId).single() as any,
+    supabase.from('attendance').select('late_minutes, shift_template:shift_template_id(break_duration_minutes)').eq('id', attendanceId).single() as any,
     supabase.from('attendance_breaks').select('started_at, ended_at, duration_minutes').eq('attendance_id', attendanceId) as any,
     import('../settings/globalSettingsService'),
   ]);
@@ -21,8 +23,12 @@ async function recalculateBreakTotals(attendanceId: string) {
   const actual = completedBreakMinutes(breaks || []);
   const allowed = resolveAllowedBreakMinutes(att?.shift_template?.break_duration_minutes, settings.app.breakDurationMins);
   const overrun = computeBreakOverrun(actual, allowed, settings.payroll.enableBreakOverrunDetection);
-  return { actual, allowed, overrun };
+  // Status to restore when a break ends: keeps LATE for a late arrival (never resets it to WORKING)
+  return { actual, allowed, overrun, statusAfterBreak: statusAfterBreakEnds(att) };
 }
+
+/** Unique-violation from the database (e.g. a second active break once the one-active-break index exists). */
+const isUniqueViolation = (error: any) => error?.code === '23505';
 
 export type AttendanceBreakRow = Database['public']['Tables']['attendance_breaks']['Row'];
 export type AttendanceBreakInsert = Database['public']['Tables']['attendance_breaks']['Insert'];
@@ -100,7 +106,10 @@ export const breakService = {
       .select()
       .single() as any;
 
-    if (error) return { data: null, error: new Error(error.message) };
+    if (error) {
+      if (isUniqueViolation(error)) return { data: null, error: new Error('A break is already active.') };
+      return { data: null, error: new Error(error.message) };
+    }
 
     // Audit: BREAK_STARTED
     auditService.recordAuditLog({
@@ -159,10 +168,12 @@ export const breakService = {
         duration_minutes: durationMinutes
       } as any)
       .eq('id', activeBreak.id)
+      .is('ended_at', null) // a second click / tab cannot overwrite the end time
       .select()
-      .single() as any;
+      .maybeSingle() as any;
 
     if (error) return { data: null, error: new Error(error.message) };
+    if (!updatedBreak) return { data: null, error: new Error('No active break found.') };
 
     // Audit: BREAK_ENDED
     auditService.recordAuditLog({
@@ -179,7 +190,7 @@ export const breakService = {
 
     // @ts-ignore
     await supabase.from('attendance').update({ 
-      status: 'WORKING',
+      status: totals.statusAfterBreak,
       break_minutes: totals.actual,
       break_overrun_minutes: totals.overrun
     }).eq('id', attendanceId);
@@ -299,7 +310,7 @@ export const breakService = {
     // 1. Open attendance for today (or an overnight shift that started yesterday)
     const { data: attendance } = await supabase
       .from('attendance')
-      .select('id, status, attendance_date, clock_in_at, clock_out_at, shift_template:shift_template_id(crosses_midnight)')
+      .select('id, status, late_minutes, attendance_date, clock_in_at, clock_out_at, shift_template:shift_template_id(crosses_midnight)')
       .eq('employee_id', empId)
       .is('clock_out_at', null)
       .in('attendance_date', [today, yesterday])
@@ -338,6 +349,9 @@ export const breakService = {
         .insert({ attendance_id: attendance.id, employee_id: empId, break_type: 'AUTO_GPS', started_at: atIso } as any)
         .select()
         .single();
+
+      // Another tab/device created the active break first: keep that one, log nothing twice
+      if (isUniqueViolation(error)) return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' };
       if (error || !newBreak) return { action: 'ERROR', reason: error?.message };
 
       // @ts-ignore
@@ -354,6 +368,8 @@ export const breakService = {
         entity_id: (newBreak as any).id,
         description: `Automatic GPS break started at ${new Date(atIso).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}.`,
       }).catch(() => {});
+      // Only the request that actually created the break notifies (jitter / second tab never reach here)
+      await notificationService.notifyEmployee(empId, autoBreakStarted({ breakId: (newBreak as any).id }));
       return { action: 'STARTED', breakId: (newBreak as any).id };
     }
 
@@ -376,7 +392,7 @@ export const breakService = {
     const totals = await recalculateBreakTotals(attendance.id);
     // @ts-ignore
     await supabase.from('attendance').update({
-      status: 'WORKING',
+      status: totals.statusAfterBreak, // LATE stays LATE after the break
       break_minutes: totals.actual,
       break_overrun_minutes: totals.overrun,
     } as any).eq('id', attendance.id);
@@ -401,6 +417,7 @@ export const breakService = {
         description: `Break overrun detected: ${totals.overrun} minutes (allowed ${totals.allowed}, actual ${totals.actual}).`,
       }).catch(() => {});
     }
+    await notificationService.notifyEmployee(empId, autoBreakEnded({ breakId: activeBreak.id, minutes: durationMinutes }));
     return { action: 'ENDED', breakId: activeBreak.id, durationMinutes, ...totals };
   }
 };

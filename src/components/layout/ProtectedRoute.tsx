@@ -1,7 +1,8 @@
 import React from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { normalizeRole, isAdminPortalRole } from '../../lib/roles';
+import { decideRouteAccess } from '../../lib/routeAccess';
+import AccountAccessError from '../auth/AccountAccessError';
 import { Loader2 } from 'lucide-react';
 
 interface ProtectedRouteProps {
@@ -9,7 +10,7 @@ interface ProtectedRouteProps {
 }
 
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles }) => {
-  const { user, profile, role, isLoading } = useAuth();
+  const { user, profile, role, isLoading, authError } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -19,6 +20,12 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles }) => {
         <style>{`.spinner { animation: spin 1s linear infinite; } @keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
       </div>
     );
+  }
+
+  // Signed in, but the account has no employee profile or no valid role:
+  // show a clear error with a sign-out action instead of redirecting (which could loop).
+  if (user && (authError === 'PROFILE_MISSING' || authError === 'ROLE_MISSING')) {
+    return <AccountAccessError code={authError} />;
   }
 
   // Not authenticated
@@ -31,19 +38,17 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles }) => {
     return <Navigate to="/change-password" replace />;
   }
 
-  // Check role authorization if restricted
-  if (allowedRoles && allowedRoles.length > 0) {
-    // Compare canonical roles (see lib/roles) so UI routing matches the database roles
-    const canonicalAllowed = allowedRoles.map(normalizeRole);
-    const canonicalRole = normalizeRole(role);
-    
-    if (!canonicalRole || !canonicalAllowed.includes(canonicalRole)) {
-      // Unauthorized, redirect appropriately based on what role they do have
-      if (isAdminPortalRole(canonicalRole)) {
-        return <Navigate to="/admin/dashboard" replace />;
-      }
-      return <Navigate to="/employee/dashboard" replace />;
-    }
+  // Role authorization (canonical roles, see lib/roles + lib/routeAccess).
+  // Redirects only ever target a portal the role is allowed into, so this cannot loop.
+  const decision = decideRouteAccess(role, allowedRoles);
+  if (decision === 'role-error') {
+    return <AccountAccessError code="ROLE_MISSING" />;
+  }
+  if (decision === 'redirect-admin') {
+    return <Navigate to="/admin/dashboard" replace />;
+  }
+  if (decision === 'redirect-employee') {
+    return <Navigate to="/employee/dashboard" replace />;
   }
 
   return <Outlet />;

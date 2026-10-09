@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { ADMIN_NOTIFICATION_ROLES } from '../../lib/roles';
 import { salaryService } from '../payroll/salaryService'; // Reusing getCurrentEmployeeId
+import type { EmployeeNotification } from './notificationRules';
 
 export const notificationService = {
   async getMyNotifications() {
@@ -125,6 +126,51 @@ export const notificationService = {
       .single<any>();
 
     return { data, error };
+  },
+
+  /**
+   * Notify ONE employee about something that affects them (admin decision, automatic break,
+   * payroll, shift, profile, security). Idempotent: the same dedupe_key for the same employee
+   * is stored once, so a double click, a second tab, a retry or GPS jitter cannot create a
+   * duplicate. Never throws: a failed notification must not fail the admin action itself.
+   */
+  async notifyEmployee(recipientEmployeeId: string | null | undefined, n: EmployeeNotification | null, extraMetadata: Record<string, any> = {}) {
+    if (!recipientEmployeeId || !n) return { data: null, error: null, skipped: true };
+    try {
+      const { data: existing, error: lookupError } = await supabase
+        .from('notifications')
+        .select('id')
+        .eq('recipient_employee_id', recipientEmployeeId)
+        .contains('metadata', { dedupe_key: n.dedupe_key })
+        .limit(1) as any;
+      if (lookupError) console.error('[NOTIFY] duplicate check failed:', lookupError.message);
+      if (existing && existing.length > 0) return { data: existing[0], error: null, skipped: true };
+
+      const { data, error } = await supabase
+        .from('notifications')
+        .insert({
+          recipient_employee_id: recipientEmployeeId,
+          notification_type: n.notification_type,
+          title: n.title,
+          message: n.message,
+          priority: n.priority,
+          action_url: n.action_url,
+          entity_type: n.entity_type,
+          entity_id: n.entity_id,
+          metadata: { ...extraMetadata, dedupe_key: n.dedupe_key },
+        } as never)
+        .select()
+        .single<any>();
+
+      // With the proposed unique index on (recipient, dedupe_key) a racing duplicate is rejected here
+      if ((error as any)?.code === '23505') return { data: null, error: null, skipped: true };
+      if (error) console.error('[NOTIFY] notifyEmployee failed:', error.message, { recipient: recipientEmployeeId, type: n.notification_type });
+      else if (import.meta.env?.DEV) console.info('[NOTIFY] stored', n.notification_type, 'for', recipientEmployeeId, data?.id);
+      return { data, error, skipped: false };
+    } catch (err) {
+      console.error('[NOTIFY] notifyEmployee failed:', err);
+      return { data: null, error: err as any, skipped: false };
+    }
   },
 
   /**

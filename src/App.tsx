@@ -20,6 +20,7 @@ const AdminAttendance = React.lazy(() => import('./pages/admin/Attendance'));
 const AdminWfh = React.lazy(() => import('./pages/admin/Wfh'));
 const AdminLeave = React.lazy(() => import('./pages/admin/Leave'));
 const AdminPermission = React.lazy(() => import('./pages/admin/Permission'));
+const AdminOvertime = React.lazy(() => import('./pages/admin/Overtime'));
 const AdminPayroll = React.lazy(() => import('./pages/admin/Payroll'));
 const AdminReports = React.lazy(() => import('./pages/admin/Reports'));
 const AdminBreaks = React.lazy(() => import('./pages/admin/Breaks'));
@@ -35,6 +36,7 @@ const EmployeeAttendance = React.lazy(() => import('./pages/employee/Attendance'
 const EmployeeWfh = React.lazy(() => import('./pages/employee/Wfh'));
 const EmployeeLeave = React.lazy(() => import('./pages/employee/Leave'));
 const EmployeePermission = React.lazy(() => import('./pages/employee/Permission'));
+const EmployeeOvertime = React.lazy(() => import('./pages/employee/Overtime'));
 const EmployeePayroll = React.lazy(() => import('./pages/employee/Payroll'));
 const EmployeePayslip = React.lazy(() => import('./pages/employee/Payslip'));
 const EmployeeBreaks = React.lazy(() => import('./pages/employee/Breaks'));
@@ -75,6 +77,7 @@ function App() {
                 <Route path="payroll" element={<ErrorBoundary><AdminPayroll /></ErrorBoundary>} />
                 <Route path="roster" element={<AdminRoster />} />
                 <Route path="permission" element={<AdminPermission />} />
+                <Route path="overtime" element={<AdminOvertime />} />
                 <Route path="reports" element={<AdminReports />} />
                 <Route path="notifications" element={<Notifications />} />
                 <Route path="audit-logs" element={<AuditLogs />} />
@@ -93,6 +96,7 @@ function App() {
                 <Route path="wfh" element={<EmployeeWfh />} />
                 <Route path="leave" element={<EmployeeLeave />} />
                 <Route path="permission" element={<EmployeePermission />} />
+                <Route path="overtime" element={<EmployeeOvertime />} />
                 <Route path="payroll" element={<EmployeePayroll />} />
                 <Route path="payslip" element={<EmployeePayslip />} />
                 <Route path="profile" element={<EmployeeProfile />} />

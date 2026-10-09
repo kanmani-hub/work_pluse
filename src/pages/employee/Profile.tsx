@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { employeeService, type EmployeeWithRelations } from '../../services/employees/employeeService';
 import { User, Mail, Phone, Briefcase, MapPin, Clock, Calendar, Shield, Activity, RefreshCw } from 'lucide-react';
+import ChangePasswordCard from '../../components/auth/ChangePasswordCard';
 
 const Profile: React.FC = () => {
   const { employee: authEmployee } = useAuth();
@@ -192,6 +193,8 @@ const Profile: React.FC = () => {
               </div>
             </div>
           </div>
+
+          <ChangePasswordCard />
           
         </div>
       </div>

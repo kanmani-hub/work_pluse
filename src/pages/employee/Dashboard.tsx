@@ -12,8 +12,16 @@ import { faceService } from '../../services/face/faceService';
 import { locationService } from '../../services/location/locationService';
 import { supabase } from '../../lib/supabase';
 import { qaTimeService } from '../../services/qa/qaTimeService';
-import { computeWorkTimer, findActiveBreak, resolveAllowedBreakMinutes } from '../../services/attendance/breakRules';
-import { companyDateStr } from '../../utils/companyDate';
+import { computeWorkTimer, findActiveBreak, resolveAllowedBreakMinutes, completedBreakMinutes } from '../../services/attendance/breakRules';
+import { companyDateStr, COMPANY_TIMEZONE } from '../../utils/companyDate';
+import { useAuth } from '../../context/AuthContext';
+import { employeeService, type EmployeeWithRelations } from '../../services/employees/employeeService';
+import { wfhService } from '../../services/wfh/wfhService';
+import { leaveService } from '../../services/leave/leaveService';
+import {
+  greetingFor, formatShiftClock, formatCompanyTime, scheduledWorkMinutes, remainingScheduledMinutes, formatMinutes,
+  resolveWorkMode, deriveLocationDisplay, summarizeLeaveAndWfh, attendanceActionMessage, type GeoPermission,
+} from '../../services/attendance/employeeDashboardRules';
 
 type AttendanceState = 'not_clocked_in' | 'working' | 'on_break' | 'clocked_out';
 
@@ -119,6 +127,25 @@ const EmployeeDashboard: React.FC = () => {
   const [attendanceRecord, setAttendanceRecord] = useState<any>(null);
   const [currentShift, setCurrentShift] = useState<any>(null);
   const [loadingAttendance, setLoadingAttendance] = useState(true);
+  const [attendanceError, setAttendanceError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Signed-in employee (from the auth session; never another employee's id)
+  const { employee: authEmployee, role: authRole } = useAuth();
+  const [profileInfo, setProfileInfo] = useState<EmployeeWithRelations | null>(null);
+  const [infoLoading, setInfoLoading] = useState(true);
+  const [infoError, setInfoError] = useState(false);
+
+  // Leave / WFH summary (existing services, own rows only)
+  const [wfhRequests, setWfhRequests] = useState<any[]>([]);
+  const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
+  const [leaveBalances, setLeaveBalances] = useState<any[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(true);
+  const [requestsError, setRequestsError] = useState(false);
+
+  // Location state written by locationService (read-only here; no extra GPS watcher)
+  const [liveLocation, setLiveLocation] = useState<any>(null);
+  const [geoPermission, setGeoPermission] = useState<GeoPermission>('unknown');
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentDate(new Date()), 1000);
@@ -126,10 +153,13 @@ const EmployeeDashboard: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
     fetchTodayAttendance();
 
     attendanceService.getCurrentEmployeeId().then(empId => {
-      if (!empId) return;
+      if (!empId || cancelled) return;
       
       // QA-only helper (VITE_QA_FAST_MODE): it can back-date breaks, so it must not exist in normal builds
       if (qaTimeService.isEnabled) {
@@ -140,7 +170,16 @@ const EmployeeDashboard: React.FC = () => {
         };
       }
       
-      const channel = supabase.channel('dashboard_attendance')
+      // Own live-location row (written by locationService) for the GPS / geofence card
+      (supabase.from('employee_live_locations') as any)
+        .select('location_status, last_seen_at, accuracy_meters')
+        .eq('employee_id', empId)
+        .maybeSingle()
+        .then(({ data }: any) => { if (!cancelled) setLiveLocation(data ?? null); });
+
+      // One channel per mount, removed on unmount (the cleanup used to be returned from
+      // inside .then(), so it never ran and every visit added another subscription).
+      channel = supabase.channel(`employee_dashboard:${empId}`)
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'attendance', filter: `employee_id=eq.${empId}` },
@@ -148,27 +187,98 @@ const EmployeeDashboard: React.FC = () => {
             fetchTodayAttendance();
           }
         )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'employee_live_locations', filter: `employee_id=eq.${empId}` },
+          (payload: any) => {
+            if (payload.eventType === 'DELETE') setLiveLocation(null);
+            else if (payload.new) setLiveLocation(payload.new);
+          }
+        )
         .subscribe();
-      
-      return () => {
-        supabase.removeChannel(channel);
-      };
     });
+
+    return () => {
+      cancelled = true;
+      if (channel) supabase.removeChannel(channel);
+    };
   }, []);
+
+  // Browser location permission (read-only; locationService owns the GPS watcher)
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+      setGeoPermission('unsupported');
+      return;
+    }
+    let cancelled = false;
+    let status: PermissionStatus | null = null;
+    navigator.permissions?.query({ name: 'geolocation' as PermissionName })
+      .then(s => {
+        if (cancelled) return;
+        status = s;
+        setGeoPermission(s.state as GeoPermission);
+        s.onchange = () => setGeoPermission(s.state as GeoPermission);
+      })
+      .catch(() => setGeoPermission('unknown'));
+    return () => {
+      cancelled = true;
+      if (status) status.onchange = null;
+    };
+  }, []);
+
+  // Employee details + leave / WFH summary for the signed-in employee only
+  useEffect(() => {
+    if (!authEmployee?.id) return;
+    let cancelled = false;
+
+    setInfoLoading(true);
+    employeeService.getEmployeeById(authEmployee.id).then(({ data, error }) => {
+      if (cancelled) return;
+      setProfileInfo(data);
+      setInfoError(!!error);
+      setInfoLoading(false);
+    });
+
+    setRequestsLoading(true);
+    Promise.all([
+      wfhService.getMyWFHRequests(authEmployee.id),
+      leaveService.getMyLeaveRequests(),
+      leaveService.getMyLeaveBalances(),
+    ]).then(([wfh, leaves, balances]) => {
+      if (cancelled) return;
+      setWfhRequests((wfh.data as any[]) || []);
+      setLeaveRequests((leaves.data as any[]) || []);
+      setLeaveBalances((balances.data as any[]) || []);
+      setRequestsError(!!(wfh.error || leaves.error || balances.error));
+    }).catch(() => {
+      if (!cancelled) setRequestsError(true);
+    }).finally(() => {
+      if (!cancelled) setRequestsLoading(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [authEmployee?.id]);
 
   const getLocalDateStr = () => {
     return companyDateStr();
   };
 
   const fetchTodayAttendance = async () => {
-    setLoadingAttendance(true);
+    try {
     const dateStr = getLocalDateStr();
     
-    const { data: shiftData } = await attendanceService.getCurrentShift(dateStr);
-    setCurrentShift(shiftData);
+    const { data: shiftData, error: shiftError } = await attendanceService.getCurrentShift(dateStr);
+    if (!shiftError) setCurrentShift(shiftData);
 
     // Today's attendance (or an overnight session still in progress) — never yesterday's completed record
     const { data, error } = await attendanceService.getCurrentAttendance();
+    if (error) {
+      // Keep what is on screen; a failed request must not look like "Not Clocked In"
+      if (import.meta.env.DEV) console.warn('[Dashboard] attendance load failed:', error.message);
+      setAttendanceError("Unable to load today's attendance. Check your connection and try again.");
+      return;
+    }
+    setAttendanceError(null);
     if (data) {
       setAttendanceRecord(data);
       const { data: breaks } = await breakService.getAttendanceBreaks(data.id);
@@ -180,8 +290,11 @@ const EmployeeDashboard: React.FC = () => {
         } else {
           setAttendanceState('working');
         }
-      } else {
+      } else if (data.clock_in_at && data.clock_out_at) {
         setAttendanceState('clocked_out');
+      } else {
+        // A record without a clock-in time is not a completed shift
+        setAttendanceState('not_clocked_in');
       }
       
       if (data.clock_in_at) {
@@ -190,9 +303,16 @@ const EmployeeDashboard: React.FC = () => {
         setWorkTime(timer.workSeconds);
       }
     } else {
+      setAttendanceRecord(null);
+      setTodayBreaks([]);
       setAttendanceState('not_clocked_in');
     }
-    setLoadingAttendance(false);
+    } catch (err) {
+      console.error('[Dashboard] attendance load failed:', err);
+      setAttendanceError("Unable to load today's attendance. Check your connection and try again.");
+    } finally {
+      setLoadingAttendance(false);
+    }
   };
 
   useEffect(() => {
@@ -238,7 +358,16 @@ const EmployeeDashboard: React.FC = () => {
     try {
       const { eventId, error } = await locationService.verifyCurrentLocation(clockAction === 'in' ? 'CLOCK_IN' : 'CLOCK_OUT');
       
-      if (error) {
+      if (error && clockAction === 'out') {
+        // Clock-out never requires being inside the office (e.g. on an automatic break outside).
+        // The check is still recorded as evidence when it could be stored.
+        setLocVerificationEventId(eventId || undefined);
+        if (appSettings?.requireFaceVerification) {
+          startCamera();
+        } else {
+          setSecStep('success');
+        }
+      } else if (error) {
         if (error.message.includes('outside')) {
            alert("You are outside the assigned office location.");
         } else {
@@ -264,7 +393,9 @@ const EmployeeDashboard: React.FC = () => {
       alert("Your shift assignment is not available for the current time.");
       return;
     }
-    if (action === 'out' && attendanceState === 'on_break') {
+    // A manual break must be ended first; an automatic (GPS) break is closed by the clock-out itself
+    const active = findActiveBreak(todayBreaks);
+    if (action === 'out' && active && active.break_type !== 'AUTO_GPS') {
       alert("Please end your active break before clocking out.");
       return;
     }
@@ -319,38 +450,45 @@ const EmployeeDashboard: React.FC = () => {
   };
 
   const finalizeClockAction = async () => {
-    closeSecurityModal();
-    if (clockAction === 'in') {
-      const { data, error } = await attendanceService.clockIn({
-        localDateStr: getLocalDateStr(),
-        locationVerificationId: locVerificationEventId,
-        faceVerificationEventId: verificationEventId
-      });
-      if (error) {
-        alert(`Attendance could not be created. Please try again.\n${error.message}`);
-      } else {
-        locationService.startLiveTracking();
-        await fetchTodayAttendance();
-      }
-    } else {
-      if (attendanceRecord) {
+    if (submitting) return; // prevents a double click from submitting twice
+    setSubmitting(true);
+    try {
+      if (clockAction === 'in') {
+        const { error } = await attendanceService.clockIn({
+          localDateStr: getLocalDateStr(),
+          locationVerificationId: locVerificationEventId,
+          faceVerificationEventId: verificationEventId
+        });
+        if (error) {
+          if (import.meta.env.DEV) console.warn('[Dashboard] clock in failed:', error.message);
+          alert(attendanceActionMessage(error, 'in'));
+        } else {
+          locationService.startLiveTracking();
+          await fetchTodayAttendance();
+        }
+      } else if (attendanceRecord) {
         const { error } = await attendanceService.clockOut(attendanceRecord.id);
         if (error) {
-           alert(error.message);
+          if (import.meta.env.DEV) console.warn('[Dashboard] clock out failed:', error.message);
+          alert(attendanceActionMessage(error, 'out'));
         } else {
-           locationService.stopLiveTracking();
-           await fetchTodayAttendance();
+          locationService.stopLiveTracking();
+          await fetchTodayAttendance();
         }
       }
+    } catch (err) {
+      console.error('[Dashboard] clock action failed:', err);
+      alert(attendanceActionMessage(null, clockAction));
+    } finally {
+      setSubmitting(false);
+      closeSecurityModal();
     }
   };
 
   const requestAdminOverride = () => {
     setAdminOverrideRequested(true);
-    // Mocking an async request
-    setTimeout(() => {
-      alert("Override request sent to Admin.");
-    }, 500);
+    // No override workflow exists yet: do not claim a request was sent.
+    alert("Override requests are not available yet. Please contact your administrator directly.");
   };
 
   const confirmBreak = async () => {
@@ -375,58 +513,85 @@ const EmployeeDashboard: React.FC = () => {
 
 
 
+  // ---- Derived display values (no new calculations; see employeeDashboardRules)
+  const todayStr = companyDateStr(currentDate);
+  const scheduledMins = scheduledWorkMinutes(attendanceRecord?.shift_template ?? currentShift);
+  const workMode = resolveWorkMode(attendanceRecord, wfhRequests, todayStr);
+  const locationDisplay = deriveLocationDisplay({ permission: geoPermission, liveRow: liveLocation, nowMs: currentDate.getTime(), workMode });
+  const requestSummary = summarizeLeaveAndWfh({ leaveRequests, leaveBalances, wfhRequests, today: todayStr });
+  const activeBreak = findActiveBreak(todayBreaks);
+  const completedBreakMins = completedBreakMinutes(todayBreaks);
+  const officeInfo = profileInfo?.office ?? null;
+  const toneColor = (tone: string) =>
+    tone === 'success' ? 'var(--success)' : tone === 'warning' ? 'var(--warning)' : tone === 'danger' ? 'var(--danger)' : 'var(--text-secondary)';
+  const infoRow = (label: string, value: React.ReactNode) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', fontSize: '0.875rem', padding: '0.375rem 0', borderBottom: '1px solid var(--border-color)' }}>
+      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+      <span style={{ fontWeight: 600, color: 'var(--text-primary)', textAlign: 'right', overflowWrap: 'anywhere' }}>{value}</span>
+    </div>
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       
       {/* Header Greeting */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <h1 className="page-title" style={{ marginBottom: '0.25rem' }}>Good Afternoon, Employee!</h1>
+          <h1 className="page-title" style={{ marginBottom: '0.25rem' }}>{greetingFor(currentDate)}, {authEmployee?.first_name || 'there'}!</h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-            {currentDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            {currentDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: COMPANY_TIMEZONE })}
           </p>
         </div>
       </div>
 
       {/* Main Grid: Shift & Clock Card vs Quick Actions */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))', gap: '1.5rem' }}>
         
         {/* Left Column: Shift & Attendance */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           
           {/* Today's Shift Card */}
           <div className="card">
-            <div className="card-header" style={{ marginBottom: '1rem' }}>
+            <div className="card-header" style={{ marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
               <h3 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Calendar size={18} className="nav-icon" />
                 Today's Shift
               </h3>
-              <span className="badge badge-primary">{currentShift?.name || 'Standard Shift'}</span>
+              <span className={`badge ${currentShift ? 'badge-primary' : 'badge-gray'}`}>{currentShift?.name || (loadingAttendance ? 'Loading…' : 'No shift assigned')}</span>
             </div>
             
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '1rem' }}>
               <div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Shift Timing</div>
-                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{currentShift ? `${currentShift.start_time} — ${currentShift.end_time}` : '09:00:00 — 18:00:00'}</div>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {currentShift
+                    ? <>{formatShiftClock(currentShift.start_time)} — {formatShiftClock(currentShift.end_time)}{currentShift.crosses_midnight ? <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)' }}> (next day)</span> : null}</>
+                    : (loadingAttendance ? '—' : 'Not assigned')}
+                </div>
               </div>
               <div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Required Hours</div>
-                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{currentShift?.required_hours || 8} hours</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Scheduled Hours</div>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{scheduledMins !== null ? formatMinutes(scheduledMins) : '—'}</div>
               </div>
               <div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Assigned Office</div>
-                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Primary Office</div>
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{officeInfo?.name || (infoLoading ? 'Loading…' : 'Not assigned')}</div>
+                {officeInfo?.geofence_radius ? (
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Geofence: {officeInfo.geofence_radius} m</div>
+                ) : null}
               </div>
               <div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Work Mode</div>
-                <div style={{ fontWeight: 600, color: 'var(--gray-900)' }}>OFFICE</div>
+                <div style={{ fontWeight: 600, color: workMode === 'WFH' ? 'var(--primary-600)' : 'var(--text-primary)' }}>{workMode}</div>
               </div>
             </div>
 
-            <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)', display: 'flex', gap: '1rem', fontSize: '0.75rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--success)' }}><CheckCircle2 size={14}/> Location Configured</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--success)' }}>
-                <ShieldCheck size={14}/> Face Identity Enabled
+            <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)', display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: appSettings?.requireGeolocation ? 'var(--success)' : 'var(--text-secondary)' }}>
+                <MapPin size={14}/> {appSettings?.requireGeolocation ? 'Location check required' : 'Location check off'}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', color: appSettings?.requireFaceVerification ? 'var(--success)' : 'var(--text-secondary)' }}>
+                <ShieldCheck size={14}/> {appSettings?.requireFaceVerification ? 'Face verification on' : 'Face verification off'}
               </div>
             </div>
           </div>
@@ -435,11 +600,27 @@ const EmployeeDashboard: React.FC = () => {
           <div className="card" style={{ borderTop: '4px solid var(--primary-600)' }}>
             <div style={{ textAlign: 'center', padding: '1rem 0' }}>
               <div style={{ fontSize: '2.5rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.5rem', fontVariantNumeric: 'tabular-nums' }}>
-                {currentDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                {currentDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: COMPANY_TIMEZONE })}
               </div>
+
+              {attendanceError && (
+                <div role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', flexWrap: 'wrap', padding: '0.75rem', marginBottom: '1rem', backgroundColor: 'var(--danger-50)', color: 'var(--danger)', borderRadius: 'var(--radius-md)', fontSize: '0.875rem' }}>
+                  <AlertTriangle size={16} /> {attendanceError}
+                  <button onClick={() => fetchTodayAttendance()} className="btn btn-outline" style={{ padding: '0.25rem 0.75rem', fontSize: '0.8125rem' }}>
+                    <RefreshCw size={14} /> Retry
+                  </button>
+                </div>
+              )}
+
+              {/* First load: only this card waits, the page stays visible */}
+              {loadingAttendance && (
+                <div style={{ color: 'var(--text-secondary)', padding: '1.5rem 0', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                  <RefreshCw size={16} className="spin" /> Loading today's attendance…
+                </div>
+              )}
               
-              {/* Not Clocked In */}
-              {attendanceState === 'not_clocked_in' && (
+              {/* Not Clocked In (hidden if today's attendance could not be loaded) */}
+              {!loadingAttendance && attendanceState === 'not_clocked_in' && !(attendanceError && !attendanceRecord) && (
                 <>
                   <div style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontWeight: 500 }}>Status: Not Clocked In</div>
                   <button onClick={() => handleClockAction('in')} className="btn btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1.125rem', borderRadius: 'var(--radius-full)' }}>
@@ -450,9 +631,9 @@ const EmployeeDashboard: React.FC = () => {
               )}
 
               {/* Working */}
-              {attendanceState === 'working' && (
+              {!loadingAttendance && attendanceState === 'working' && (
                 <>
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1rem' }}>
                     <div style={{ textAlign: 'center' }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Status</div>
                       <div style={{ fontWeight: 600, color: attendanceRecord?.late_minutes > 0 ? 'var(--warning-600)' : 'var(--success-600)' }}>
@@ -473,23 +654,29 @@ const EmployeeDashboard: React.FC = () => {
                     )}
                     <div style={{ textAlign: 'center', borderLeft: '1px solid var(--border-color)', paddingLeft: '1rem' }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Clock In</div>
-                      <div style={{ fontWeight: 600 }}>{new Date(attendanceRecord?.clock_in_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</div>
+                      <div style={{ fontWeight: 600 }}>{formatCompanyTime(attendanceRecord?.clock_in_at)}</div>
                     </div>
                   </div>
+                  {attendanceRecord?.is_half_day && (
+                    <div className="badge badge-warning" style={{ marginBottom: '0.75rem' }}>Half Day</div>
+                  )}
                   
                   <div style={{ color: 'var(--success)', marginBottom: '0.5rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
                     <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--success)', animation: 'pulse 2s infinite' }} />
-                    WORKING
+                    CURRENTLY WORKING
                   </div>
                   <div style={{ color: 'var(--text-primary)', fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem', fontVariantNumeric: 'tabular-nums' }}>
                     {formatTime(workTime)}
                   </div>
-                  {appSettings?.breakEnabled && attendanceRecord?.break_minutes > 0 && (
-                    <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-                      Total Break Time: {formatTime(attendanceRecord.break_minutes * 60)}
-                    </div>
-                  )}
-                  <div style={{ display: 'grid', gridTemplateColumns: (appSettings?.breakEnabled && attendanceRecord?.status === 'WFH') ? '1fr 1fr' : '1fr', gap: '1rem', marginTop: '1rem' }}>
+                  <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                    {scheduledMins !== null
+                      ? <>Scheduled {formatMinutes(scheduledMins)} · Remaining {formatMinutes(remainingScheduledMinutes(workTime, scheduledMins))}</>
+                      : 'No scheduled hours for today'}
+                  </div>
+                  <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                    Break: none active{completedBreakMins > 0 ? ` · Completed breaks ${formatMinutes(completedBreakMins)}` : ''}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: (appSettings?.breakEnabled && attendanceRecord?.status === 'WFH') ? 'repeat(auto-fit, minmax(140px, 1fr))' : '1fr', gap: '1rem', marginTop: '1rem' }}>
                     {appSettings?.breakEnabled && attendanceRecord?.status === 'WFH' && (
                       <button onClick={() => setShowBreakModal(true)} className="btn btn-outline" style={{ padding: '0.75rem', borderRadius: 'var(--radius-full)' }}>
                         <Coffee size={18} />
@@ -504,35 +691,47 @@ const EmployeeDashboard: React.FC = () => {
                 </>
               )}
 
-              {/* On Break */}
-              {attendanceState === 'on_break' && appSettings?.breakEnabled && (
+              {/* On Break: shown for automatic (GPS) and manual breaks, whatever the manual-break setting */}
+              {!loadingAttendance && attendanceState === 'on_break' && (
                 <>
                   <div style={{ color: 'var(--warning)', marginBottom: '0.5rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
                     <Coffee size={16} />
-                    ON BREAK
+                    {activeBreak?.break_type === 'AUTO_GPS' ? 'AUTOMATIC BREAK' : 'MANUAL BREAK'}
+                  </div>
+                  <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                    Clock In {formatCompanyTime(attendanceRecord?.clock_in_at)}{activeBreak?.started_at ? ` · Break started ${formatCompanyTime(activeBreak.started_at)}` : ''}
                   </div>
                   <div style={{ color: 'var(--text-primary)', fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.25rem', fontVariantNumeric: 'tabular-nums' }}>
                     Break Duration: {formatTime(breakTime)}
                   </div>
-                  <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                    {(() => { const allowed = resolveAllowedBreakMinutes(attendanceRecord?.shift_template?.break_duration_minutes ?? currentShift?.break_duration_minutes, appSettings.breakDurationMins); return allowed !== null ? `Allowed: ${allowed} mins` : ''; })()}
+                  <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                    Working timer paused at {formatTime(workTime)}
                   </div>
-                  {findActiveBreak(todayBreaks)?.break_type !== 'AUTO_GPS' ? (
+                  <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                    {(() => { const allowed = resolveAllowedBreakMinutes(attendanceRecord?.shift_template?.break_duration_minutes ?? currentShift?.break_duration_minutes, appSettings?.breakDurationMins); return allowed !== null ? `Allowed: ${allowed} mins` : ''; })()}
+                  </div>
+                  {activeBreak?.break_type !== 'AUTO_GPS' ? (
                     <button onClick={confirmBreak} className="btn btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1.125rem', borderRadius: 'var(--radius-full)' }}>
                       End Break
                     </button>
                   ) : (
-                    <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
-                      Break will automatically end when you return to the office.
-                    </div>
+                    <>
+                      <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '1rem' }}>
+                        Break will automatically end when you return to the office. If you are leaving for the day, you can clock out now.
+                      </div>
+                      <button onClick={() => handleClockAction('out')} className="btn" style={{ width: '100%', padding: '0.75rem', borderRadius: 'var(--radius-full)', backgroundColor: 'var(--danger)', color: 'var(--bg-primary)' }}>
+                        <ShieldCheck size={18} />
+                        Secure Clock Out
+                      </button>
+                    </>
                   )}
                 </>
               )}
 
               {/* Clocked Out */}
-              {attendanceState === 'clocked_out' && (
+              {!loadingAttendance && attendanceState === 'clocked_out' && (
                 <>
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1rem' }}>
                     <div style={{ textAlign: 'center' }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Status</div>
                       <div style={{ fontWeight: 600, color: attendanceRecord?.late_minutes > 0 ? 'var(--warning-600)' : 'var(--success-600)' }}>
@@ -545,24 +744,29 @@ const EmployeeDashboard: React.FC = () => {
                         <div style={{ fontWeight: 600, color: 'var(--danger-600)' }}>{attendanceRecord.late_minutes} {attendanceRecord.late_minutes === 1 ? 'minute' : 'minutes'}</div>
                       </div>
                     )}
-                    {attendanceRecord?.late_minutes === 0 && (
-                      <div style={{ textAlign: 'center', borderLeft: '1px solid var(--border-color)', paddingLeft: '1rem' }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Late By</div>
-                        <div style={{ fontWeight: 600, color: 'var(--success-600)' }}>0 minutes</div>
-                      </div>
-                    )}
                     <div style={{ textAlign: 'center', borderLeft: '1px solid var(--border-color)', paddingLeft: '1rem' }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Clock In</div>
-                      <div style={{ fontWeight: 600 }}>{new Date(attendanceRecord?.clock_in_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</div>
+                      <div style={{ fontWeight: 600 }}>{formatCompanyTime(attendanceRecord?.clock_in_at)}</div>
+                    </div>
+                    <div style={{ textAlign: 'center', borderLeft: '1px solid var(--border-color)', paddingLeft: '1rem' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Clock Out</div>
+                      <div style={{ fontWeight: 600 }}>{formatCompanyTime(attendanceRecord?.clock_out_at)}</div>
                     </div>
                   </div>
-                  
+                  {attendanceRecord?.is_half_day && (
+                    <div className="badge badge-warning" style={{ marginBottom: '0.75rem' }}>Half Day</div>
+                  )}
+
                   <div style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
                     <CheckCircle2 size={16} />
-                    CLOCKED OUT
+                    COMPLETED
                   </div>
-                  <div style={{ color: 'var(--text-primary)', fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem', fontVariantNumeric: 'tabular-nums' }}>
-                    Total: {formatTime(workTime)}
+                  <div style={{ color: 'var(--text-primary)', fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.25rem', fontVariantNumeric: 'tabular-nums' }}>
+                    Total Working: {formatTime(workTime)}
+                  </div>
+                  <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                    {scheduledMins !== null ? `Scheduled ${formatMinutes(scheduledMins)}` : 'No scheduled hours'}
+                    {completedBreakMins > 0 ? ` · Breaks ${formatMinutes(completedBreakMins)}` : ''}
                   </div>
                   <div className="badge badge-success" style={{ padding: '0.5rem 1rem', fontSize: '0.875rem' }}>Shift Completed</div>
                 </>
@@ -573,6 +777,63 @@ const EmployeeDashboard: React.FC = () => {
 
         {/* Right Column: Summaries & Quick Actions */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* My Details (signed-in employee only) */}
+          <div className="card">
+            <h3 className="card-title" style={{ marginBottom: '0.75rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <User size={18} className="nav-icon" /> My Details
+            </h3>
+            {infoLoading ? (
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Loading your details…</div>
+            ) : infoError || !profileInfo ? (
+              <div style={{ color: 'var(--danger)', fontSize: '0.875rem' }}>Unable to load your details. Please refresh the page.</div>
+            ) : (
+              <div>
+                {infoRow('Name', `${profileInfo.first_name} ${profileInfo.last_name}`)}
+                {infoRow('Employee ID', profileInfo.employee_code)}
+                {infoRow('Department', profileInfo.department?.name || 'Not assigned')}
+                {infoRow('Office', profileInfo.office?.name || 'Not assigned')}
+                {infoRow('Shift', currentShift?.name || 'Not assigned')}
+                {infoRow('Role', profileInfo.role?.name || authRole || 'Not configured')}
+              </div>
+            )}
+          </div>
+
+          {/* Location (read-only view of what locationService recorded) */}
+          <div className="card">
+            <h3 className="card-title" style={{ marginBottom: '0.75rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <MapPin size={18} className="nav-icon" /> Location
+            </h3>
+            {infoRow('GPS', <span style={{ color: toneColor(locationDisplay.tone) }}>{locationDisplay.gps}</span>)}
+            {infoRow('Geofence', locationDisplay.geofence === 'WFH' ? 'Not applied (WFH)' : locationDisplay.geofence)}
+            {infoRow('Last update', locationDisplay.lastSeenAt ? formatCompanyTime(locationDisplay.lastSeenAt) : 'No location yet')}
+            {locationDisplay.gps === 'Location Permission Denied' && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>Allow location access for this site in your browser settings so your attendance location can be verified.</p>
+            )}
+          </div>
+
+          {/* Leave & WFH summary (existing services; full modules are separate steps) */}
+          <div className="card">
+            <h3 className="card-title" style={{ marginBottom: '0.75rem', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Home size={18} className="nav-icon" /> Leave & WFH
+            </h3>
+            {requestsLoading ? (
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Loading…</div>
+            ) : requestsError ? (
+              <div style={{ color: 'var(--danger)', fontSize: '0.875rem' }}>Unable to load your leave and WFH requests.</div>
+            ) : (
+              <div>
+                {infoRow('Today', requestSummary.onLeaveToday ? (requestSummary.onHalfDayLeaveToday ? 'On leave (half day)' : 'On leave')
+                  : requestSummary.wfhToday === 'APPROVED' ? 'WFH (approved)'
+                  : requestSummary.wfhToday === 'PENDING' ? 'WFH request pending'
+                  : 'Working day')}
+                {infoRow('Pending leave requests', requestSummary.pendingLeave)}
+                {infoRow('Upcoming approved leave', requestSummary.upcomingApprovedLeave)}
+                {infoRow('Leave balance', requestSummary.leaveBalanceDays !== null ? `${requestSummary.leaveBalanceDays} days` : 'Not set')}
+                {infoRow('Pending WFH requests', requestSummary.pendingWfh)}
+              </div>
+            )}
+          </div>
+
           {/* Quick Actions */}
           <div className="card">
             <h3 className="card-title" style={{ marginBottom: '1rem', fontSize: '1rem' }}>Quick Actions</h3>
@@ -756,7 +1017,7 @@ const EmployeeDashboard: React.FC = () => {
                   <div style={{ display: 'flex', gap: '1rem' }}>
                     <button onClick={closeSecurityModal} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
                     <button onClick={requestAdminOverride} disabled={adminOverrideRequested} className="btn btn-primary" style={{ flex: 1, backgroundColor: 'var(--warning)', color: 'var(--bg-primary)', border: 'none' }}>
-                      {adminOverrideRequested ? 'Request Sent' : 'Submit Request'}
+                      {adminOverrideRequested ? 'Contact your administrator' : 'Submit Request'}
                     </button>
                   </div>
                 </div>
@@ -769,16 +1030,19 @@ const EmployeeDashboard: React.FC = () => {
                     <CheckCircle2 size={40} />
                   </div>
                   <h3 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.5rem', color: 'var(--text-primary)' }}>
-                    Clock {clockAction === 'in' ? 'In' : 'Out'} Successful
+                    Verification Complete
                   </h3>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', margin: 0 }}>
+                    Confirm to record your clock {clockAction}.
+                  </p>
                   <div style={{ backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)', margin: '1rem auto 2rem auto', textAlign: 'left', border: '1px solid var(--gray-200)', maxWidth: '300px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                       <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Time:</span>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{currentDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{currentDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: COMPANY_TIMEZONE })}</span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                       <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Office:</span>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>Assigned Office</span>
+                      <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{workMode === 'WFH' ? 'WFH' : (officeInfo?.name || 'Assigned Office')}</span>
                     </div>
                     {clockAction === 'out' && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--gray-200)', paddingTop: '0.5rem', marginTop: '0.5rem' }}>
@@ -788,7 +1052,9 @@ const EmployeeDashboard: React.FC = () => {
                     )}
                   </div>
                   
-                  <button onClick={finalizeClockAction} className="btn btn-primary" style={{ width: '100%', maxWidth: '300px' }}>Done</button>
+                  <button onClick={finalizeClockAction} disabled={submitting} className="btn btn-primary" style={{ width: '100%', maxWidth: '300px' }}>
+                    {submitting ? 'Saving…' : `Confirm Clock ${clockAction === 'in' ? 'In' : 'Out'}`}
+                  </button>
                 </div>
               )}
 

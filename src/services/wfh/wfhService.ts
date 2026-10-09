@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { auditService } from '../audit/auditService';
 import { notificationService } from '../notifications/notificationService';
+import { wfhReviewed } from '../notifications/notificationRules';
 
 export interface WFHRequestInput {
   employee_id: string;
@@ -152,14 +153,19 @@ export const wfhService = {
 
     const { data: request } = await supabase.from('wfh_requests').select('*, employees!wfh_requests_employee_id_fkey(first_name, last_name)').eq('id', id).single() as any;
 
-    const { error } = await (supabase.from('wfh_requests') as any)
+    // Only a real status change counts (double click / second tab: nothing changes, no repeat notification)
+    const { data: changedRows, error } = await (supabase.from('wfh_requests') as any)
       .update({
         status,
         reviewed_by: adminId,
         reviewed_at: new Date().toISOString(),
         reviewer_remarks: remarks || null
       })
-      .eq('id', id);
+      .eq('id', id)
+      .neq('status', status)
+      .select('id');
+
+    if (!error && (!changedRows || changedRows.length === 0)) return { error: null };
 
     if (!error && request) {
       await auditService.recordAuditLog({
@@ -172,15 +178,7 @@ export const wfhService = {
         new_values: { status }
       });
 
-      if (status === 'APPROVED' || status === 'REJECTED') {
-        await notificationService.createNotification({
-          recipient_employee_id: request.employee_id,
-          notification_type: 'WFH',
-          title: `WFH Request ${status.charAt(0) + status.slice(1).toLowerCase()}`,
-          message: `Your WFH request for ${request.request_date} has been ${status.toLowerCase()}.${remarks ? ' Remarks: ' + remarks : ''}`,
-          action_url: '/employee/wfh'
-        });
-      }
+      await notificationService.notifyEmployee(request.employee_id, wfhReviewed({ id, status, date: request.request_date, remarks }));
     }
 
     return { error };

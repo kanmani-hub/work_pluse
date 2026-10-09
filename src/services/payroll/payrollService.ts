@@ -3,6 +3,7 @@ import { canManagePayroll } from '../../lib/roles';
 import { salaryService } from './salaryService';
 import { auditService } from '../audit/auditService';
 import { notificationService } from '../notifications/notificationService';
+import { payrollStatusChanged, salaryPaid, payslipAvailable } from '../notifications/notificationRules';
 import { payrollSettingsService, type PayrollSettings } from './payrollSettingsService';
 import { globalSettingsService } from '../settings/globalSettingsService';
 import { payrollAuditService } from './payrollAuditService';
@@ -630,7 +631,16 @@ export const payrollService = {
       payload.locked_at = new Date().toISOString();
     }
 
-    const { error } = await supabase.from('payroll').update(payload as never).eq('id', id);
+    // Conditional on the status we read: a double click / second tab cannot apply (or announce) it twice
+    const { data: changedRows, error } = await (supabase.from('payroll') as any)
+      .update(payload as never)
+      .eq('id', id)
+      .eq('status', existing.status)
+      .select('id');
+
+    if (!error && (!changedRows || changedRows.length === 0)) {
+      return { error: new Error('Payroll status was already changed. Please refresh.') };
+    }
 
     if (!error) {
       const { data: payrollInfo } = await supabase.from('payroll').select('employee_id, payroll_month, payroll_year').eq('id', id).single<any>();
@@ -645,14 +655,10 @@ export const payrollService = {
         new_values: { status: newStatus }
       });
 
-      if (payrollInfo && (newStatus === 'APPROVED' || newStatus === 'PAID')) {
-        await notificationService.createNotification({
-          recipient_employee_id: payrollInfo.employee_id,
-          notification_type: 'PAYROLL',
-          title: `Payroll ${newStatus === 'PAID' ? 'Paid' : 'Approved'}`,
-          message: `Your payroll for ${payrollInfo.payroll_month}/${payrollInfo.payroll_year} has been ${newStatus.toLowerCase()}.`,
-          action_url: '/employee/payroll'
-        });
+      if (payrollInfo) {
+        await notificationService.notifyEmployee(payrollInfo.employee_id, payrollStatusChanged({
+          id, status: newStatus, month: payrollInfo.payroll_month, year: payrollInfo.payroll_year,
+        }));
       }
     }
 
@@ -682,7 +688,7 @@ export const payrollService = {
     const adminId = await salaryService.getCurrentEmployeeId();
     if (!adminId) return { error: new Error('Unauthorized') };
 
-    const { data: payroll } = await supabase.from('payroll').select('status, net_salary, employee_id').eq('id', id).single<any>();
+    const { data: payroll } = await supabase.from('payroll').select('status, net_salary, employee_id, payroll_month, payroll_year').eq('id', id).single<any>();
     if (!payroll) return { error: new Error('Not found') };
 
     if (payroll.status !== 'PAYMENT_PENDING') {
@@ -715,13 +721,9 @@ export const payrollService = {
         new_values: { amount: amount || payroll.net_salary, method, reference }
       });
 
-      await notificationService.createNotification({
-        recipient_employee_id: payroll.employee_id,
-        notification_type: 'PAYROLL',
-        title: 'Salary Paid',
-        message: `Your salary has been disbursed via ${method}.`,
-        action_url: '/employee/payroll'
-      });
+      // Salary paid + payslip now available (the employee Payslip page opens PAID/CLOSED payrolls)
+      await notificationService.notifyEmployee(payroll.employee_id, salaryPaid({ id, month: payroll.payroll_month, year: payroll.payroll_year }));
+      await notificationService.notifyEmployee(payroll.employee_id, payslipAvailable({ payrollId: id, month: payroll.payroll_month, year: payroll.payroll_year }));
     }
 
     return { error: updErr };
