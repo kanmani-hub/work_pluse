@@ -32,6 +32,8 @@ export interface AppSettings {
   workEndTime: string;
   workingDays: string[];
   weeklyOff: string[];
+  /** Company public holidays (not working days for payroll). */
+  publicHolidays: { date: string; name: string }[];
 
   // Attendance
   requireFaceVerification: boolean;
@@ -72,6 +74,7 @@ export interface AppSettings {
   leaveEnabled: boolean;
   leaveApprovalRequired: boolean;
   allowPastDateLeave: boolean;
+  allowHalfDayLeave: boolean; // stored policy; not yet enforced on the employee form
   allowNegativeBalance: boolean;
   casualLeaveEnabled: boolean;
   casualLeaveDaysPerMonth: number;
@@ -108,6 +111,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   workEndTime: '06:00 PM',
   workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
   weeklyOff: ['Saturday', 'Sunday'],
+  publicHolidays: [],
   requireFaceVerification: true,
   requireGeolocation: true,
   lateLoginDetection: true,
@@ -125,6 +129,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   leaveEnabled: true,
   leaveApprovalRequired: true,
   allowPastDateLeave: false,
+  allowHalfDayLeave: true,
   allowNegativeBalance: false,
   casualLeaveEnabled: true,
   casualLeaveDaysPerMonth: 2,
@@ -148,6 +153,18 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   locationAccuracy: 'High',
   allowOutsideClockIn: false
 };
+
+const ALL_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+/**
+ * Company weekly-off days, derived from the saved working days (the single source of truth).
+ * Returns null when working days are not configured — callers must not guess a schedule.
+ */
+export function weeklyOffDaysFrom(app: { workingDays?: string[] | null } | null | undefined): string[] | null {
+  const working = Array.isArray(app?.workingDays) ? app!.workingDays!.map(d => String(d).toLowerCase()) : [];
+  if (working.length === 0) return null;
+  return ALL_DAYS.filter(d => !working.includes(d.toLowerCase()));
+}
 
 export const appSettingsService = {
   

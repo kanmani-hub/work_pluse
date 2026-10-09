@@ -9,6 +9,9 @@ import {
 } from 'lucide-react';
 
 import { leaveService } from '../../services/leave/leaveService';
+import { RequestTimeline } from '../../components/requests/RequestTimeline';
+import { toBalanceRow, findBalance, toLeaveTypeRows } from '../../services/leave/leaveAdminRules';
+import { PersistedSettingToggle, useStoredAppSettings } from '../../components/settings/PersistedSettingToggle';
 import { realtimeService } from '../../services/realtime/realtimeService';
 
 
@@ -33,11 +36,16 @@ const AdminLeave: React.FC = () => {
   const [approveModal, setApproveModal] = useState<any>(null); // leave id
   const [addLeaveDrawer, setAddLeaveDrawer] = useState(false);
   const [settingsDrawer, setSettingsDrawer] = useState(false);
+  const leaveSettings = useStoredAppSettings();
   
   // Forms
   const [reasonForm, setReasonForm] = useState('');
   const [requests, setRequests] = useState<any[]>([]);
   const [balances, setBalances] = useState<any[]>([]);
+  const [balanceError, setBalanceError] = useState('');
+  // Real leave types from public.leave_types; null = not loaded / failed
+  const [leaveTypes, setLeaveTypes] = useState<{ id: string; name: string; code: string; paid: boolean; active: boolean }[] | null>(null);
+  const [leaveTypesError, setLeaveTypesError] = useState('');
 
   const fetchRequests = async () => {
     setLoading(true);
@@ -50,6 +58,8 @@ const AdminLeave: React.FC = () => {
         dept: r.employees?.departments?.name || '-',
         department_id: r.employees?.department_id || null,
         type: r.leave_types?.name || '-',
+        employee_id: r.employee_id,
+        leave_type_id: r.leave_type_id,
         dates: r.start_date === r.end_date 
           ? new Date(r.start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
           : `${new Date(r.start_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} - ${new Date(r.end_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`,
@@ -57,27 +67,35 @@ const AdminLeave: React.FC = () => {
         reason: r.reason,
         status: r.status,
         appliedOn: new Date(r.requested_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-        office: '-',
+        office: r.employees?.offices?.name || null,
         halfDay: r.is_half_day,
         half: r.half_day_type,
         conflicts: [],
-        reviewer_remarks: r.reviewer_remarks
+        reviewer_remarks: r.reviewer_remarks,
+        // Raw history fields for the request timeline (no invented events)
+        requested_at: r.requested_at,
+        created_at: r.created_at,
+        reviewed_at: r.reviewed_at,
+        reviewed_by: r.reviewed_by
       })));
     }
     
-    const { data: balData } = await leaveService.getAllLeaveBalances();
+    const { data: balData, error: balErr } = await leaveService.getAllLeaveBalances();
+    setBalanceError(balErr ? `Leave balances could not be loaded: ${balErr.message}` : '');
     if (balData) {
+      // Stored columns: allocated_days / used_days / pending_days / remaining_days
       setBalances(balData.map((b: any) => ({
+        ...toBalanceRow(b),
         name: b.employees ? `${b.employees.first_name} ${b.employees.last_name}` : 'Unknown',
         dept: b.employees?.departments?.name || '-',
         empId: b.employees?.employee_code || '-',
         type: b.leave_types?.name || '-',
-        allocated: b.total_days,
-        used: b.used_days,
-        pending: b.pending_days,
-        remaining: Math.max(0, b.total_days - b.used_days - b.pending_days)
       })));
     }
+
+    const { data: typeData, error: typeErr } = await leaveService.getAllLeaveTypes();
+    setLeaveTypesError(typeErr ? `Leave types could not be loaded: ${typeErr.message}` : '');
+    setLeaveTypes(typeErr ? null : toLeaveTypeRows(typeData || []));
     
     setLoading(false);
   };
@@ -313,9 +331,7 @@ const AdminLeave: React.FC = () => {
 
               <select value={filterType} onChange={e => setFilterType(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
                 <option value="All">All Leave Types</option>
-                <option>Casual Leave</option>
-                <option>Sick Leave</option>
-                <option>Privilege Leave</option>
+                {(leaveTypes || []).map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
               </select>
 
               <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
@@ -438,7 +454,7 @@ EmpC     AL  AL   —    —    —`}
               </thead>
               <tbody>
                 {balances.length === 0 ? (
-                  <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>No records found</td></tr>
+                  <tr><td colSpan={6} style={{ textAlign: 'center', color: balanceError ? 'var(--danger)' : 'var(--text-secondary)' }}>{balanceError || `No leave balance records for ${new Date().getFullYear()}`}</td></tr>
                 ) : (
                   balances.map((b, i) => (
                     <tr key={i}>
@@ -447,11 +463,11 @@ EmpC     AL  AL   —    —    —`}
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{b.dept} • {b.empId}</div>
                       </td>
                       <td style={{ fontWeight: 500 }}>{b.type}</td>
-                      <td style={{ textAlign: 'right' }}>{b.allocated}</td>
-                      <td style={{ textAlign: 'right' }}>{b.used}</td>
-                      <td style={{ textAlign: 'right' }}>{b.pending}</td>
-                      <td style={{ textAlign: 'right', fontWeight: 600, color: b.remaining <= 1 ? 'var(--danger-600)' : 'var(--primary-700)' }}>
-                        {b.remaining} {b.remaining <= 1 && <AlertTriangle size={12} style={{ marginLeft: '4px' }}/>}
+                      <td style={{ textAlign: 'right' }}>{b.allocated ?? '—'}</td>
+                      <td style={{ textAlign: 'right' }}>{b.used ?? '—'}</td>
+                      <td style={{ textAlign: 'right' }}>{b.pending ?? '—'}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 600, color: b.remaining !== null && b.remaining <= 1 ? 'var(--danger-600)' : 'var(--primary-700)' }}>
+                        {b.remaining ?? '—'} {b.remaining !== null && b.remaining <= 1 && <AlertTriangle size={12} style={{ marginLeft: '4px' }}/>}
                       </td>
                     </tr>
                   ))
@@ -514,7 +530,7 @@ EmpC     AL  AL   —    —    —`}
                   <div className="info-block">
                     <div className="info-label">Employee</div><div className="info-val">{detailDrawer.name} ({detailDrawer.empId})</div>
                     <div className="info-label">Department</div><div className="info-val">{detailDrawer.dept}</div>
-                    <div className="info-label">Office</div><div className="info-val">{detailDrawer.office} Office</div>
+                    <div className="info-label">Office</div><div className="info-val">{detailDrawer.office || 'Not assigned'}</div>
                   </div>
                 </div>
                 <div>
@@ -536,21 +552,24 @@ EmpC     AL  AL   —    —    —`}
               </div>
 
               <div>
-                <h3 className="section-title">Leave Balance ({detailDrawer.type})</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
-                  <div className="balance-card">
-                    <div className="bc-label">Available</div><div className="bc-val">12</div>
-                  </div>
-                  <div className="balance-card">
-                    <div className="bc-label">Used</div><div className="bc-val">4</div>
-                  </div>
-                  <div className="balance-card">
-                    <div className="bc-label">Pending</div><div className="bc-val">2</div>
-                  </div>
-                  <div className="balance-card" style={{ backgroundColor: 'var(--primary-50)', border: '1px solid var(--primary-200)' }}>
-                    <div className="bc-label" style={{ color: 'var(--primary-700)' }}>Remaining</div><div className="bc-val" style={{ color: 'var(--primary-800)' }}>6</div>
-                  </div>
-                </div>
+                <h3 className="section-title">Leave Balance ({detailDrawer.type}, {new Date().getFullYear()})</h3>
+                {(() => {
+                  // Stored balance for this employee + leave type (public.leave_balances); no invented numbers
+                  if (balanceError) return <div style={{ fontSize: '0.875rem', color: 'var(--danger)' }}>{balanceError}</div>;
+                  const bal = findBalance(balances, detailDrawer.employee_id, detailDrawer.leave_type_id);
+                  if (!bal) return <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', padding: '0.75rem', border: '1px dashed var(--gray-300)', borderRadius: 'var(--radius-md)' }}>No leave balance record exists for this employee and leave type this year, so the balance is unavailable.</div>;
+                  const v = (n: number | null) => (n === null ? '—' : n);
+                  return (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+                      <div className="balance-card"><div className="bc-label">Allocated</div><div className="bc-val">{v(bal.allocated)}</div></div>
+                      <div className="balance-card"><div className="bc-label">Used</div><div className="bc-val">{v(bal.used)}</div></div>
+                      <div className="balance-card"><div className="bc-label">Pending</div><div className="bc-val">{v(bal.pending)}</div></div>
+                      <div className="balance-card" style={{ backgroundColor: 'var(--primary-50)', border: '1px solid var(--primary-200)' }}>
+                        <div className="bc-label" style={{ color: 'var(--primary-700)' }}>Remaining</div><div className="bc-val" style={{ color: 'var(--primary-800)' }}>{v(bal.remaining)}</div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {detailDrawer.status === 'APPROVED' && (
@@ -568,20 +587,7 @@ EmpC     AL  AL   —    —    —`}
 
               <div>
                 <h3 className="section-title">Request Timeline</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', paddingLeft: '1rem', borderLeft: '2px solid var(--gray-200)' }}>
-                  <div style={{ position: 'relative' }}>
-                    <div style={{ position: 'absolute', left: '-1.35rem', top: '2px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: 'var(--gray-400)', border: '2px solid white' }}></div>
-                    <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>Leave Requested</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>23 Sep 2026, 09:15 AM by Employee</div>
-                  </div>
-                  {detailDrawer.status !== 'PENDING' && (
-                    <div style={{ position: 'relative' }}>
-                      <div style={{ position: 'absolute', left: '-1.35rem', top: '2px', width: '12px', height: '12px', borderRadius: '50%', backgroundColor: detailDrawer.status === 'APPROVED' ? 'var(--success)' : 'var(--danger)', border: '2px solid white' }}></div>
-                      <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>{detailDrawer.status}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>24 Sep 2026, 11:35 AM by Admin</div>
-                    </div>
-                  )}
-                </div>
+                <RequestTimeline request={detailDrawer} requesterName={detailDrawer.name} />
               </div>
 
             </div>
@@ -662,17 +668,32 @@ EmpC     AL  AL   —    —    —`}
               <table className="table" style={{ width: '100%', marginBottom: '2rem' }}>
                 <thead><tr><th>Leave Type</th><th>Code</th><th>Paid</th><th>Status</th></tr></thead>
                 <tbody>
-                  <tr><td>Casual Leave</td><td>CL</td><td>Yes</td><td><span className="badge badge-success">Active</span></td></tr>
-                  <tr><td>Sick Leave</td><td>SL</td><td>Yes</td><td><span className="badge badge-success">Active</span></td></tr>
-                  <tr><td>Loss of Pay</td><td>LOP</td><td>No</td><td><span className="badge badge-success">Active</span></td></tr>
+                  {leaveTypes === null ? (
+                    <tr><td colSpan={4} style={{ textAlign: 'center', color: leaveTypesError ? 'var(--danger)' : 'var(--text-secondary)' }}>{leaveTypesError || 'Loading leave types…'}</td></tr>
+                  ) : leaveTypes.length === 0 ? (
+                    <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>No leave types are configured.</td></tr>
+                  ) : leaveTypes.map(t => (
+                    <tr key={t.id}><td>{t.name}</td><td>{t.code}</td><td>{t.paid ? 'Yes' : 'No'}</td><td><span className={`badge ${t.active ? 'badge-success' : 'badge-gray'}`}>{t.active ? 'Active' : 'Inactive'}</span></td></tr>
+                  ))}
                 </tbody>
               </table>
 
               <h3 className="section-title">Global Policy Settings</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontSize: '0.875rem' }}>Allow Half Day</span><input type="checkbox" defaultChecked /></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontSize: '0.875rem' }}>Allow Negative Balance</span><input type="checkbox" /></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontSize: '0.875rem' }}>Allow Backdated Leave</span><input type="checkbox" defaultChecked /></div>
+              {leaveSettings.loading ? (
+                <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Loading saved settings…</div>
+              ) : !leaveSettings.app ? (
+                <div role="alert" style={{ fontSize: '0.875rem', color: 'var(--danger)' }}>
+                  Saved settings could not be loaded{leaveSettings.error ? `: ${leaveSettings.error}` : ''}. These switches are unavailable until they load.
+                  <button type="button" className="btn btn-outline" style={{ marginLeft: '0.75rem', fontSize: '0.75rem' }} onClick={() => leaveSettings.reload()}>Retry</button>
+                </div>
+              ) : null}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+                <PersistedSettingToggle stored={leaveSettings} settingKey="allowHalfDayLeave" label="Allow Half Day"
+                  enforcementNote="Saved company setting. Not yet enforced: the employee leave form still offers half day for single-day requests." />
+                <PersistedSettingToggle stored={leaveSettings} settingKey="allowNegativeBalance" label="Allow Negative Balance"
+                  enforcementNote="Enforced when employees submit leave (balance check)." />
+                <PersistedSettingToggle stored={leaveSettings} settingKey="allowPastDateLeave" label="Allow Backdated Leave"
+                  enforcementNote="Same setting as Admin → Settings → Leave. Not yet enforced on the employee leave form." />
               </div>
             </div>
           </div>
@@ -691,7 +712,7 @@ EmpC     AL  AL   —    —    —`}
               <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '2rem' }}>Submit leave on behalf of an employee.</p>
               <form onSubmit={e => { e.preventDefault(); setAddLeaveDrawer(false); showToast('Leave created successfully'); }} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                 <div><label className="form-label">Employee</label><select className="form-control"><option>Select Employee</option></select></div>
-                <div><label className="form-label">Leave Type</label><select className="form-control"><option>Casual Leave</option></select></div>
+                <div><label className="form-label">Leave Type</label><select className="form-control">{(leaveTypes || []).filter(t => t.active).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
                 <div style={{ display: 'flex', gap: '1rem' }}>
                   <div style={{ flex: 1 }}><label className="form-label">Start Date</label><input type="date" className="form-control"/></div>
                   <div style={{ flex: 1 }}><label className="form-label">End Date</label><input type="date" className="form-control"/></div>

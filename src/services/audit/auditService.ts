@@ -5,7 +5,8 @@ export const auditService = {
   async getAuditLogs() {
     const { data, error } = await supabase
       .from('audit_logs')
-      .select('*, employees(first_name, last_name, employee_code)')
+      // Actor's role comes from employees.role_id → roles.name (audit_logs has no role column)
+      .select('*, employees(first_name, last_name, employee_code, role:role_id(name))')
       .order('created_at', { ascending: false });
 
     return { data, error };

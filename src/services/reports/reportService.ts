@@ -1,4 +1,8 @@
 import { supabase } from '../../lib/supabase';
+import { companyDateStr } from '../../utils/companyDate';
+import { computeAttendanceStats, averageRequiredMinutes } from './reportRules';
+import { loadStoredAppSettings } from '../settings/settingsPatch';
+import { appSettingsService } from '../settings/appSettingsService';
 
 export const reportService = {
   /**
@@ -6,11 +10,11 @@ export const reportService = {
    */
   async getDashboardMetrics(startDate: string, endDate: string, departmentId?: string, officeId?: string) {
     // Basic employee count and filter IDs
-    let empQuery = supabase.from('employees').select('id', { count: 'exact' }).eq('status', 'ACTIVE');
+    let empQuery = supabase.from('employees').select('id, status, role:role_id(name), departments(name)', { count: 'exact' }).eq('status', 'ACTIVE');
     if (departmentId && departmentId !== 'All') empQuery = empQuery.eq('department_id', departmentId);
     if (officeId && officeId !== 'All') empQuery = empQuery.eq('office_id', officeId);
     
-    const { data: emps, count: totalEmployees } = await empQuery;
+    const { data: emps, count: totalEmployees, error: empError } = await empQuery;
     const hasFilter = (departmentId && departmentId !== 'All') || (officeId && officeId !== 'All');
     const empIds = emps ? (emps as any[]).map(e => e.id) : [];
 
@@ -20,6 +24,7 @@ export const reportService = {
         totalEmployees: 0, attendanceRate: '0.0%', presentToday: 0, lateArrivals: 0,
         earlyLogouts: 0, wfhEmployees: 0, onLeave: 0, avgWorkingHours: '0h 0m',
         payrollProcessed: '₹0.0L', departmentAttendance: [], attendanceTrend: [],
+        requiredMinutesAvg: null, attendanceDetail: null, workingDaysFromSettings: false,
         workforceDistribution: { present: 0, wfh: 0, leave: 0, absent: 0 },
         securityAnalytics: { verifiedInside: '0%', outsideAttempts: '0%', wfhBypass: '0%', locationUnavailable: '0%', faceVerified: '0%', faceFailed: '0%', faceNotRegistered: '0 emp', faceNotRequired: '0%' }
       };
@@ -27,29 +32,41 @@ export const reportService = {
 
     // Fetch attendance for the range
     let attQuery = supabase.from('attendance')
-      .select('id, employee_id, status, clock_in_at, late_minutes, early_logout_minutes, worked_hours, attendance_date, employees!inner(departments(name))')
+      .select('id, employee_id, status, clock_in_at, late_minutes, early_logout_minutes, worked_hours, required_hours, attendance_date, employees!inner(departments(name)), shift_templates(required_hours, start_time, end_time, crosses_midnight)')
       .gte('attendance_date', startDate)
       .lte('attendance_date', endDate);
     if (hasFilter) attQuery = attQuery.in('employee_id', empIds);
-    const { data: attendanceLogs } = await attQuery;
+    const { data: attendanceLogs, error: attError } = await attQuery;
+    if (empError || attError) {
+      // Never show zero/absent figures computed from a failed read.
+      throw new Error(`Could not load report data: ${(empError || attError)?.message}`);
+    }
 
     // Fetch WFH for the range
     let wfhQuery = supabase.from('wfh_requests')
-      .select('id', { count: 'exact', head: true })
+      .select('employee_id, request_date', { count: 'exact' })
       .eq('status', 'APPROVED')
       .gte('request_date', startDate)
       .lte('request_date', endDate);
     if (hasFilter) wfhQuery = wfhQuery.in('employee_id', empIds);
-    const { count: wfhCount } = await wfhQuery;
+    const { data: wfhRows, count: wfhCount } = await wfhQuery;
 
-    // Fetch Leave for the range
+    // Fetch approved leave OVERLAPPING the range (a leave that starts before or ends after the
+    // range still covers days inside it)
     let leaveQuery = supabase.from('leave_requests')
-      .select('id', { count: 'exact', head: true })
+      .select('employee_id, start_date, end_date, is_half_day')
       .eq('status', 'APPROVED')
-      .gte('start_date', startDate)
-      .lte('end_date', endDate);
+      .lte('start_date', endDate)
+      .gte('end_date', startDate);
     if (hasFilter) leaveQuery = leaveQuery.in('employee_id', empIds);
-    const { count: leaveCount } = await leaveQuery;
+    const { data: leaveRows } = await leaveQuery;
+    const leaveCount = (leaveRows || []).length;
+
+    // Working days come from Admin → Settings; the app default (Mon–Fri) is used only when no
+    // settings are saved, and the page says so.
+    const stored = await loadStoredAppSettings();
+    const workingDaysFromSettings = Array.isArray(stored.app?.workingDays);
+    const workingDays: string[] = workingDaysFromSettings ? stored.app!.workingDays : appSettingsService.getDefaults().workingDays;
 
     // Fetch Payroll for the range
     const startMonth = new Date(startDate).getMonth() + 1;
@@ -97,8 +114,6 @@ export const reportService = {
     // All statuses that indicate the employee was physically present/working
     const PRESENT_STATUSES = ['PRESENT', 'WORKING', 'COMPLETED', 'LATE', 'EARLY LOGOUT', 'ON_BREAK', 'HALF_DAY', 'AUTO LOGOUT'];
 
-    let deptStats: any = {};
-    let dailyStats: Record<string, { total: number; present: number }> = {};
     if (attendanceLogs) {
       for (const log of (attendanceLogs as any[])) {
         const statusUpper = (log.status || '').toUpperCase();
@@ -109,38 +124,21 @@ export const reportService = {
           totalWorkMinutes += (log.worked_hours * 60);
           presentDays++;
         }
-        
-        const deptName = log.employees?.departments?.name || 'Unassigned';
-        if (!deptStats[deptName]) deptStats[deptName] = { total: 0, present: 0 };
-        deptStats[deptName].total++;
-        if (PRESENT_STATUSES.includes(statusUpper)) deptStats[deptName].present++;
-        
-        const dStr = log.attendance_date.split('T')[0];
-        if (!dailyStats[dStr]) dailyStats[dStr] = { total: 0, present: 0 };
-        dailyStats[dStr].total++;
-        if (PRESENT_STATUSES.includes(statusUpper)) dailyStats[dStr].present++;
       }
     }
 
-    const attendanceTrend = Object.keys(dailyStats)
-      .sort()
-      .slice(-5)
-      .map(dateStr => {
-        const d = new Date(dateStr);
-        const label = d.toLocaleDateString('en-US', { weekday: 'short' });
-        const val = dailyStats[dateStr].total > 0 ? Math.round((dailyStats[dateStr].present / dailyStats[dateStr].total) * 100) : 0;
-        return { label, val };
-      });
-
-    const attendanceRate = totalEmployees && totalEmployees > 0 && attendanceLogs ? (present / (totalEmployees * (attendanceLogs.length ? (attendanceLogs.length/totalEmployees) : 1))) * 100 : 0;
+    const stats = computeAttendanceStats({
+      employees: (emps as any[]) || [], attendance: (attendanceLogs as any[]) || [], leaves: (leaveRows as any[]) || [], wfh: (wfhRows as any[]) || [],
+      startDate, endDate, today: companyDateStr(), workingDays,
+    });
+    const requiredMinutesAvg = averageRequiredMinutes((attendanceLogs as any[]) || []);
+    const attendanceTrend = stats.trend.map(t => ({ label: t.label, val: t.val }));
     const avgWorkMin = presentDays > 0 ? totalWorkMinutes / presentDays : 0;
     const avgHours = Math.floor(avgWorkMin / 60);
     const avgMins = Math.floor(avgWorkMin % 60);
 
-    const departmentAttendance = Object.keys(deptStats).map(dept => {
-      const rate = deptStats[dept].total > 0 ? Math.round((deptStats[dept].present / deptStats[dept].total) * 100) : 0;
-      return { dept, val: rate };
-    });
+    // Department % and trend use expected employee-days (see reportRules), not attendance rows.
+    const departmentAttendance = stats.departments;
 
     const locTotal = locVerifications?.length || 1;
     const locVerified = (locVerifications as any[])?.filter(v => v.result === 'SUCCESS').length || 0;
@@ -155,7 +153,10 @@ export const reportService = {
 
     return {
       totalEmployees: totalEmployees || 0,
-      attendanceRate: attendanceRate.toFixed(1) + '%',
+      attendanceRate: stats.rate === null ? '—' : stats.rate.toFixed(1) + '%',
+      attendanceDetail: { wfh: stats.wfhPresentDays, expected: stats.expectedDays, present: stats.presentDays, absent: stats.absentDays, leave: stats.leaveDays },
+      requiredMinutesAvg,
+      workingDaysFromSettings,
       presentToday: present, // Not strictly today, based on range
       lateArrivals: late,
       earlyLogouts: earlyLogout,
@@ -165,12 +166,12 @@ export const reportService = {
       payrollProcessed: `₹${(totalPayroll / 100000).toFixed(1)}L`,
       departmentAttendance,
       attendanceTrend,
-      // For actual reporting we can use the exact queries, but these variables give us a good base
+      // Employee-days in the selected range (present / approved-WFH requests / full-day leave / absent)
       workforceDistribution: {
-        present: present,
-        wfh: wfhCount || 0,
-        leave: leaveCount || 0,
-        absent: (totalEmployees || 0) - present - (wfhCount || 0) - (leaveCount || 0)
+        present: Math.max(0, stats.presentDays - stats.wfhPresentDays), // present in office
+        wfh: stats.wfhPresentDays,
+        leave: stats.leaveDays,
+        absent: stats.absentDays
       },
       securityAnalytics: {
         verifiedInside: Math.round((locVerified / locTotal) * 100) + '%',

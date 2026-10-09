@@ -9,6 +9,9 @@ import { globalSettingsService } from '../settings/globalSettingsService';
 import { payrollAuditService } from './payrollAuditService';
 import { payrollDataService } from './payrollDataService';
 import type { PayrollEmployeeData } from './payrollDataService';
+import { overtimePayAmount, statusChangeError, paymentBlockReason, canRecordPayment, validatePaymentAmount, validatePaymentDate, paymentDateToTimestamp, paymentRpcErrorMessage, WFH_DEDUCTION_POLICY_APPROVED, approvalBlockReason, resolutionMap, resolutionError, parsePayrollSnapshot } from './payrollRules';
+import type { ReviewResolution, ReviewDecisionValue } from './payrollRules';
+import { companyDateStr } from '../../utils/companyDate';
 
 export const payrollService = {
   /**
@@ -100,15 +103,15 @@ export const payrollService = {
       .eq('attendance_date', dateStr) as any;
 
     if (attErr || !attendanceRecords) {
-      return { data: [], error: null };
+      return { data: null, error: new Error(`Attendance could not be loaded: ${attErr?.message || 'no data returned'}`) };
     }
 
-    const { data: employees } = await supabase
+    const { data: employees, error: empErr } = await supabase
       .from('employees')
       .select('id, first_name, last_name, employee_code, departments(name)')
       .in('id', attendanceRecords.map((a: any) => a.employee_id)) as any;
 
-    if (!employees) return { data: [], error: null };
+    if (empErr || !employees) return { data: null, error: new Error(`Employees could not be loaded: ${empErr?.message || 'no data returned'}`) };
 
     // Get the year and month for the given date to pass to the calculation engine
     const d = new Date(dateStr);
@@ -116,12 +119,17 @@ export const payrollService = {
     const month = d.getMonth() + 1;
 
     const reports = [];
+    const failures: string[] = [];
 
     for (const emp of employees) {
       const att = attendanceRecords.find((a: any) => a.employee_id === emp.id);
       if (!att) continue;
 
       const calc = await this.calculatePayrollDetails(emp.id, year, month, dateStr, dateStr);
+      if (calc.error || !calc.data) {
+        failures.push(`${emp.employee_code || emp.id}: ${calc.error?.message || 'not calculated'}`);
+        continue;
+      }
       
       if (!calc.error && calc.data) {
         const c = calc.data as any;
@@ -161,6 +169,10 @@ export const payrollService = {
       }
     }
 
+    // A preview that silently drops employees would understate deductions: report them instead.
+    if (failures.length > 0) {
+      return { data: null, error: new Error(`Deductions could not be calculated for ${failures.length} employee(s). ${failures[0]}`) };
+    }
     return { data: reports, error: null };
   },
 
@@ -180,6 +192,11 @@ export const payrollService = {
     const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59)).toISOString();
 
     let successCount = 0;
+    // Every employee that could not be calculated is reported (never silently skipped)
+    const failures: { employee_id: string; error: string }[] = [];
+    // Days flagged for Admin review (e.g. half-day leave with the other half unaccounted for)
+    const reviews: { employee_id: string; items: { date: string; reason: string }[] }[] = [];
+    let skippedLocked = 0;
     for (const s of structures) {
       if (s.employee_id) {
         const { data: existing } = await supabase
@@ -193,7 +210,8 @@ export const payrollService = {
         let res;
         if (existing) {
           if (['APPROVED', 'PAYMENT_PENDING', 'PAID', 'CLOSED'].includes(existing.status)) {
-            continue; // Skip locked payrolls
+            skippedLocked++;
+            continue; // Locked payrolls are intentionally left unchanged (reported as skippedLocked)
           }
           res = await this.recalculatePayroll(s.employee_id, year, month, startDate, endDate);
         } else {
@@ -202,15 +220,20 @@ export const payrollService = {
 
         if (res && !res.error) {
           successCount++;
+          const items = (res as any).reviewItems || [];
+          if (items.length > 0) reviews.push({ employee_id: s.employee_id, items });
           // Auto submit to UNDER_REVIEW if newly created or still in DRAFT/CALCULATED
           if (res.data?.id && (!existing || ['DRAFT', 'CALCULATED'].includes(existing.status))) {
-            await this.submitPayrollForReview(res.data.id);
+            const sub = await this.submitPayrollForReview(res.data.id);
+            if (sub?.error) failures.push({ employee_id: s.employee_id, error: `Calculated, but not submitted for review: ${sub.error.message}` });
           }
+        } else {
+          failures.push({ employee_id: s.employee_id, error: res?.error?.message || 'Payroll could not be calculated.' });
         }
       }
     }
 
-    return { success: true, count: successCount };
+    return { success: failures.length === 0, count: successCount, failures, skippedLocked, reviews };
   },
 
   /**
@@ -236,13 +259,13 @@ export const payrollService = {
     return this._doCalculate(employeeId, year, month, periodStart, periodEnd);
   },
 
-  async recalculatePayroll(employeeId: string, year: number, month: number, periodStart: string, periodEnd: string) {
+  async recalculatePayroll(employeeId: string, year: number, month: number, periodStart: string, periodEnd: string, opts?: { resolutions?: ReviewResolution[] }) {
     const adminId = await salaryService.getCurrentEmployeeId();
     if (!adminId) return { error: new Error('Unauthorized') };
 
     const { data: existing } = await supabase
       .from('payroll')
-      .select('id, status')
+      .select('id, status, remarks')
       .eq('employee_id', employeeId)
       .eq('payroll_year', year)
       .eq('payroll_month', month)
@@ -258,7 +281,9 @@ export const payrollService = {
       await supabase.from('payroll').delete().eq('id', existing.id);
     }
 
-    const res = await this._doCalculate(employeeId, year, month, periodStart, periodEnd);
+    // Admin decisions on review flags survive recalculation
+    const resolutions: ReviewResolution[] = opts?.resolutions ?? (parsePayrollSnapshot(existing?.remarks)?.reviewResolutions || []);
+    const res: any = await this._doCalculate(employeeId, year, month, periodStart, periodEnd, { resolutions });
     
     // Restore UNDER_REVIEW if it was previously UNDER_REVIEW
     if (res.data?.id && existing?.status === 'UNDER_REVIEW') {
@@ -269,15 +294,19 @@ export const payrollService = {
     return res;
   },
 
-  async calculatePayrollDetails(employeeId: string, year: number, month: number, periodStart: string, periodEnd: string) {
+  async calculatePayrollDetails(employeeId: string, year: number, month: number, periodStart: string, periodEnd: string, opts?: { resolutions?: ReviewResolution[] }) {
     // 1. Get salary structure
     const { data: salary, error: salErr } = (await salaryService.getSalaryStructureForPeriod(employeeId, periodStart, periodEnd)) as any;
     if (salErr || !salary) {
       return { data: null, error: new Error('No active salary structure found for this payroll period.') };
     }
 
-    // 2. Get payroll settings from configuration (not hardcoded)
+    // 2. Get payroll settings from configuration (not hardcoded). If the settings row could not be
+    //    read, the defaults (e.g. Mon–Fri working days) would silently change who gets LOP: refuse.
     const globalSettings = await globalSettingsService.loadSettings();
+    if (!globalSettings?.updated_at || !globalSettings.payroll || !globalSettings.app) {
+      return { data: null, error: new Error('Company settings could not be loaded. Payroll was not calculated.') };
+    }
     const settings = globalSettings.payroll;
 
     // 3. Get actual employee data from attendance/leave/permission/wfh modules
@@ -285,25 +314,40 @@ export const payrollService = {
     // Note: We use periodStart and periodEnd to fetch exactly the requested window
     const startDate = periodStart;
     const endDate = periodEnd;
-    
-    const [attendanceResult, leaveResult, wfhResult, permissionResult] = await Promise.all([
-      payrollDataService._fetchAttendance(employeeId, startDate, endDate, appSettings),
-      payrollDataService._fetchLeave(employeeId, startDate, endDate),
+
+    const [daysResult, wfhResult, permissionResult, approvedOt] = await Promise.all([
+      payrollDataService._fetchPayrollDays(employeeId, startDate, endDate, appSettings, companyDateStr(), resolutionMap(opts?.resolutions)),
       payrollDataService._fetchWfh(employeeId, startDate, endDate),
       payrollDataService._fetchPermissions(employeeId, startDate, endDate),
+      payrollDataService._fetchApprovedOvertime(employeeId, startDate, endDate),
     ]);
 
-    // Calculate unauthorized absences
-    const unauthorizedAbsences = Math.max(0, attendanceResult.absentDays - leaveResult.approvedLeave - wfhResult.wfhDays);
-    
-    // Total LOP = Unauthorized absences + Approved Unpaid Leave
-    attendanceResult.lopDays = unauthorizedAbsences + leaveResult.lopLeave;
+    // A failed lookup is never treated as "no absences / no leave / no permissions": stop instead.
+    const lookups: [string, any][] = [['Attendance', daysResult], ['Approved WFH', wfhResult], ['Approved permissions', permissionResult]];
+    for (const [what, res] of lookups) {
+      if (!res) return { data: null, error: new Error(`${what} could not be loaded. Payroll was not calculated.`) };
+      if (res.error) return { data: null, error: res.error instanceof Error ? res.error : new Error(String(res.error)) };
+    }
+
+    // Overtime = APPROVED overtime requests only. attendance.overtime_minutes (e.g. written by the
+    // server auto clock-out as worked minus required) is kept for information but never paid.
+    if (settings.enableOvertimePay && (!approvedOt || approvedOt.error)) {
+      return { data: null, error: approvedOt?.error || new Error('Approved overtime could not be loaded.') };
+    }
+    const attendanceResult = { ...daysResult.attendance };
+    attendanceResult.recordedOvertimeMinutes = attendanceResult.totalOvertimeMinutes;
+    attendanceResult.totalOvertimeMinutes = approvedOt && !approvedOt.error ? approvedOt.minutes : 0;
+
+    // LOP days come from the day classification: unexcused absences (working day, no clock-in, no
+    // approved paid leave) + approved Loss-of-Pay leave + sandwich LOP. Every date is counted once.
+    // LATE / ON_BREAK / EARLY / AUTO-LOGOUT days have a clock-in and are worked days (their lateness
+    // and break penalties are the separate minute-based deductions below).
 
     const empData: PayrollEmployeeData = {
       attendance: attendanceResult,
-      leave: leaveResult,
-      wfh: wfhResult,
-      permission: permissionResult,
+      leave: daysResult.leave,
+      wfh: { wfhDays: wfhResult.wfhDays },
+      permission: { permissionCount: permissionResult.permissionCount, totalMinutes: permissionResult.totalMinutes },
     };
 
     // 4. Compute Gross Salary
@@ -313,9 +357,17 @@ export const payrollService = {
                             Number(salary.other_allowances || 0);
     const grossSalary = basic + totalAllowances;
 
-    // 5. Calculate working days based on settings
-    const workingDays = payrollSettingsService.getWorkingDaysForMonth(year, month, settings);
-    const dailyRate = workingDays > 0 ? grossSalary / workingDays : 0;
+    // 5. Daily rate (owner rule, 2026-10-09: keep until the company confirms another policy):
+    //    dailyRate = monthly gross ÷ getWorkingDaysForMonth(), configured in Admin → Settings → Payroll
+    //    (workingDaysBasis 'configured', configuredWorkingDays 26 → gross ÷ 26). It is NOT the employee's
+    //    scheduled working days or calendar days. Full-day LOP = lopDays × dailyRate; half-day LOP = 0.5 ×
+    //    dailyRate; half-day attendance deduction = halfDays × dailyRate × 0.5; each amount is then rounded
+    //    by salaryRounding ('round' = nearest rupee, 'exact' = 2 decimals).
+    const workingDays = payrollSettingsService.getWorkingDaysForMonth(year, month, settings, appSettings?.workingDays);
+    if (!(workingDays > 0)) {
+      return { data: null, error: new Error('The daily-rate divisor is not configured correctly (Settings → Payroll → Working Days Basis / Configured Working Days, and Settings → Working Days). Payroll was not calculated.') };
+    }
+    const dailyRate = grossSalary / workingDays;
 
     // 6. Calculate deductions based on ENABLED rules only
     let totalDeductions = Number(salary.standard_deduction || 0);
@@ -331,11 +383,13 @@ export const payrollService = {
       }
       totalDeductions += lopDeduction;
       
-      const unauthAbs = Math.max(0, empData.attendance.lopDays - empData.leave.lopLeave);
+      const unauthAbs = empData.attendance.absentDays || 0;
+      const sandwich = empData.attendance.sandwichLopDays || 0;
       const leaveLop = empData.leave.lopLeave;
       
       const parts = [];
-      if (unauthAbs > 0) parts.push(`${unauthAbs}d unauthorized absence / sandwich`);
+      if (unauthAbs > 0) parts.push(`${unauthAbs}d unauthorized absence`);
+      if (sandwich > 0) parts.push(`${sandwich}d sandwich LOP`);
       if (leaveLop > 0) parts.push(`${leaveLop}d unpaid leave`);
       
       deductionItems.push({ 
@@ -428,8 +482,9 @@ export const payrollService = {
       }
     }
 
-    // WFH Deduction
-    if (settings.enableWfhDeduction && empData.wfh.wfhDays > 0) {
+    // WFH Deduction — disabled until a WFH deduction policy is explicitly approved (payrollRules.WFH_DEDUCTION_POLICY_APPROVED);
+    // the Settings toggle alone never charges for WFH days.
+    if (WFH_DEDUCTION_POLICY_APPROVED && settings.enableWfhDeduction && empData.wfh.wfhDays > 0) {
       let wfhDeduction = 0;
       
       if (settings.wfhDeductionMethod === 'per_day') {
@@ -486,15 +541,15 @@ export const payrollService = {
 
     // 7. Overtime
     let overtime = 0;
-    if (settings.enableOvertimePay && empData.attendance.totalOvertimeMinutes > 0) {
-      const hourlyRate = (dailyRate / 8); 
-      const otHours = empData.attendance.totalOvertimeMinutes / 60;
-      if (settings.overtimeRateType === 'multiplier') {
-        overtime = payrollSettingsService.applyRounding(otHours * hourlyRate * (settings.overtimeMultiplier || 1), settings);
-      } else {
-        overtime = payrollSettingsService.applyRounding(otHours * (settings.overtimeFixedRate || 0), settings);
-      }
-    }
+    const otRaw = overtimePayAmount({
+      enableOvertimePay: settings.enableOvertimePay,
+      approvedOvertimeMinutes: empData.attendance.totalOvertimeMinutes,
+      dailyRate,
+      overtimeRateType: settings.overtimeRateType,
+      overtimeMultiplier: settings.overtimeMultiplier,
+      overtimeFixedRate: settings.overtimeFixedRate,
+    });
+    if (otRaw > 0) overtime = payrollSettingsService.applyRounding(otRaw, settings);
 
     // 8. Apply rounding
     totalDeductions = payrollSettingsService.applyRounding(totalDeductions, settings);
@@ -522,8 +577,9 @@ export const payrollService = {
     };
   },
 
-  async _doCalculate(employeeId: string, year: number, month: number, periodStart: string, periodEnd: string) {
-    const calc = await this.calculatePayrollDetails(employeeId, year, month, periodStart, periodEnd);
+  async _doCalculate(employeeId: string, year: number, month: number, periodStart: string, periodEnd: string, opts?: { resolutions?: ReviewResolution[] }) {
+    const resolutions = opts?.resolutions || [];
+    const calc = await this.calculatePayrollDetails(employeeId, year, month, periodStart, periodEnd, { resolutions });
     if (calc.error) return { data: null, error: calc.error };
     
     const {
@@ -542,8 +598,11 @@ export const payrollService = {
         configuredWorkingDays: settings.configuredWorkingDays,
         workingDaysUsed: workingDays,
         dailyRate: payrollSettingsService.applyRounding(dailyRate, settings),
+        wfhDeductionApplied: WFH_DEDUCTION_POLICY_APPROVED && !!settings.enableWfhDeduction,
       },
       deductionBreakdown: deductionItems,
+      // Admin decisions on attendance review flags (who / when / why), carried across recalculation
+      reviewResolutions: resolutions,
     });
 
     // 10. Insert Payroll
@@ -606,7 +665,7 @@ export const payrollService = {
       await supabase.from('payroll_items').insert(items as any);
     }
 
-    return { data: payroll, error: null };
+    return { data: payroll, error: null, reviewItems: empData.attendance.reviewItems || [] };
   },
 
   /**
@@ -616,12 +675,21 @@ export const payrollService = {
     const adminId = await salaryService.getCurrentEmployeeId();
     if (!adminId) return { error: new Error('Unauthorized') };
 
-    const { data: existing } = await supabase.from('payroll').select('status').eq('id', id).single<any>();
+    const { data: existing } = await supabase.from('payroll').select('status, remarks').eq('id', id).single<any>();
     if (!existing) return { error: new Error('Not found') };
+
+    // Unresolved attendance review flags block approval (single and bulk approval both come here)
+    if (newStatus === 'APPROVED') {
+      const blocked = approvalBlockReason(existing.remarks);
+      if (blocked) return { error: new Error(blocked) };
+    }
 
     if (expectedCurrentStatus && !expectedCurrentStatus.includes(existing.status)) {
       return { error: new Error(`Cannot transition from ${existing.status} to ${newStatus}`) };
     }
+    // One forward path only; PAID only via markPayrollPaid (see payrollRules)
+    const transitionErr = statusChangeError(existing.status, newStatus);
+    if (transitionErr) return { error: new Error(transitionErr) };
 
     const payload: any = { status: newStatus };
     if (newStatus === 'APPROVED') {
@@ -665,6 +733,41 @@ export const payrollService = {
     return { error };
   },
 
+  /**
+   * Admin resolves one attendance review flag: APPLY (the deduction applies) or WAIVE (no deduction),
+   * with a required note. Only before approval (CALCULATED / UNDER_REVIEW). The payroll is then
+   * recalculated through the normal calculation with the decision included — amounts are never edited
+   * directly — and the decision (who / when / note) is stored with the calculation and audited.
+   */
+  async resolveReviewFlag(payrollId: string, date: string, type: string, decision: ReviewDecisionValue, note: string) {
+    const adminId = await salaryService.getCurrentEmployeeId();
+    if (!adminId) return { data: null, error: new Error('Unauthorized') };
+    const role = await this._getCurrentRole();
+    if (role !== 'ADMIN') return { data: null, error: new Error('Only an Admin can resolve payroll review flags.') };
+
+    const { data: p } = await supabase.from('payroll')
+      .select('id, status, remarks, employee_id, payroll_year, payroll_month, period_start, period_end')
+      .eq('id', payrollId).single<any>();
+    const err = resolutionError(p, date, type, decision, note);
+    if (err) return { data: null, error: new Error(err) };
+
+    const previous: ReviewResolution[] = (parsePayrollSnapshot(p.remarks)?.reviewResolutions || []).filter((r: ReviewResolution) => !(r.date === date && r.type === type));
+    const resolutions: ReviewResolution[] = [...previous, { date, type, decision, note: String(note).trim(), by: adminId, at: new Date().toISOString() }];
+
+    const res: any = await this.recalculatePayroll(p.employee_id, p.payroll_year, p.payroll_month, p.period_start, p.period_end, { resolutions });
+    if (res?.error) return { data: null, error: res.error };
+
+    await auditService.recordAuditLog({
+      action: 'PAYROLL_REVIEW_RESOLVED',
+      module: 'PAYROLL',
+      entity_type: 'payroll',
+      entity_id: res.data?.id || payrollId,
+      description: `Review flag ${type} on ${date} resolved: ${decision}. Note: ${String(note).trim()}`,
+      new_values: { date, type, decision },
+    });
+    return { data: res.data, error: null };
+  },
+
   async submitPayrollForReview(id: string) {
     return this.updateStatus(id, 'UNDER_REVIEW', ['CALCULATED', 'DRAFT']);
   },
@@ -684,48 +787,65 @@ export const payrollService = {
   /**
    * Admin: Record Payment
    */
-  async markPayrollPaid(id: string, amount: number, method: string, reference: string, remarks?: string) {
+  /** Normalised role of the signed-in user (profiles.role_id → roles.name), or null. */
+  async _getCurrentRole(): Promise<string | null> {
+    const { data: authData } = await supabase.auth.getUser();
+    if (!authData?.user) return null;
+    const { data: profile } = await supabase.from('profiles').select('role_id').eq('auth_user_id', authData.user.id).single() as any;
+    if (!profile?.role_id) return null;
+    const { data: role } = await supabase.from('roles').select('name').eq('id', profile.role_id).single() as any;
+    return role?.name ? String(role.name).trim().toUpperCase() : null;
+  },
+
+  /**
+   * Admin: record the (single) payment of a payroll.
+   * Policy: ADMIN only; amount must equal the approved net salary exactly; one payment per payroll.
+   * The authoritative work runs in ONE database transaction (record_payroll_payment): it locks the
+   * payroll row, re-checks role, status, amount and existing payments, inserts the payment and sets
+   * PAID. The checks below only give early, friendly messages; they are not relied on for safety.
+   */
+  async markPayrollPaid(id: string, amount: number, method: string, reference: string, remarks?: string, paymentDate?: string) {
     const adminId = await salaryService.getCurrentEmployeeId();
     if (!adminId) return { error: new Error('Unauthorized') };
+    const role = await this._getCurrentRole();
+    if (!canRecordPayment(role)) return { error: new Error('Only an Admin can record payroll payments.') };
 
     const { data: payroll } = await supabase.from('payroll').select('status, net_salary, employee_id, payroll_month, payroll_year').eq('id', id).single<any>();
     if (!payroll) return { error: new Error('Not found') };
 
-    if (payroll.status !== 'PAYMENT_PENDING') {
-      return { error: new Error('Payroll is not in PAYMENT_PENDING status') };
-    }
+    const amountErr = validatePaymentAmount(amount, Number(payroll.net_salary));
+    if (amountErr) return { error: new Error(amountErr) };
+    const dateErr = validatePaymentDate(paymentDate, companyDateStr());
+    if (dateErr) return { error: new Error(dateErr) };
+    if (!method || !String(method).trim()) return { error: new Error('Choose a payment method.') };
 
-    // Insert payment record
-    const { error: payErr } = await supabase.from('payroll_payments').insert({
-      payroll_id: id,
-      paid_at: new Date().toISOString(),
-      amount: amount || payroll.net_salary,
-      payment_method: method,
-      transaction_reference: reference || null,
-      remarks: remarks || null,
-      paid_by: adminId
-    } as never);
+    const blocked = paymentBlockReason(payroll.status, 0);
+    if (blocked) return { error: new Error(blocked) };
 
-    if (payErr) return { error: payErr };
+    const { data: paymentId, error: rpcErr } = await (supabase as any).rpc('record_payroll_payment', {
+      p_payroll_id: id,
+      p_amount: amount,
+      p_payment_method: String(method).trim(),
+      p_transaction_reference: reference ? String(reference).trim() : null,
+      p_remarks: remarks ? String(remarks).trim() : null,
+      p_paid_at: paymentDateToTimestamp(paymentDate),
+    });
+    if (rpcErr) return { error: new Error(paymentRpcErrorMessage(rpcErr)) };
+    if (!paymentId) return { error: new Error('Payment was not recorded: the database did not confirm the payment.') };
 
-    // Update payroll status
-    const { error: updErr } = await supabase.from('payroll').update({ status: 'PAID' } as never).eq('id', id);
+    await auditService.recordAuditLog({
+      action: 'PAYMENT_MARKED',
+      module: 'PAYROLL',
+      entity_type: 'payroll',
+      entity_id: id,
+      description: `Recorded payment of ₹${amount} for payroll via ${method}`,
+      new_values: { amount, method, reference, payment_id: paymentId }
+    });
 
-    if (!updErr) {
-      await auditService.recordAuditLog({
-        action: 'PAYMENT_MARKED',
-        module: 'PAYROLL',
-        entity_type: 'payroll',
-        entity_id: id,
-        description: `Recorded payment of ₹${amount || payroll.net_salary} for payroll via ${method}`,
-        new_values: { amount: amount || payroll.net_salary, method, reference }
-      });
+    // Salary paid + payslip now available (the employee Payslip page opens PAID/CLOSED payrolls)
+    await notificationService.notifyEmployee(payroll.employee_id, salaryPaid({ id, month: payroll.payroll_month, year: payroll.payroll_year }));
+    await notificationService.notifyEmployee(payroll.employee_id, payslipAvailable({ payrollId: id, month: payroll.payroll_month, year: payroll.payroll_year }));
 
-      // Salary paid + payslip now available (the employee Payslip page opens PAID/CLOSED payrolls)
-      await notificationService.notifyEmployee(payroll.employee_id, salaryPaid({ id, month: payroll.payroll_month, year: payroll.payroll_year }));
-      await notificationService.notifyEmployee(payroll.employee_id, payslipAvailable({ payrollId: id, month: payroll.payroll_month, year: payroll.payroll_year }));
-    }
-
-    return { error: updErr };
+    return { error: null, paymentId };
   }
 };

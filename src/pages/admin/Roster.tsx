@@ -2,6 +2,9 @@ import { useDepartments } from '../../hooks/useDepartments';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { employeeService } from '../../services/employees/employeeService';
+import { rosterService } from '../../services/shifts/rosterService';
+import { cellFromForm, cellFromAssignment } from '../../services/shifts/rosterRules';
+import { rosterToday, weekRange, monthRange, navigate as moveAnchor, dayLabel } from '../../services/shifts/rosterDates';
 import { 
   CalendarDays, Calendar, ChevronLeft, ChevronRight, Search, 
   Filter, MoreVertical, X, CheckCircle2, AlertTriangle, Users, 
@@ -19,7 +22,12 @@ const AdminRoster: React.FC = () => {
   
   const [rosterData, setRosterData] = useState<any>({});
   const [viewMode, setViewMode] = useState('Week');
-  const [status, setStatus] = useState('Draft');
+  // Saved roster for the visible week (rosters / roster_assignments) and every saved entry in view
+  const [periodRoster, setPeriodRoster] = useState<any>(null);
+  const [rosterEntries, setRosterEntries] = useState<Record<string, Record<string, any>>>({});
+  const [rosterError, setRosterError] = useState<string | null>(null);
+  const [rosterBusy, setRosterBusy] = useState(false);
+  const status = periodRoster?.status === 'PUBLISHED' ? 'Published' : 'Draft';
   const [isLocked, setIsLocked] = useState(false);
   
   const [search, setSearch] = useState('');
@@ -41,7 +49,8 @@ const AdminRoster: React.FC = () => {
   const [formData, setFormData] = useState<any>({});
 
   // Date State
-  const [currentDate, setCurrentDate] = useState(new Date());
+  // Company date (Asia/Kolkata) the view is anchored on — a plain YYYY-MM-DD string, never a local-clock Date
+  const [anchorDate, setAnchorDate] = useState<string>(() => rosterToday());
 
   const fetchData = async () => {
     setLoading(true);
@@ -83,6 +92,11 @@ const AdminRoster: React.FC = () => {
   };
 
   const getEffectiveCellData = (empId: string, dateStr: string) => {
+    // A saved roster entry for the date (WORK with shift + mode, or Week Off) wins over the default shift
+    if (rosterEntries[empId]?.[dateStr]) {
+      const r = rosterEntries[empId][dateStr];
+      return r.shift ? { ...r, shiftData: shifts.find(s => s.id === r.shift) } : r;
+    }
     if (rosterData[empId]?.[dateStr]) {
       return rosterData[empId][dateStr];
     }
@@ -129,12 +143,15 @@ const AdminRoster: React.FC = () => {
   const handleCellClick = (empId: string, date: string) => {
     if (isLocked) return showToast('Roster is locked. Unlock to make changes.');
     
-    const existing = rosterData[empId]?.[date];
+    if (periodRoster?.status === 'PUBLISHED') return showToast('This roster is published. Unpublish it before making changes.');
+    const existing = rosterEntries[empId]?.[date] || rosterData[empId]?.[date];
     if (existing?.type === 'Leave' || existing?.type === 'Holiday') {
       setConflictModal({ empId, date, type: existing.type });
     } else {
       setAssignModal({ empId, date, existing });
-      if (existing?.shift) {
+      if (existing?.type === 'Week Off') {
+        setFormData({ shift: shifts[0]?.id || '', mode: 'Week Off' });
+      } else if (existing?.shift) {
         setFormData({ shift: existing.shift, mode: existing.mode || 'Office' });
       } else {
         setFormData({ shift: shifts[0]?.id || '', mode: 'Office' });
@@ -147,74 +164,73 @@ const AdminRoster: React.FC = () => {
     if (!formData.shift && formData.mode !== 'Week Off') return;
     
     const { empId, date } = assignModal;
-    
-    if (formData.mode !== 'Week Off') {
-      const { error } = await employeeService.assignShift(empId, formData.shift, date);
-      if (error) {
-        showToast('Error saving shift: ' + error.message);
-        return;
-      }
-    }
-    
-    await fetchData();
+    const cell = cellFromForm(formData.mode, formData.shift);
+    if ('error' in cell) { showToast(cell.error); return; }
+    // Saved to this week's roster (rosters / roster_assignments) — Week Off and WFH are stored too
+    const { error } = await rosterService.saveCell(weekDates[0].date, weekDates[6].date, empId, date, cell);
+    if (error) { showToast('Roster not saved: ' + error.message); return; }
+    await loadRosters();
     setAssignModal(null);
-    showToast(assignModal.existing ? 'Shift assignment updated' : 'Shift assigned successfully');
+    showToast(cell.dayType === 'WEEK_OFF' ? 'Week off saved to the draft roster' : 'Shift saved to the draft roster');
   };
 
-  const handlePublish = () => {
-    setStatus('Published');
-    showToast('Roster published successfully');
+  const handlePublish = async () => {
+    if (!periodRoster) return showToast('Save at least one roster entry before publishing.');
+    setRosterBusy(true);
+    const { error } = await rosterService.publish(periodRoster.id);
+    setRosterBusy(false);
+    if (error) return showToast(error.message);
+    await loadRosters();
+    showToast('Roster published. Payroll now uses it for this week.');
   };
 
-  // Calendar Math
-  const getDaysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
-  const getFirstDayOfMonth = (year: number, month: number) => {
-    let day = new Date(year, month, 1).getDay();
-    return day === 0 ? 6 : day - 1; // 0 = Mon, 6 = Sun
+  const handleUnpublish = async () => {
+    if (!periodRoster) return;
+    setRosterBusy(true);
+    const { error } = await rosterService.unpublish(periodRoster.id);
+    setRosterBusy(false);
+    if (error) return showToast(error.message);
+    await loadRosters();
+    showToast('Roster unpublished (back to draft).');
   };
 
-  const year = currentDate.getFullYear();
-  const month = currentDate.getMonth();
-  const daysInMonth = getDaysInMonth(year, month);
-  const firstDay = getFirstDayOfMonth(year, month);
+  // Calendar Math — pure company-date strings (see services/shifts/rosterDates.ts)
+  const monthInfo = monthRange(anchorDate);
+  const year = monthInfo.year;
+  const month = monthInfo.month - 1; // 0-based, as used by the month grid below
+  const daysInMonth = monthInfo.daysInMonth;
+  const firstDay = monthInfo.firstWeekdayIndex; // 0 = Mon, 6 = Sun
   
   const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   
-  const handlePrev = () => {
-    if (viewMode === 'Week') {
-      setCurrentDate(new Date(year, month, currentDate.getDate() - 7));
-    } else {
-      setCurrentDate(new Date(year, month - 1, 1));
+  const handlePrev = () => setAnchorDate(a => moveAnchor(a, viewMode === 'Week' ? 'Week' : 'Month', -1));
+  const handleNext = () => setAnchorDate(a => moveAnchor(a, viewMode === 'Week' ? 'Week' : 'Month', 1));
+  const handleToday = () => setAnchorDate(rosterToday());
+
+  // The roster week (Monday → Sunday) containing the anchor date — the same period for every visit
+  const weekDates = weekRange(anchorDate).dates.map(ds => ({ date: ds, display: dayLabel(ds) }));
+
+  // Visible range: the week in Grid view, the whole month in Calendar view
+  const rangeStart = viewMode === 'Week' ? weekDates[0].date : `${year}-${String(month + 1).padStart(2, '0')}-01`;
+  const rangeEnd = viewMode === 'Week' ? weekDates[6].date : `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
+
+  const loadRosters = async () => {
+    const [list, period] = await Promise.all([
+      rosterService.getRosters(rangeStart, rangeEnd),
+      rosterService.getPeriodRoster(weekDates[0].date, weekDates[6].date),
+    ]);
+    const err = list.error || period.error;
+    setRosterError(err ? err.message : null);
+    setPeriodRoster(period.roster);
+    const map: Record<string, Record<string, any>> = {};
+    for (const a of list.assignments) {
+      const owner = list.rosters.find((r: any) => r.id === a.roster_id);
+      (map[a.employee_id] ||= {})[String(a.assignment_date).slice(0, 10)] = { ...cellFromAssignment(a), rosterStatus: owner?.status };
     }
-  };
-  
-  const handleNext = () => {
-    if (viewMode === 'Week') {
-      setCurrentDate(new Date(year, month, currentDate.getDate() + 7));
-    } else {
-      setCurrentDate(new Date(year, month + 1, 1));
-    }
-  };
-  
-  const handleToday = () => {
-    setCurrentDate(new Date());
+    setRosterEntries(map);
   };
 
-  const getWeekStart = (date: Date) => {
-    const d = new Date(date);
-    const day = d.getDay();
-    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-    return new Date(d.setDate(diff));
-  };
-
-  const weekStart = getWeekStart(currentDate);
-  const weekDates = Array.from({ length: 7 }).map((_, i) => {
-    const d = new Date(weekStart);
-    d.setDate(d.getDate() + i);
-    const ds = d.toISOString().split('T')[0];
-    const display = d.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric' });
-    return { date: ds, display };
-  });
+  useEffect(() => { loadRosters(); }, [rangeStart, rangeEnd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getDayAssignments = (dateStr: string) => {
     const dayAss: any = {};
@@ -276,10 +292,21 @@ const AdminRoster: React.FC = () => {
             <button onClick={handleToday} className="btn" style={{ backgroundColor: 'var(--bg-surface-elevated)', border: 'none', borderLeft: '1px solid var(--border-color)', padding: '0.5rem 1rem', fontSize: '0.875rem', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}>Today</button>
           </div>
           
-          <button onClick={handlePublish} className="btn btn-primary" style={{ fontSize: '0.875rem' }} disabled={status === 'Published'}>
-            <UploadCloud size={16}/> {status === 'Published' ? 'Published' : 'Publish Roster'}
-          </button>
+          {status === 'Published' ? (
+            <button onClick={handleUnpublish} className="btn btn-outline" style={{ fontSize: '0.875rem' }} disabled={rosterBusy} title="Return this week's roster to draft">
+              <UploadCloud size={16}/> Published — Unpublish
+            </button>
+          ) : (
+            <button onClick={handlePublish} className="btn btn-primary" style={{ fontSize: '0.875rem' }} disabled={rosterBusy || !periodRoster}>
+              <UploadCloud size={16}/> Publish Roster
+            </button>
+          )}
         </div>
+      </div>
+      <div style={{ fontSize: '0.8125rem', color: rosterError ? 'var(--danger)' : 'var(--text-secondary)' }} role={rosterError ? 'alert' : undefined}>
+        {rosterError
+          ? `Roster data unavailable: ${rosterError}`
+          : `Week ${weekDates[0].date} to ${weekDates[6].date}: ${periodRoster ? (periodRoster.status === 'PUBLISHED' ? `published${periodRoster.published_at ? ` ${new Date(periodRoster.published_at).toLocaleString('en-IN')}` : ''} — payroll uses this roster` : 'draft (not used by payroll until published)') : 'no roster saved yet — payroll uses the company working days'}.`}
       </div>
 
       {loading ? (
@@ -459,7 +486,7 @@ const AdminRoster: React.FC = () => {
                 {Array.from({ length: daysInMonth }).map((_, i) => {
                   const day = i + 1;
                   const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-                  const isToday = new Date().toISOString().split('T')[0] === dateStr;
+                  const isToday = rosterToday() === dateStr;
                   const dayAss = getDayAssignments(dateStr);
                   const keys = Object.keys(dayAss);
                   const hasMore = keys.length > 3;
@@ -492,7 +519,7 @@ const AdminRoster: React.FC = () => {
         <div className="drawer-overlay" onClick={() => setDayDrawer(null)}>
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Assignments for {new Date(dayDrawer).toLocaleDateString()}</h2>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Assignments for {dayLabel(dayDrawer, { day: 'numeric', month: 'short', year: 'numeric' })}</h2>
               <button className="icon-button" onClick={() => setDayDrawer(null)}><X size={20} /></button>
             </div>
             <div className="drawer-body">

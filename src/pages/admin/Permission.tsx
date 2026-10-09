@@ -11,6 +11,9 @@ import {
 
 import { permissionService } from '../../services/permission/permissionService';
 import { realtimeService } from '../../services/realtime/realtimeService';
+import { companyDateStr } from '../../utils/companyDate';
+import { shiftDateStr, permissionsOnDate, formatCompanyDateLabel } from '../../services/admin/permissionTimelineRules';
+import { PersistedSettingToggle, useStoredAppSettings } from '../../components/settings/PersistedSettingToggle';
 
 const mockUsage: any[] = [];
 
@@ -34,6 +37,9 @@ const AdminPermission: React.FC = () => {
   const [approveModal, setApproveModal] = useState<any>(null);
   const [addDrawer, setAddDrawer] = useState(false);
   const [settingsDrawer, setSettingsDrawer] = useState(false);
+  const permissionSettings = useStoredAppSettings();
+  // Date shown by the Timeline view (company timezone); starts at today.
+  const [selectedDate, setSelectedDate] = useState(() => companyDateStr());
   
   // Forms
   const [reasonForm, setReasonForm] = useState('');
@@ -71,7 +77,11 @@ const AdminPermission: React.FC = () => {
           shift: '-', // Mocks
           conflict: 'None',
           appliedOn: new Date(r.requested_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-          reviewer_remarks: r.reviewer_remarks
+          reviewer_remarks: r.reviewer_remarks,
+          // Raw values for the date timeline
+          dateISO: r.permission_date,
+          startRaw: r.start_time,
+          endRaw: r.end_time
         };
       }));
     }
@@ -273,16 +283,18 @@ const AdminPermission: React.FC = () => {
           ))}
         </div>
         
+        {view === 'Timeline' && (
         <div style={{ display: 'flex', gap: '0.5rem', paddingBottom: '0.5rem', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface-elevated)' }}>
-            <button className="icon-button" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)' }}><ChevronLeft size={16}/></button>
-            <div style={{ padding: '0.375rem 0.75rem', fontSize: '0.875rem', fontWeight: 600 }}>24 Sep 2026</div>
-            <button className="icon-button" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}><ChevronRight size={16}/></button>
+            <button className="icon-button" aria-label="Previous day" onClick={() => setSelectedDate(d => shiftDateStr(d, -1))} style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)' }}><ChevronLeft size={16}/></button>
+            <input type="date" aria-label="Timeline date" value={selectedDate} onChange={e => e.target.value && setSelectedDate(e.target.value)} style={{ padding: '0.375rem 0.5rem', fontSize: '0.875rem', fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
+            <button className="icon-button" aria-label="Next day" onClick={() => setSelectedDate(d => shiftDateStr(d, 1))} style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}><ChevronRight size={16}/></button>
           </div>
-          <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem', padding: '0.375rem 1rem' }}>
-            <option>Today</option><option>This Week</option><option>This Month</option><option>Custom Range</option>
-          </select>
+          {selectedDate !== companyDateStr() && (
+            <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem' }} onClick={() => setSelectedDate(companyDateStr())}>Today</button>
+          )}
         </div>
+        )}
       </div>
 
       {view === 'Requests' && (
@@ -409,15 +421,27 @@ const AdminPermission: React.FC = () => {
 
       {view === 'Timeline' && (
         <div className="card" style={{ padding: '2rem' }}>
-          <h3 className="section-title">Permission Timeline (24 Sep 2026)</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-            <div style={{ position: 'relative', borderTop: '2px dashed var(--gray-300)', paddingTop: '1rem', marginTop: '1rem' }}>
-              <div style={{ position: 'absolute', top: '-12px', left: 0, fontSize: '0.75rem', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-surface-elevated)', padding: '0 4px' }}>09:00 AM</div>
-              <div style={{ position: 'absolute', top: '-12px', right: 0, fontSize: '0.75rem', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-surface-elevated)', padding: '0 4px' }}>06:00 PM</div>
-              
-              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No timeline data available.</div>
-            </div>
-          </div>
+          <h3 className="section-title">Permission Timeline ({formatCompanyDateLabel(selectedDate)})</h3>
+          {(() => {
+            const dayItems = permissionsOnDate(requests, selectedDate);
+            if (dayItems.length === 0) {
+              return <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>No permission requests on {formatCompanyDateLabel(selectedDate)}.</div>;
+            }
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
+                {dayItems.map((r: any) => (
+                  <div key={r.id} onClick={() => setDetailDrawer(r)} style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.75rem 1rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}>
+                    <div style={{ minWidth: '170px', fontWeight: 600, fontSize: '0.875rem' }}>{r.startTime} – {r.endTime}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 500 }}>{r.name} <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>({r.empId})</span></div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{r.duration}{r.reason ? ` · ${r.reason}` : ''}</div>
+                    </div>
+                    <span className={`badge ${r.status === 'APPROVED' ? 'badge-success' : r.status === 'PENDING' ? 'badge-warning' : r.status === 'REJECTED' ? 'badge-danger' : 'badge-gray'}`}>{r.status}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -645,23 +669,31 @@ const AdminPermission: React.FC = () => {
               <button className="icon-button" onClick={() => setSettingsDrawer(false)}><X size={20} /></button>
             </div>
             <div className="drawer-body">
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div><div style={{ fontWeight: 600 }}>Enable Permission Requests</div><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Allow employees to request permissions.</div></div>
-                  <input type="checkbox" defaultChecked />
+              {permissionSettings.loading ? (
+                <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>Loading saved settings…</div>
+              ) : !permissionSettings.app ? (
+                <div role="alert" style={{ fontSize: '0.875rem', color: 'var(--danger)', marginBottom: '1rem' }}>
+                  Saved settings could not be loaded{permissionSettings.error ? `: ${permissionSettings.error}` : ''}. These settings are unavailable until they load.
+                  <button type="button" className="btn btn-outline" style={{ marginLeft: '0.75rem', fontSize: '0.75rem' }} onClick={() => permissionSettings.reload()}>Retry</button>
                 </div>
+              ) : null}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                <PersistedSettingToggle stored={permissionSettings} settingKey="permissionEnabled" label="Enable Permission Requests"
+                  description="Allow employees to request permissions."
+                  enforcementNote="Saved company setting (same as Admin → Settings). Not yet enforced: employees can still submit requests when it is off." />
                 <div>
                   <label className="form-label">Max Permissions Per Month (Hours)</label>
-                  <input type="number" className="form-control" defaultValue={10} />
+                  <input type="text" className="form-control" disabled
+                    value={permissionSettings.app ? `${permissionSettings.app.permissionMaxHoursPerMonth ?? 3} hours` : '—'} />
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Enforced on employee requests and used by payroll deductions. Change it in Admin → Settings → Permission.</div>
                 </div>
                 <div>
                   <label className="form-label">Max Duration Per Request (Hours)</label>
-                  <input type="number" className="form-control" defaultValue={2} />
+                  <input type="text" className="form-control" disabled value="Not available yet" />
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>There is no stored per-request limit yet, so this cannot be configured.</div>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div><div style={{ fontWeight: 600 }}>Require Manager Approval</div></div>
-                  <input type="checkbox" defaultChecked />
-                </div>
+                <PersistedSettingToggle stored={permissionSettings} settingKey="permissionApprovalRequired" label="Require Manager Approval"
+                  enforcementNote="Saved company setting (same as Admin → Settings). Not yet enforced: every request is created as PENDING." />
               </div>
             </div>
           </div>

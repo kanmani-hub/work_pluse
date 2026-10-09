@@ -50,6 +50,15 @@ export const leaveService = {
     return { data, error };
   },
 
+  /** All leave types (active and inactive) for the admin Leave Policies view. */
+  async getAllLeaveTypes() {
+    const { data, error } = await supabase
+      .from('leave_types')
+      .select('id, name, code, is_paid, is_active')
+      .order('name', { ascending: true });
+    return { data, error };
+  },
+
   async getMyLeaveBalances() {
     const empId = await this.getCurrentEmployeeId();
     if (!empId) return { data: null, error: new Error('Unauthorized') };
@@ -186,7 +195,7 @@ export const leaveService = {
   async getLeaveRequests() {
     const { data, error } = await supabase
       .from('leave_requests')
-      .select('*, employees!leave_requests_employee_id_fkey(first_name, last_name, employee_code, departments(name)), leave_types(name)')
+      .select('*, employees!leave_requests_employee_id_fkey(first_name, last_name, employee_code, departments(name), offices(name)), leave_types(name)')
       .order('requested_at', { ascending: false });
 
     return { data, error };
@@ -283,9 +292,12 @@ export const leaveService = {
                        .gte('start_date', fmt(startWin))
                        .lte('end_date', fmt(endWin));
                        
-                   if (approvedLeaves) {
-                       // Find weekly offs based on global settings
-                       const weeklyOffDays = appSettings.weeklyOff || ['Saturday', 'Sunday'];
+                   // Weekly offs = days that are NOT company working days (Settings → Working Days).
+                   // Nothing is assumed when working days are not configured.
+                   const { weeklyOffDaysFrom } = await import('../settings/appSettingsService');
+                   const weeklyOffDays = weeklyOffDaysFrom(appSettings);
+                   if (!weeklyOffDays) console.warn('[Sandwich leave] Company working days are not configured; sandwich check skipped.');
+                   if (approvedLeaves && weeklyOffDays && weeklyOffDays.length > 0) {
                        
                        // A set of all dates that are approved leaves
                        const leaveDates = new Set<string>();

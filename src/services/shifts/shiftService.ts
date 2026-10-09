@@ -2,6 +2,7 @@ import { supabase } from '../../lib/supabase';
 import { notificationService } from '../notifications/notificationService';
 import { shiftTimingChanged } from '../notifications/notificationRules';
 import { companyDateStr } from '../../utils/companyDate';
+import { countAssignedEmployeesByShift } from './shiftAssignmentRules';
 
 export const shiftService = {
   async getShifts() {
@@ -11,6 +12,21 @@ export const shiftService = {
       .order('created_at', { ascending: false });
     if (error) return { data: null, error };
     return { data, error: null };
+  },
+
+  /**
+   * Employees currently assigned per shift template (see shiftAssignmentRules for the rule).
+   * Returns error instead of zeros when either read fails.
+   */
+  async getCurrentAssignmentCounts(today: string = companyDateStr()): Promise<{ counts: Record<string, number> | null; error: any }> {
+    const [assignRes, empRes] = await Promise.all([
+      (supabase.from('shift_assignments') as any)
+        .select('employee_id, shift_template_id, effective_date, end_date')
+        .lte('effective_date', today),
+      (supabase.from('employees') as any).select('id, status'),
+    ]);
+    if (assignRes.error || empRes.error) return { counts: null, error: assignRes.error || empRes.error };
+    return { counts: countAssignedEmployeesByShift(assignRes.data || [], empRes.data || [], today), error: null };
   },
 
   async createShift(shiftData: any) {

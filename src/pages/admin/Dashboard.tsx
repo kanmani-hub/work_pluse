@@ -9,6 +9,7 @@ import {
 import { supabase } from '../../lib/supabase';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { companyDateStr } from '../../utils/companyDate';
+import { computeDashboardStats } from '../../services/admin/dashboardRules';
 
 const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -25,7 +26,7 @@ const AdminDashboard: React.FC = () => {
   const [stats, setStats] = useState({ 
     employees: 0, wfhPending: 0, leavePending: 0, permPending: 0, 
     working: 0, fullTime: 0, partTime: 0, intern: 0, activeWfh: 0,
-    onsite: 0, present: 0, attendanceExists: false 
+    onsite: 0, present: 0, attendanceExists: false, onLeave: 0, attendanceRate: null as number | null
   });
   const [wfhReqs, setWfhReqs] = useState<any[]>([]);
   const [leaveReqs, setLeaveReqs] = useState<any[]>([]);
@@ -38,14 +39,18 @@ const AdminDashboard: React.FC = () => {
       setLoading(true);
       setErrorState(null);
       try {
+        const today = companyDateStr();
         const queries = await Promise.all([
-          supabase.from('employees').select('id, employment_type, office_id').eq('status', 'ACTIVE'),
+          // Same eligibility as Admin → Attendance / Reports: ACTIVE and role is not ADMIN (see dashboardRules)
+          supabase.from('employees').select('id, status, employment_type, office_id, role:role_id(name)').eq('status', 'ACTIVE'),
           supabase.from('wfh_requests').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
           supabase.from('leave_requests').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
           supabase.from('permission_requests').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
-          supabase.from('attendance').select('status, clock_in_at, clock_out_at').eq('attendance_date', companyDateStr()),
+          supabase.from('attendance').select('employee_id, status, clock_in_at, clock_out_at').eq('attendance_date', today),
           supabase.from('shift_templates').select('*').eq('is_active', true).order('start_time'),
-          supabase.from('wfh_requests').select('*', { count: 'exact', head: true }).eq('status', 'APPROVED').eq('request_date', companyDateStr())
+          supabase.from('wfh_requests').select('employee_id').eq('status', 'APPROVED').eq('request_date', today),
+          // Approved leave covering today (pending requests are not "on leave")
+          supabase.from('leave_requests').select('employee_id, start_date, end_date').eq('status', 'APPROVED').lte('start_date', today).gte('end_date', today)
         ]);
 
         if (queries.some(q => q.error)) {
@@ -53,51 +58,39 @@ const AdminDashboard: React.FC = () => {
         }
 
         const [
-          { data: empCountData },
+          { data: empData },
           { count: wfhCount },
           { count: leaveCount },
           { count: permCount },
           { data: attendanceData },
           { data: shiftsData },
-          { count: activeWfhCount }
-        ] = queries;
-        
-        const attendanceRecords = (attendanceData as any[]) || [];
-        const workingCount = attendanceRecords.filter(a => a.clock_in_at && !a.clock_out_at).length;
-        const presentCount = attendanceRecords.filter(a => ['PRESENT', 'LATE', 'EARLY LOGOUT', 'WORKING', 'COMPLETED', 'ON_BREAK', 'HALF_DAY', 'AUTO LOGOUT'].includes(a.status?.toUpperCase() || '')).length;
-        const attendanceExists = attendanceRecords.length > 0;
+          { data: approvedWfhData },
+          { data: approvedLeaveData }
+        ] = queries as any[];
 
-        const allEmps = empCountData || [];
-        const fullTime = (allEmps as any[]).filter(e => {
-          const t = e.employment_type?.toLowerCase();
-          return t === 'full-time' || t === 'full time' || !t; 
-        }).length;
-        const partTime = (allEmps as any[]).filter(e => {
-          const t = e.employment_type?.toLowerCase();
-          return t === 'part-time' || t === 'part time';
-        }).length;
-        const contract = (allEmps as any[]).filter(e => {
-          const t = e.employment_type?.toLowerCase();
-          return t === 'contract';
-        }).length;
-
-        // Remote vs Onsite
-        const activeWfh = activeWfhCount || 0;
-        const onsite = Math.max(0, (allEmps as any[]).filter(e => e.office_id != null).length - activeWfh);
+        const d = computeDashboardStats({
+          employees: (empData as any[]) || [],
+          attendance: (attendanceData as any[]) || [],
+          leaves: (approvedLeaveData as any[]) || [],
+          approvedWfhToday: (approvedWfhData as any[]) || [],
+          today,
+        });
 
         setStats({
-          employees: allEmps.length || 0,
+          employees: d.employees,
           wfhPending: wfhCount || 0,
           leavePending: leaveCount || 0,
           permPending: permCount || 0,
-          working: workingCount || 0,
-          present: presentCount || 0,
-          attendanceExists,
-          fullTime,
-          partTime,
-          intern: contract,
-          activeWfh,
-          onsite
+          working: d.working,
+          present: d.present,
+          attendanceExists: d.attendanceExists,
+          fullTime: d.fullTime,
+          partTime: d.partTime,
+          intern: d.intern,
+          activeWfh: d.activeWfh,
+          onsite: d.onsite,
+          onLeave: d.onLeave,
+          attendanceRate: d.attendanceRate
         });
         
         if (shiftsData) {
@@ -246,7 +239,7 @@ const AdminDashboard: React.FC = () => {
               On Leave
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
-              <div className="kpi-value">{stats.leavePending || 0}</div>
+              <div className="kpi-value">{stats.onLeave || 0}</div>
             </div>
           </div>
 
@@ -260,13 +253,13 @@ const AdminDashboard: React.FC = () => {
               <div style={{ width: '200px', height: '200px', borderRadius: '50%', border: '20px solid var(--bg-glass)', borderTopColor: 'var(--accent-primary)', borderRightColor: 'var(--accent-primary)', transform: 'rotate(-45deg)', position: 'absolute', top: 0, left: 0 }}></div>
               <div style={{ position: 'absolute', bottom: 0, left: '50%', transform: 'translateX(-50%)', textAlign: 'center' }}>
                 <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                  {stats.attendanceExists ? `${stats.employees ? Math.round((stats.present / stats.employees) * 100) : 0}%` : 'N/A'}
+                  {stats.attendanceExists ? `${stats.attendanceRate ?? 0}%` : 'N/A'}
                 </div>
               </div>
             </div>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: '2rem' }}>
               {stats.attendanceExists
-                ? `Positive vibes! Attendance reached ${stats.employees ? Math.round((stats.present / stats.employees) * 100) : 0}%. Let's keep it going.`
+                ? `Positive vibes! Attendance reached ${stats.attendanceRate ?? 0}%. Let's keep it going.`
                 : 'No attendance data'}
             </p>
           </div>

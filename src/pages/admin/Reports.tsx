@@ -9,6 +9,10 @@ import {
 
 import { reportService } from '../../services/reports/reportService';
 import { exportService } from '../../services/export/exportService';
+import { reportDateRange } from '../../services/reports/reportRules';
+import { companyDateStr } from '../../utils/companyDate';
+import { formatLastUpdated } from '../../utils/lastUpdated';
+import { formatMinutes } from '../../services/attendance/employeeDashboardRules';
 
 const AdminReports: React.FC = () => {
   const navigate = useNavigate();
@@ -22,10 +26,11 @@ const AdminReports: React.FC = () => {
     wfhEmployees: 0, onLeave: 0, avgWorkingHours: '0h 0m', payrollProcessed: '₹0'
   });
   const [attendanceReport, setAttendanceReport] = useState<any[]>([]);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
+  const [loadError, setLoadError] = useState('');
   
   // Modals & Drawers
   const [exportModal, setExportModal] = useState(false);
-  const [scheduleModal, setScheduleModal] = useState(false);
   const [employeeDrawer, setEmployeeDrawer] = useState<any>(null);
   const [deptDrawer, setDeptDrawer] = useState<any>(null);
 
@@ -38,32 +43,22 @@ const AdminReports: React.FC = () => {
 
   const fetchData = async () => {
     setLoading(true);
-    
-    const today = new Date();
-    let start = new Date();
-    let end = new Date();
-    if (filters.dateRange === 'Today') {
-      start.setHours(0,0,0,0);
-    } else if (filters.dateRange === 'This Week') {
-      start.setDate(today.getDate() - today.getDay());
-    } else if (filters.dateRange === 'This Month') {
-      start.setDate(1);
-    } else if (filters.dateRange === 'Last Month') {
-      start.setMonth(today.getMonth() - 1);
-      start.setDate(1);
-      end.setDate(0); 
+    setLoadError('');
+    // Company-timezone dates (Asia/Kolkata); toISOString() would give the UTC date.
+    const { start: startDateStr, end: endDateStr } = reportDateRange(filters.dateRange, companyDateStr());
+    try {
+      const dashMetrics = await reportService.getDashboardMetrics(startDateStr, endDateStr, filters.dept, filters.office);
+      setMetrics(dashMetrics);
+
+      if (activeTab === 'Attendance') {
+         const { data, error } = await reportService.getAttendanceReport(startDateStr, endDateStr, filters.dept);
+         if (error) throw new Error(`Could not load the attendance report: ${error.message}`);
+         setAttendanceReport(data || []);
+      }
+      setLastRefreshedAt(new Date());
+    } catch (e: any) {
+      setLoadError(e?.message || 'Could not load report data.');
     }
-    const startDateStr = start.toISOString().split('T')[0];
-    const endDateStr = end.toISOString().split('T')[0];
-
-    const dashMetrics = await reportService.getDashboardMetrics(startDateStr, endDateStr, filters.dept, filters.office);
-    setMetrics(dashMetrics);
-
-    if (activeTab === 'Attendance') {
-       const { data } = await reportService.getAttendanceReport(startDateStr, endDateStr, filters.dept);
-       if (data) setAttendanceReport(data);
-    }
-
     setLoading(false);
   };
 
@@ -97,9 +92,10 @@ const AdminReports: React.FC = () => {
 
 
 
+      showToast('Report generated successfully');
+    } else {
+      showToast(activeTab === 'Attendance' ? 'No attendance rows to export for this range' : `Export is not available for the ${activeTab} tab yet`);
     }
-    
-    showToast('Report generated successfully');
   };
 
   const renderTrend = (val: string, positive: boolean) => (
@@ -129,6 +125,10 @@ const AdminReports: React.FC = () => {
     );
   };
 
+  // Distribution slices are employee-days, so they are shares of their own total.
+  const dist = metrics.workforceDistribution || {};
+  const distTotal = ((dist.present || 0) + (dist.wfh || 0) + (dist.leave || 0) + (dist.absent || 0)) || 1;
+
   // Content renderers for tabs
   const renderOverview = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -148,13 +148,14 @@ const AdminReports: React.FC = () => {
 
         {/* Workforce Distribution */}
         <div className="card">
-          <h3 className="section-title" style={{ borderBottom: 'none', margin: 0 }}>Workforce Distribution Today</h3>
+          <h3 className="section-title" style={{ borderBottom: 'none', margin: 0 }}>Workforce Distribution</h3>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Employee-days in the selected range{metrics.workingDaysFromSettings === false ? ' (working days: app default Mon–Fri — not configured in Settings)' : ''}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', marginTop: '1rem' }}>
-            <div style={{ position: 'relative', width: '150px', height: '150px', borderRadius: '50%', background: `conic-gradient(var(--primary-500) 0% ${Math.round(((metrics.workforceDistribution?.present || 0) / ((metrics.totalEmployees || 1))) * 100)}%, var(--purple-500) ${Math.round(((metrics.workforceDistribution?.present || 0) / ((metrics.totalEmployees || 1))) * 100)}% ${Math.round((((metrics.workforceDistribution?.present || 0) + (metrics.workforceDistribution?.wfh || 0)) / ((metrics.totalEmployees || 1))) * 100)}%, var(--warning) ${Math.round((((metrics.workforceDistribution?.present || 0) + (metrics.workforceDistribution?.wfh || 0)) / ((metrics.totalEmployees || 1))) * 100)}% ${Math.round((((metrics.workforceDistribution?.present || 0) + (metrics.workforceDistribution?.wfh || 0) + (metrics.workforceDistribution?.leave || 0)) / ((metrics.totalEmployees || 1))) * 100)}%, var(--danger) ${Math.round((((metrics.workforceDistribution?.present || 0) + (metrics.workforceDistribution?.wfh || 0) + (metrics.workforceDistribution?.leave || 0)) / ((metrics.totalEmployees || 1))) * 100)}% 100%)` }}>
+            <div style={{ position: 'relative', width: '150px', height: '150px', borderRadius: '50%', background: `conic-gradient(var(--primary-500) 0% ${Math.round(((metrics.workforceDistribution?.present || 0) / (distTotal)) * 100)}%, var(--purple-500) ${Math.round(((metrics.workforceDistribution?.present || 0) / (distTotal)) * 100)}% ${Math.round((((metrics.workforceDistribution?.present || 0) + (metrics.workforceDistribution?.wfh || 0)) / (distTotal)) * 100)}%, var(--warning) ${Math.round((((metrics.workforceDistribution?.present || 0) + (metrics.workforceDistribution?.wfh || 0)) / (distTotal)) * 100)}% ${Math.round((((metrics.workforceDistribution?.present || 0) + (metrics.workforceDistribution?.wfh || 0) + (metrics.workforceDistribution?.leave || 0)) / (distTotal)) * 100)}%, var(--danger) ${Math.round((((metrics.workforceDistribution?.present || 0) + (metrics.workforceDistribution?.wfh || 0) + (metrics.workforceDistribution?.leave || 0)) / (distTotal)) * 100)}% 100%)` }}>
               <div style={{ position: 'absolute', top: '25%', left: '25%', right: '25%', bottom: '25%', backgroundColor: 'var(--bg-surface-elevated)', borderRadius: '50%' }}></div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--primary-500)', borderRadius: '2px' }}></div> Present ({metrics.workforceDistribution?.present || 0})</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--primary-500)', borderRadius: '2px' }}></div> Present in office ({metrics.workforceDistribution?.present || 0})</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--purple-500)', borderRadius: '2px' }}></div> WFH ({metrics.workforceDistribution?.wfh || 0})</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--warning)', borderRadius: '2px' }}></div> Leave ({metrics.workforceDistribution?.leave || 0})</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><div style={{ width: '12px', height: '12px', backgroundColor: 'var(--danger)', borderRadius: '2px' }}></div> Absent ({metrics.workforceDistribution?.absent || 0})</div>
@@ -186,8 +187,12 @@ const AdminReports: React.FC = () => {
           <h3 className="section-title" style={{ borderBottom: 'none', margin: 0 }}>Working Hours Overview</h3>
           <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
             <div style={{ flex: 1, backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Required</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>8h 00m</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Required (avg per attended shift)</div>
+              {metrics.requiredMinutesAvg ? (
+                <div style={{ fontSize: '1.25rem', fontWeight: 600 }}>{formatMinutes(metrics.requiredMinutesAvg)}</div>
+              ) : (
+                <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)' }} title="No attended shifts with a configured required-hours value in this range">Unavailable</div>
+              )}
             </div>
             <div style={{ flex: 1, backgroundColor: 'var(--success-50)', padding: '1rem', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--success)' }}>Actual Avg</div>
@@ -272,7 +277,8 @@ const AdminReports: React.FC = () => {
         <div>
           <h1 className="page-title">Reports & Analytics</h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>Analyze attendance, working hours, leave, WFH, permissions, shifts and payroll performance.</p>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>Last updated: Today, 10:42 AM</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>Last updated: {formatLastUpdated(lastRefreshedAt)}</div>
+          {loadError && <div role="alert" style={{ fontSize: '0.75rem', color: 'var(--danger)', marginTop: '0.25rem' }}>{loadError}{lastRefreshedAt ? ' — showing the last successfully loaded data.' : ''}</div>}
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={handleRefresh} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><RefreshCw size={16}/> Refresh</button>
@@ -331,12 +337,17 @@ const AdminReports: React.FC = () => {
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Activity size={16}/> Attendance Rate</div>
             </div>
             <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.attendanceRate}</div>
+            {metrics.attendanceDetail && (
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                {metrics.attendanceDetail.present} present of {metrics.attendanceDetail.expected} expected employee-days · {metrics.attendanceDetail.absent} absent · {metrics.attendanceDetail.leave} on leave
+              </div>
+            )}
           </div>
           <div className="tracking-kpi-card">
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle2 size={16}/> Present Today</div>
+              <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle2 size={16}/> Present (employee-days)</div>
             </div>
-            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.presentToday}</div>
+            <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.attendanceDetail ? metrics.attendanceDetail.present : metrics.presentToday}</div>
           </div>
           <div className="summary-card-small cursor-pointer" onClick={() => setActiveTab('Attendance')}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -404,20 +415,16 @@ const AdminReports: React.FC = () => {
         )}
       </div>
       
-      {/* Scheduled Reports Config (Mock) */}
+      {/* Scheduled Reports: there is no scheduled-reports table or job in the backend yet,
+          so nothing is listed and nothing can be scheduled from here. */}
       <div className="card" style={{ marginTop: '1rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h3 className="section-title" style={{ border: 'none', margin: 0 }}>Scheduled Reports</h3>
-          <button onClick={() => setScheduleModal(true)} className="btn btn-outline" style={{ fontSize: '0.75rem' }}><Calendar size={14}/> Schedule New</button>
         </div>
-        <div className="table-container">
-          <table className="table" style={{ width: '100%' }}>
-            <thead><tr><th>Report</th><th>Frequency</th><th>Recipients</th><th>Next Run</th><th>Status</th></tr></thead>
-            <tbody>
-              <tr><td style={{ fontWeight: 500 }}>Monthly Payroll Report</td><td>Monthly (1st)</td><td>finance@workpulse.com</td><td>01 Oct 2026</td><td><span className="badge badge-success">Active</span></td></tr>
-              <tr><td style={{ fontWeight: 500 }}>Weekly Attendance Summary</td><td>Weekly (Mon)</td><td>hr@workpulse.com</td><td>28 Sep 2026</td><td><span className="badge badge-success">Active</span></td></tr>
-            </tbody>
-          </table>
+        <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-secondary)' }}>
+          <Calendar size={32} style={{ margin: '0 auto 0.75rem auto', opacity: 0.4 }} />
+          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>No scheduled reports are configured</div>
+          <div style={{ fontSize: '0.875rem', marginTop: '0.25rem' }}>Automatic report scheduling is not available yet. Use Export Report to download a report now.</div>
         </div>
       </div>
 
@@ -532,7 +539,7 @@ const AdminReports: React.FC = () => {
                   <div className="sc-val">0</div><div className="sc-title">Employees</div>
                 </div>
                 <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
-                  <div className="sc-val">0%</div><div className="sc-title">Attendance Rate</div>
+                  <div className="sc-val">{(() => { const d = (metrics.departmentAttendance || []).find((x: any) => x.dept === deptDrawer); return d ? `${d.val}%` : '—'; })()}</div><div className="sc-title">Attendance Rate</div>
                 </div>
                 <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
                   <div className="sc-val">0h 0m</div><div className="sc-title">Avg Working Hrs</div>

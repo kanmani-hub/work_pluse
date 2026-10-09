@@ -2,12 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Banknote, Download, Settings, ChevronLeft, ChevronRight,
-  Search, Filter, CheckCircle2, AlertTriangle, Eye, X, 
-  FileText, Activity, ShieldCheck, History, Edit, 
-  Unlock, Lock, CheckCircle, ArrowRight, Send
+  Search, CheckCircle2, AlertTriangle, X,
+  FileText, Activity, ShieldCheck,
+  Lock, CheckCircle, ArrowRight, Send
 } from 'lucide-react';
 import { exportService } from '../../services/export/exportService';
 import { payrollService } from '../../services/payroll/payrollService';
+import { unresolvedReviewItems, parsePayrollSnapshot } from '../../services/payroll/payrollRules';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { payslipService } from '../../services/payroll/payslipService';
 import { payrollSettingsService, type PayrollSettings } from '../../services/payroll/payrollSettingsService';
@@ -22,9 +23,6 @@ import { employeeService, type EmployeeWithRelations } from '../../services/empl
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 const AdminPayroll: React.FC = () => {
-  React.useEffect(() => {
-    globalSettingsService.loadSettings().then(s => setSettingsForm(s.payroll));
-  }, []);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +51,8 @@ const AdminPayroll: React.FC = () => {
   // Drawers & Modals
   const [detailDrawer, setDetailDrawer] = useState<any>(null);
   const [detailEmpData, setDetailEmpData] = useState<PayrollEmployeeData | null>(null);
+  const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
+  const [resolvingKey, setResolvingKey] = useState<string | null>(null);
   
   // Daily specific detail modal
   const [dailyDetailModal, setDailyDetailModal] = useState<any>(null);
@@ -66,15 +66,19 @@ const AdminPayroll: React.FC = () => {
   
   // Settings form state
   const [settingsForm, setSettingsForm] = useState<PayrollSettings>(payrollSettingsService.getSettings());
+  // Load saved payroll settings once (declared after the state it sets)
+  useEffect(() => {
+    globalSettingsService.loadSettings().then(s => setSettingsForm(s.payroll));
+  }, []);
+  // Employees that Generate could not calculate (shown until dismissed; never silently skipped)
+  const [generateIssues, setGenerateIssues] = useState<{ employee_id: string; error: string }[]>([]);
   
   // Forms
   const [paymentForm, setPaymentForm] = useState({ date: new Date().toISOString().split('T')[0], method: 'Bank Transfer', ref: '', remarks: '', amount: 0 });
   
   const [payrolls, setPayrolls] = useState<any[]>([]);
   const [employees, setEmployees] = useState<EmployeeWithRelations[]>([]);
-  const [allDepartments, setAllDepartments] = useState<any[]>([]);
   const [globalStatus, setGlobalStatus] = useState('DRAFT');
-  const [departments, setDepartments] = useState<string[]>([]);
 
   // Filter payrolls for selected month
   const monthPayrolls = payrolls.filter(p => Number(p.payroll_year) === selectedYear && Number(p.payroll_month) === selectedMonth);
@@ -95,10 +99,6 @@ const AdminPayroll: React.FC = () => {
         if (deptRes.error) throw deptRes.error;
 
         if (empRes.data) setEmployees(empRes.data);
-        if (deptRes.data) {
-          setAllDepartments(deptRes.data);
-          setDepartments(deptRes.data.map((d: any) => d.name).sort());
-        }
 
         if (payrollRes.data) {
           setPayrolls(payrollRes.data);
@@ -160,7 +160,6 @@ const AdminPayroll: React.FC = () => {
   }).filter(({ emp, payroll }) => {
     const name = `${emp.first_name || ''} ${emp.last_name || ''}`;
     const empCode = emp.employee_code || '';
-    const dept = emp.department?.name || 'Unknown';
     const matchSearch = name.toLowerCase().includes(search.toLowerCase()) || empCode.toLowerCase().includes(search.toLowerCase());
     const matchDept = filterDept === 'All' ? true : filterDept === 'Unassigned' ? emp.department_id === null : emp.department_id === filterDept;
     const matchStatus = filterStatus === 'All' || (payroll ? payroll.status === filterStatus : filterStatus === 'NOT_GENERATED');
@@ -215,14 +214,21 @@ const AdminPayroll: React.FC = () => {
     setGenerateModal(false);
     showToast(`Calculating payroll for ${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}...`);
     
-    const result = await payrollService.generatePayroll(selectedYear, selectedMonth);
-    
-    if (result.success) {
-      await fetchData();
-      showToast(`${MONTH_NAMES[selectedMonth - 1]} ${selectedYear} payroll calculated for ${result.count} employee(s).`);
-    } else {
-      showToast(result.error || 'Failed to generate payroll');
+    const result: any = await payrollService.generatePayroll(selectedYear, selectedMonth);
+    const failures: { employee_id: string; error: string }[] = result.failures || [];
+    setGenerateIssues(failures);
+
+    if (result.error) {
+      showToast(result.error);
+      return;
     }
+    await fetchData();
+    const locked = result.skippedLocked ? `, ${result.skippedLocked} locked (unchanged)` : '';
+    const reviewCount = (result.reviews || []).length;
+    const review = reviewCount ? ` ${reviewCount} employee(s) have days flagged for review — open their payroll details before approving.` : '';
+    showToast(failures.length
+      ? `${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}: ${result.count} calculated, ${failures.length} NOT calculated${locked}. See the list above the table.${review}`
+      : `${MONTH_NAMES[selectedMonth - 1]} ${selectedYear} payroll calculated for ${result.count} employee(s)${locked}.${review}`);
   };
 
   const handleExport = async () => {
@@ -257,16 +263,21 @@ const AdminPayroll: React.FC = () => {
     setBulkApproveModal(false);
     
     let count = 0;
+    let blocked = 0;
+    let failed = 0;
     for (const p of monthPayrolls) {
       if (p.status === 'UNDER_REVIEW') {
-        await payrollService.approvePayroll(p.id);
-        count++;
+        const { error } = await payrollService.approvePayroll(p.id);
+        if (!error) count++;
+        else if (error.message.startsWith('Cannot approve:')) blocked++;
+        else failed++;
       }
     }
     
     await fetchData();
-    if (detailDrawer?.status === 'UNDER_REVIEW') setDetailDrawer({ ...detailDrawer, status: 'APPROVED' });
-    showToast(`${count} payroll(s) approved.`);
+    if (detailDrawer?.status === 'UNDER_REVIEW') setDetailDrawer(null);
+    const extra = [blocked ? `${blocked} blocked (unresolved review flags)` : '', failed ? `${failed} failed` : ''].filter(Boolean).join(', ');
+    showToast(`${count} payroll(s) approved${extra ? `; ${extra}` : ''}.`);
   };
 
   const handleProceedToPayments = async () => {
@@ -302,6 +313,20 @@ const AdminPayroll: React.FC = () => {
     } else { showToast(error.message); }
   };
 
+  const handleResolveFlag = async (date: string, type: string, decision: 'APPLY' | 'WAIVE') => {
+    if (!detailDrawer) return;
+    const key = `${date}|${type}`;
+    setResolvingKey(key);
+    const { data, error } = await payrollService.resolveReviewFlag(detailDrawer.id, date, type, decision, reviewNotes[key] || '');
+    setResolvingKey(null);
+    if (error) { showToast(error.message); return; }
+    // Recalculation creates a fresh payroll row: keep the drawer's employee details, take the new figures
+    setDetailDrawer({ ...detailDrawer, ...data });
+    setReviewNotes(n => { const c = { ...n }; delete c[key]; return c; });
+    await fetchData();
+    showToast(decision === 'APPLY' ? 'Flag resolved: deduction applied and payroll recalculated.' : 'Flag resolved: waived, no deduction. Payroll recalculated.');
+  };
+
   const handleDetailProceedPayment = async () => {
     if (!detailDrawer) return;
     const { error } = await payrollService.movePayrollToPaymentPending(detailDrawer.id);
@@ -327,9 +352,16 @@ const AdminPayroll: React.FC = () => {
     
     if (paymentModal) {
       const payroll = monthPayrolls.find(p => p.id === paymentModal);
-      await payrollService.markPayrollPaid(paymentModal, paymentForm.amount || payroll?.net_salary || 0, paymentForm.method, paymentForm.ref, paymentForm.remarks);
+      // Amount = the payroll's approved net salary (exact-payment policy); the service and the
+      // database function both re-check it
+      const { error } = await payrollService.markPayrollPaid(paymentModal, Number(payroll?.net_salary ?? paymentForm.amount), paymentForm.method, paymentForm.ref, paymentForm.remarks, paymentForm.date);
       await fetchData();
       setPaymentModal(null);
+      if (error) {
+        // Never claim success: e.g. already paid by another admin/tab, or the payment insert failed
+        showToast(error.message);
+        return;
+      }
       if (detailDrawer?.id === paymentModal) setDetailDrawer({ ...detailDrawer, status: 'PAID' });
       showToast('Payment recorded successfully.');
     }
@@ -348,7 +380,8 @@ const AdminPayroll: React.FC = () => {
         
       data = {
         payslip_period: `${MONTH_NAMES[detailDrawer.payroll_month - 1]} ${detailDrawer.payroll_year}`,
-        payslip_number: detailDrawer.status === 'PAID' || detailDrawer.status === 'CLOSED' ? `PS-${Date.now()}` : 'PENDING',
+        // No stored payslip: show that none was issued instead of inventing a number
+        payslip_number: detailDrawer.status === 'PAID' || detailDrawer.status === 'CLOSED' ? 'Not issued' : 'PENDING',
         payroll: fullPayroll || detailDrawer
       };
     }
@@ -369,18 +402,12 @@ const AdminPayroll: React.FC = () => {
     setDetailEmpData(data);
   };
 
-  // Payroll settings save
-  const handleSaveSettings = () => {
-    globalSettingsService.saveSettings({ app: globalSettingsService.getSettings().app, payroll: settingsForm });
-    setSettingsDrawer(false);
-    showToast('Payroll settings saved.');
-  };
 
   // Helper: get data summary values for table display
   const getTableSummary = (p: any) => {
     const summary = parseDataSummary(p);
     const settings = globalSettingsService.getSettings().payroll;
-    const workingDays = summary?.settings?.workingDaysUsed ?? payrollSettingsService.getWorkingDaysForMonth(p.payroll_year, p.payroll_month, settings);
+    const workingDays = summary?.settings?.workingDaysUsed ?? payrollSettingsService.getWorkingDaysForMonth(p.payroll_year, p.payroll_month, settings, globalSettingsService.getSettings().app?.workingDays);
     const present = summary?.attendance?.presentDays ?? 0;
     const approvedLeave = summary?.leave?.approvedLeave ?? 0;
     const lopLeave = summary?.leave?.lopLeave ?? 0;
@@ -389,7 +416,8 @@ const AdminPayroll: React.FC = () => {
 
   // Get detail summary (from drawer empData or stored notes)
   const getDetailSummary = () => {
-    if (detailEmpData) return detailEmpData;
+    // Live figures that could not be loaded are unknown: fall back to the stored calculation snapshot
+    if (detailEmpData && !detailEmpData.dataError) return detailEmpData;
     const summary = parseDataSummary(detailDrawer);
     if (summary) {
       return {
@@ -461,6 +489,21 @@ const AdminPayroll: React.FC = () => {
           </div>
         )}
       </div>
+
+      {generateIssues.length > 0 && (
+        <div role="alert" style={{ padding: '1rem', border: '1px solid var(--danger)', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)', color: 'var(--danger-700)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 600, marginBottom: '0.5rem' }}>
+            <span><AlertTriangle size={16} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} />{generateIssues.length} employee(s) were NOT calculated</span>
+            <button className="icon-button" aria-label="Dismiss" onClick={() => setGenerateIssues([])}><X size={16} /></button>
+          </div>
+          <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.875rem' }}>
+            {generateIssues.map(f => {
+              const emp = employees.find(e => e.id === f.employee_id);
+              return <li key={f.employee_id}>{emp ? `${emp.first_name} ${emp.last_name} (${emp.employee_code})` : f.employee_id}: {f.error}</li>;
+            })}
+          </ul>
+        </div>
+      )}
 
       {error ? (
         <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--danger)', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)' }}>
@@ -628,7 +671,7 @@ const AdminPayroll: React.FC = () => {
                             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.employee_code} • {emp.department?.name || 'Unknown'}</div>
                           </td>
                           <td style={{ textAlign: 'right', fontWeight: 500 }}>₹{Number(payroll.gross_salary).toLocaleString('en-IN')}</td>
-                          <td style={{ textAlign: 'right' }}>{ts.workingDays}</td>
+                          <td style={{ textAlign: 'right' }}>{Number.isFinite(ts.workingDays) ? ts.workingDays : '-'}</td>
                           <td style={{ textAlign: 'right' }}>{ts.present}</td>
                           <td style={{ textAlign: 'right' }}>
                             <span style={{ color: 'var(--text-secondary)' }}>{ts.approvedLeave}</span> / <span style={{ color: ts.lopLeave > 0 ? 'var(--danger-600)' : 'var(--gray-600)', fontWeight: ts.lopLeave > 0 ? 600 : 400 }}>{ts.lopLeave}</span>
@@ -768,7 +811,11 @@ const AdminPayroll: React.FC = () => {
         const wfh = ds?.wfh || { wfhDays: 0 };
         const perm = ds?.permission || { permissionCount: 0, totalMinutes: 0 };
         const settings = globalSettingsService.getSettings().payroll;
-        const workingDays = storedSummary?.settings?.workingDaysUsed ?? payrollSettingsService.getWorkingDaysForMonth(detailDrawer.payroll_year, detailDrawer.payroll_month, settings);
+        const workingDays = storedSummary?.settings?.workingDaysUsed ?? payrollSettingsService.getWorkingDaysForMonth(detailDrawer.payroll_year, detailDrawer.payroll_month, settings, globalSettingsService.getSettings().app?.workingDays);
+        // Flags come from the STORED calculation (what approval checks), not the live preview
+        const openFlags = unresolvedReviewItems(detailDrawer.remarks);
+        const resolvedFlags: any[] = parsePayrollSnapshot(detailDrawer.remarks)?.reviewResolutions || [];
+        const canResolve = ['CALCULATED', 'UNDER_REVIEW'].includes(detailDrawer.status);
 
         return (
         <div className="drawer-overlay" onClick={() => { setDetailDrawer(null); setDetailEmpData(null); }}>
@@ -791,6 +838,12 @@ const AdminPayroll: React.FC = () => {
             
             <div className="drawer-body" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
               
+              {detailEmpData?.dataError && (
+                <div role="alert" style={{ padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--danger)', color: 'var(--danger)', fontSize: '0.8125rem' }}>
+                  Live attendance data could not be loaded, so the figures below are from the stored calculation. {detailEmpData.dataError}
+                </div>
+              )}
+
               {/* Action Bar */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', flexWrap: 'wrap' }}>
                 {!['CLOSED'].includes(detailDrawer.status) && (
@@ -802,7 +855,7 @@ const AdminPayroll: React.FC = () => {
                   <button type="button" onClick={handleDetailSubmitReview} className="btn btn-outline" style={{ fontSize: '0.8rem', color: 'var(--warning)', borderColor: 'var(--warning)' }}><Send size={14}/> Submit for Review</button>
                 )}
                 {detailDrawer.status === 'UNDER_REVIEW' && (
-                  <button type="button" onClick={handleDetailApprove} className="btn btn-primary" style={{ fontSize: '0.8rem' }}><CheckCircle size={14}/> Approve</button>
+                  <button type="button" onClick={handleDetailApprove} className="btn btn-primary" style={{ fontSize: '0.8rem' }} disabled={openFlags.length > 0} title={openFlags.length > 0 ? 'Resolve all attendance review flags first' : undefined}><CheckCircle size={14}/> Approve</button>
                 )}
                 {detailDrawer.status === 'APPROVED' && (
                   <button type="button" onClick={handleDetailProceedPayment} className="btn btn-outline" style={{ fontSize: '0.8rem', color: 'var(--primary-700)', borderColor: 'var(--primary-400)' }}><ArrowRight size={14}/> Proceed to Payment</button>
@@ -848,10 +901,41 @@ const AdminPayroll: React.FC = () => {
                   </h4>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '1rem', fontSize: '0.875rem' }}>
                     <div><div style={{ color: 'var(--danger)' }}>Monthly Gross</div><div style={{ fontWeight: 600 }}>₹{Number(detailDrawer.gross_salary).toLocaleString('en-IN')}</div></div>
-                    <div><div style={{ color: 'var(--danger)' }}>Working Days Basis</div><div style={{ fontWeight: 600 }}>{workingDays} Days</div></div>
+                    <div><div style={{ color: 'var(--danger)' }}>Working Days Basis</div><div style={{ fontWeight: 600 }}>{Number.isFinite(workingDays) ? `${workingDays} Days` : 'Not configured'}</div></div>
                     <div><div style={{ color: 'var(--danger)' }}>Daily Rate</div><div style={{ fontWeight: 600 }}>₹{workingDays > 0 ? Math.round(Number(detailDrawer.gross_salary) / workingDays).toLocaleString('en-IN') : '-'}</div></div>
                     <div><div style={{ color: 'var(--danger)' }}>Total LOP</div><div style={{ fontWeight: 700, color: 'var(--danger)' }}>₹{Number(detailDrawer.lop_deduction).toLocaleString('en-IN')}</div></div>
                   </div>
+                </div>
+              )}
+
+              {/* Days an Admin must review before approval (nothing was deducted for the uncertain part) */}
+              {openFlags.length > 0 && (
+                <div role="status" style={{ padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--warning)', fontSize: '0.8125rem', display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+                  <div style={{ fontWeight: 600, color: 'var(--warning)' }}>Admin review needed ({openFlags.length}) — approval is blocked until each flag is resolved</div>
+                  {openFlags.map(r => {
+                    const key = `${r.date}|${r.type || ''}`;
+                    const busy = resolvingKey === key;
+                    return (
+                      <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                        <div><strong>{r.date}</strong> — {r.reason}</div>
+                        {canResolve && r.type && (
+                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                            <input type="text" className="form-control" style={{ flex: 1, minWidth: '12rem', fontSize: '0.8125rem' }} placeholder="Note (required)" value={reviewNotes[key] || ''} onChange={e => setReviewNotes(n => ({ ...n, [key]: e.target.value }))}/>
+                            <button type="button" className="btn btn-outline" style={{ fontSize: '0.75rem' }} disabled={busy || !(reviewNotes[key] || '').trim()} onClick={() => handleResolveFlag(r.date, r.type as string, 'APPLY')}>Apply deduction</button>
+                            <button type="button" className="btn btn-outline" style={{ fontSize: '0.75rem' }} disabled={busy || !(reviewNotes[key] || '').trim()} onClick={() => handleResolveFlag(r.date, r.type as string, 'WAIVE')}>Waive</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {resolvedFlags.length > 0 && (
+                <div style={{ padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', fontSize: '0.8125rem' }}>
+                  <div style={{ fontWeight: 600, marginBottom: '0.375rem' }}>Resolved review flags ({resolvedFlags.length})</div>
+                  {resolvedFlags.map((r: any) => (
+                    <div key={`${r.date}|${r.type}`}><strong>{r.date}</strong> — {r.decision === 'APPLY' ? 'Deduction applied' : 'Waived'}: {r.note}</div>
+                  ))}
                 </div>
               )}
 
@@ -864,11 +948,14 @@ const AdminPayroll: React.FC = () => {
                   <div className="card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
                     <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem', color: 'var(--gray-700)' }}>Attendance Summary</h4>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', fontSize: '0.875rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Working Days</span><span className="info-val">{workingDays}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Working Days</span><span className="info-val">{Number.isFinite(workingDays) ? workingDays : '-'}</span></div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Present</span><span className="info-val">{att.presentDays}</span></div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Late Logins</span><span className="info-val">{att.lateLogins} ({att.totalLateMinutes}m)</span></div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Break Overrun</span><span className="info-val">{att.totalBreakOverrunMinutes}m</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Overtime</span><span className="info-val">{att.totalOvertimeMinutes}m</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }} title="Recorded for information only — no early-logout deduction under the current policy"><span className="info-label">Early Logouts (info)</span><span className="info-val">{att.earlyLogouts}{(att as any).earlyLogoutMinutes ? ` (${(att as any).earlyLogoutMinutes}m)` : ''}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Approved Overtime</span>{(ds as any)?.approvedOvertimeError
+                        ? <span className="info-val" style={{ color: 'var(--danger)' }} title={(ds as any).approvedOvertimeError}>Unavailable</span>
+                        : <span className="info-val">{att.totalOvertimeMinutes}m</span>}</div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="info-label">Absent Days</span><span className="info-val" style={{ color: att.absentDays > 0 ? 'var(--danger)' : undefined }}>{att.absentDays}</span></div>
                     </div>
                   </div>

@@ -6,6 +6,9 @@ import {
 } from 'lucide-react';
 import { exportService } from '../../services/export/exportService';
 import { auditService } from '../../services/audit/auditService';
+import { formatLastUpdated } from '../../utils/lastUpdated';
+import { actorRole, inAuditRange, summarizeAuditLogs } from '../../services/audit/auditLogRules';
+import { companyDateStr } from '../../utils/companyDate';
 
 const AuditLogs: React.FC = () => {
   const [loading, setLoading] = useState(true);
@@ -14,6 +17,8 @@ const AuditLogs: React.FC = () => {
   const [viewMode, setViewMode] = useState<'table'|'timeline'>('table');
   const [exportModal, setExportModal] = useState(false);
   const [toast, setToast] = useState('');
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
+  const [loadError, setLoadError] = useState('');
   
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -27,11 +32,23 @@ const AuditLogs: React.FC = () => {
 
   const fetchLogs = async () => {
     setLoading(true);
+    setLoadError('');
     const { data, error } = await auditService.getAuditLogs();
     if (error) {
       console.error('[AUDIT LOG QUERY ERROR]', error);
+      setLoadError(`Could not load audit events: ${(error as any).message || 'unknown error'}`);
+    } else {
+      // Display fields derived from the stored event (role = actor's role from the database)
+      setLogs((data || []).map((l: any) => ({
+        ...l,
+        role: actorRole(l),
+        user: l.employees ? `${l.employees.first_name} ${l.employees.last_name}` : 'System',
+        timestamp: new Date(l.created_at).toLocaleString('en-GB'),
+        severity: l.metadata?.severity || 'Info',
+        result: l.metadata?.result || 'Success',
+      })));
+      setLastRefreshedAt(new Date());
     }
-    if (data) setLogs(data);
     setLoading(false);
   };
 
@@ -72,7 +89,12 @@ const AuditLogs: React.FC = () => {
     }
   };
 
-  const filteredLogs = logs.filter(log => {
+  // The date range applies to the table AND the summary counters
+  const today = companyDateStr();
+  const rangeLogs = logs.filter(log => inAuditRange(log, filters.dateRange, today));
+  const summary = summarizeAuditLogs(rangeLogs, today);
+
+  const filteredLogs = rangeLogs.filter(log => {
     if (filters.module !== 'All' && log.module !== filters.module.toUpperCase()) return false;
     if (filters.action !== 'All' && log.action !== filters.action.toUpperCase()) return false;
     if (filters.severity !== 'All' && log.severity !== filters.severity) return false;
@@ -105,7 +127,8 @@ const AuditLogs: React.FC = () => {
         <div>
           <h1 className="page-title">Audit Logs</h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>Track important administrative, HR, payroll and security activities across WorkPulse HR.</p>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>Last updated: Today, 10:45 AM</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>Last updated: {formatLastUpdated(lastRefreshedAt)}</div>
+          {loadError && <div role="alert" style={{ fontSize: '0.75rem', color: 'var(--danger)', marginTop: '0.25rem' }}>{loadError}{lastRefreshedAt ? ' — showing the last successfully loaded events.' : ''}</div>}
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={handleRefresh} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><RefreshCw size={16}/> Refresh</button>
@@ -129,27 +152,27 @@ const AuditLogs: React.FC = () => {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
           <div className="tracking-kpi-card">
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileText size={14}/> Total Events</div>
-            <div className="sc-val">{logs.length}</div>
+            <div className="sc-val">{summary.total}</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Clock size={14}/> Today</div>
-            <div className="sc-val">{logs.filter(l => new Date(l.created_at).toDateString() === new Date().toDateString()).length}</div>
+            <div className="sc-val">{summary.today}</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><ShieldCheck size={14}/> Admin Actions</div>
-            <div className="sc-val">{logs.filter(l => l.role === 'Admin').length}</div>
+            <div className="sc-val">{summary.admin}</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users size={14}/> HR Actions</div>
-            <div className="sc-val">{logs.filter(l => l.role === 'HR').length}</div>
+            <div className="sc-val">{summary.hr}</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--warning)' }}><Lock size={14}/> Security Events</div>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>{logs.filter(l => l.module === 'Security').length}</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>{summary.security}</div>
           </div>
           <div className="tracking-kpi-card">
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)' }}><AlertTriangle size={14}/> Critical Events</div>
-            <div className="sc-val" style={{ color: 'var(--danger)' }}>{logs.filter(l => l.metadata?.severity === 'Critical').length}</div>
+            <div className="sc-val" style={{ color: 'var(--danger)' }}>{summary.critical}</div>
           </div>
         </div>
       )}
@@ -166,7 +189,7 @@ const AuditLogs: React.FC = () => {
         </select>
         
         <select className="form-control" style={{ width: 'auto' }} value={filters.role} onChange={e => setFilters({...filters, role: e.target.value})}>
-          <option value="All">All Roles</option><option>Admin</option><option>HR</option><option>Employee</option>
+          <option value="All">All Roles</option><option>Admin</option><option>HR</option><option>Employee</option><option>System</option><option>Unknown</option>
         </select>
 
         <select className="form-control" style={{ width: 'auto' }} value={filters.module} onChange={e => setFilters({...filters, module: e.target.value})}>
@@ -208,8 +231,12 @@ const AuditLogs: React.FC = () => {
         ) : filteredLogs.length === 0 ? (
           <div style={{ padding: '4rem', textAlign: 'center' }}>
             <Search size={48} color="var(--gray-300)" style={{ margin: '0 auto 1rem auto' }}/>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)' }}>No audit events found</h3>
-            <p style={{ color: 'var(--text-secondary)', marginTop: '0.5rem' }}>Try changing your filters or search criteria.</p>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+              {loadError && logs.length === 0 ? 'Audit events could not be loaded' : logs.length === 0 ? 'No audit events recorded yet' : 'No audit events found'}
+            </h3>
+            <p style={{ color: 'var(--text-secondary)', marginTop: '0.5rem' }}>
+              {loadError && logs.length === 0 ? 'Use Refresh to try again.' : logs.length === 0 ? 'Events appear here as admins and employees use WorkPulse HR.' : 'Try changing your filters or search criteria.'}
+            </p>
           </div>
         ) : viewMode === 'table' ? (
           <div className="table-container">
@@ -217,11 +244,7 @@ const AuditLogs: React.FC = () => {
               <thead><tr><th>Date & Time</th><th>User</th><th>Role</th><th>Action</th><th>Module</th><th>Severity</th><th>Result</th><th style={{ textAlign: 'right' }}>Action</th></tr></thead>
               <tbody>
                 {filteredLogs.map(log => {
-                  const user = log.employees ? `${log.employees.first_name} ${log.employees.last_name}` : 'System';
-                  const role = log.employees ? 'User' : 'System';
-                  const timestamp = new Date(log.created_at).toLocaleString('en-GB');
-                  const severity = log.metadata?.severity || 'Info';
-                  const result = log.metadata?.result || 'Success';
+                  const { user, role, timestamp, severity, result } = log;
 
                   return (
                     <tr key={log.id}>
@@ -243,7 +266,7 @@ const AuditLogs: React.FC = () => {
             
             {/* Pagination Mock */}
             <div style={{ padding: '1rem', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Showing 1–{filteredLogs.length} of {logs.length} events</div>
+              <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Showing {filteredLogs.length} of {rangeLogs.length} events in {filters.dateRange.toLowerCase()}</div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button className="btn btn-outline" style={{ padding: '0.25rem 0.5rem' }} disabled><ChevronLeft size={16}/></button>
                 <button className="btn btn-primary" style={{ padding: '0.25rem 0.75rem' }}>1</button>

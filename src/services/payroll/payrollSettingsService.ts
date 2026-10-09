@@ -146,29 +146,40 @@ export const payrollSettingsService = {
     }
   },
 
-  getWorkingDaysForMonth(year: number, month: number, settings?: PayrollSettings): number {
+  /**
+   * Daily-rate divisor, entirely from saved settings. 'configured' = configuredWorkingDays;
+   * 'calendar' = days in month; 'actual' = the month's company working days (Admin → Settings →
+   * Working Days). Returns NaN when the saved configuration cannot produce a valid divisor (unknown
+   * basis, configured days not a positive number, or 'actual' without company working days) —
+   * payroll then refuses to calculate instead of guessing.
+   */
+  getWorkingDaysForMonth(year: number, month: number, settings?: PayrollSettings, companyWorkingDays?: string[]): number {
     const s = settings || this.getSettings();
 
     switch (s.workingDaysBasis) {
-      case 'configured':
-        return s.configuredWorkingDays;
+      case 'configured': {
+        const n = Number(s.configuredWorkingDays);
+        return Number.isFinite(n) && n > 0 ? n : NaN;
+      }
 
       case 'calendar':
         // Number of days in the month
         return new Date(year, month, 0).getDate();
 
-      case 'actual':
-        // Actual working days = calendar days minus weekends (Sat/Sun)
+      case 'actual': {
+        const names = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        if (!Array.isArray(companyWorkingDays) || companyWorkingDays.length === 0) return NaN;
+        const company = new Set(companyWorkingDays.map(d => String(d).toLowerCase()));
         const daysInMonth = new Date(year, month, 0).getDate();
         let workingDays = 0;
         for (let d = 1; d <= daysInMonth; d++) {
-          const day = new Date(year, month - 1, d).getDay();
-          if (day !== 0 && day !== 6) workingDays++;
+          if (company.has(names[new Date(Date.UTC(year, month - 1, d)).getUTCDay()])) workingDays++;
         }
         return workingDays;
+      }
 
       default:
-        return 26;
+        return NaN;
     }
   },
 

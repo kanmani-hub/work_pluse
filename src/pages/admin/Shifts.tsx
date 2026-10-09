@@ -8,6 +8,7 @@ import {
 
 import { shiftService } from '../../services/shifts/shiftService';
 import { validateShiftTimes, getShiftDurationMinutes, formatDurationMinutes } from '../../utils/shiftTime';
+import { useStoredAppSettings } from '../../components/settings/PersistedSettingToggle';
 
 const AdminShifts: React.FC = () => {
   const navigate = useNavigate();
@@ -34,10 +35,22 @@ const AdminShifts: React.FC = () => {
   // Form State
   const [formData, setFormData] = useState<any>({});
   const [formError, setFormError] = useState('');
+  const [countError, setCountError] = useState('');
+  // Company-wide attendance settings (auto clock-out is applied by the server from these, not per shift)
+  const companySettings = useStoredAppSettings();
+
+  const autoLogoutLabel = !companySettings.app
+    ? (companySettings.loading ? 'Loading…' : 'Unavailable (settings not loaded)')
+    : !companySettings.app.autoClockOut
+      ? 'Off'
+      // The server closes open sessions once shift end + grace hours has passed; the mode only
+      // decides which time is recorded as the clock-out.
+      : `On: ${companySettings.app.autoClockOutGraceHours ?? 4}h after shift end, recorded at ${companySettings.app.autoClockOutMode === 'at_shift_end' ? 'shift end' : 'that time'}`;
 
   const fetchShifts = async () => {
     setLoading(true);
-    const { data } = await shiftService.getShifts();
+    const [{ data }, countRes] = await Promise.all([shiftService.getShifts(), shiftService.getCurrentAssignmentCounts()]);
+    setCountError(countRes.error ? `Assigned-employee counts could not be loaded: ${countRes.error.message || 'unknown error'}` : '');
     if (data) {
       setShifts(data.map((d: any) => ({
         id: d.id,
@@ -49,7 +62,8 @@ const AdminShifts: React.FC = () => {
         breakMins: d.break_duration_minutes,
         grace: d.grace_period_minutes,
         overnight: d.crosses_midnight,
-        employees: 0,
+        // Currently assigned ACTIVE employees; null = count could not be loaded (shown as "—")
+        employees: countRes.counts ? (countRes.counts[d.id] || 0) : null,
         status: d.is_active ? 'Active' : 'Inactive',
         mode: d.is_wfh_allowed ? 'Flexible' : 'Office'
       })));
@@ -226,8 +240,8 @@ const AdminShifts: React.FC = () => {
           </div>
           <div className="tracking-kpi-card" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}><Users size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{shifts.reduce((acc, s) => acc + s.employees, 0)}</div>
-            <div className="sc-title">Employees Assigned</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{countError ? '—' : shifts.reduce((acc, s) => acc + (s.employees || 0), 0)}</div>
+            <div className="sc-title" title={countError || 'Employees whose current shift assignment is one of these shifts'}>Employees Assigned</div>
           </div>
           <div className="tracking-kpi-card" onClick={() => setFilterOvernight('Overnight')} style={{ cursor: 'pointer' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--purple-100)', color: 'var(--purple-700)' }}><Moon size={18} /></div></div>
@@ -304,7 +318,7 @@ const AdminShifts: React.FC = () => {
                     <td style={{ textAlign: 'center' }}>
                       {shift.overnight ? <span className="badge" style={{ backgroundColor: 'var(--purple-100)', color: 'var(--purple-700)' }}>Yes</span> : <span className="badge badge-gray">No</span>}
                     </td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{shift.employees}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }} title={shift.employees === null ? countError : undefined}>{shift.employees === null ? '—' : shift.employees}</td>
                     <td>
                       <span className={`badge ${shift.status === 'Active' ? 'badge-success' : 'badge-gray'}`}>
                         {shift.status}
@@ -484,9 +498,10 @@ const AdminShifts: React.FC = () => {
                 {/* Late Login Logic Flow */}
                 <div className="rule-box" style={{ marginBottom: '1.25rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                    <input type="checkbox" id="late_rule" defaultChecked style={{ cursor: 'pointer' }} />
-                    <label htmlFor="late_rule" style={{ fontWeight: 600, fontSize: '0.875rem' }}>Enable Late Login Detection</label>
+                    <input type="checkbox" id="late_rule" checked readOnly disabled />
+                    <label htmlFor="late_rule" style={{ fontWeight: 600, fontSize: '0.875rem' }}>Late Login Detection</label>
                   </div>
+                  <div className="rule-desc" style={{ marginBottom: '1rem' }}>Always on: a clock-in after shift start + grace period is marked late. Turning it off per shift is not supported yet.</div>
                   
                   <div style={{ display: 'flex', alignItems: 'center', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', gap: '1rem', overflowX: 'auto' }}>
                     <div style={{ textAlign: 'center', minWidth: '80px' }}>
@@ -509,16 +524,13 @@ const AdminShifts: React.FC = () => {
                 {/* Auto Logout Rule */}
                 <div className="rule-box">
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                    <input type="checkbox" id="auto_logout" defaultChecked style={{ cursor: 'pointer' }} />
-                    <label htmlFor="auto_logout" style={{ fontWeight: 600, fontSize: '0.875rem' }}>Enable Auto Logout</label>
+                    <input type="checkbox" id="auto_logout" checked={!!companySettings.app?.autoClockOut} readOnly disabled />
+                    <label htmlFor="auto_logout" style={{ fontWeight: 600, fontSize: '0.875rem' }}>Auto Logout (company-wide)</label>
                   </div>
-                  <div className="rule-desc" style={{ marginBottom: '1rem' }}>If the employee forgets to clock out, automatically close the session.</div>
+                  <div className="rule-desc" style={{ marginBottom: '1rem' }}>If the employee forgets to clock out, the server closes the session using the company-wide setting in Admin → Settings → Attendance. A per-shift setting is not supported by the server yet, so it cannot be changed here.</div>
                   
                   <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                    <select className="form-control" defaultValue="shift_end">
-                      <option value="shift_end">At Shift End Time</option>
-                      <option value="grace">Grace Period After End</option>
-                    </select>
+                    <input type="text" className="form-control" disabled value={autoLogoutLabel} />
                     {formData.overnight && (
                       <span className="badge" style={{ backgroundColor: 'var(--purple-100)', color: 'var(--purple-700)', whiteSpace: 'nowrap' }}>+1 Day Evaluated</span>
                     )}
@@ -531,12 +543,11 @@ const AdminShifts: React.FC = () => {
                 <h3 className="section-title">Overtime & Work Mode</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
                   <div className="rule-box">
-                    <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <input type="checkbox" defaultChecked /> Enable Overtime
-                    </label>
+                    <label className="form-label">Overtime</label>
+                    <div className="rule-desc">Overtime is request-based: employees request it and an admin approves it in Admin → Overtime. It is not switched on or off per shift.</div>
                     <div style={{ marginTop: '0.75rem' }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Starts after Required Hours</div>
-                      <input type="text" className="form-control" disabled value={`${formData.reqHours || 8}h`} />
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Can be requested after Required Hours</div>
+                      <input type="text" className="form-control" disabled value={formData.reqHours ? `${formData.reqHours}h` : '—'} />
                     </div>
                   </div>
                   <div>
@@ -592,8 +603,8 @@ const AdminShifts: React.FC = () => {
                   <div className="detail-item"><span className="detail-label">Break Duration</span><span className="detail-value">{showDetail.breakMins} minutes</span></div>
                   <div className="detail-item"><span className="detail-label">Grace Period</span><span className="detail-value">{showDetail.grace} minutes</span></div>
                   <div className="detail-item"><span className="detail-label">Default Mode</span><span className="detail-value">{showDetail.mode}</span></div>
-                  <div className="detail-item"><span className="detail-label">Auto Logout</span><span className="detail-value">Enabled (At Shift End)</span></div>
-                  <div className="detail-item"><span className="detail-label">Overtime</span><span className="detail-value">Enabled (After {showDetail.reqHours}h)</span></div>
+                  <div className="detail-item"><span className="detail-label">Auto Logout</span><span className="detail-value">{autoLogoutLabel} (company-wide)</span></div>
+                  <div className="detail-item"><span className="detail-label">Overtime</span><span className="detail-value">Request-based (employee request + admin approval)</span></div>
                 </div>
               </div>
 
@@ -601,7 +612,7 @@ const AdminShifts: React.FC = () => {
                 <h3 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   Employees Assigned
                   <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span className="badge badge-primary">{showDetail.employees} Total</span>
+                    <span className="badge badge-primary">{showDetail.employees === null ? '—' : showDetail.employees} Total</span>
                     <button onClick={() => setAssignModal(showDetail)} className="btn btn-outline" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}><UserPlus size={14}/> Assign</button>
                   </div>
                 </h3>
@@ -614,7 +625,7 @@ const AdminShifts: React.FC = () => {
                   </div>
                 ) : (
                   <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--gray-300)', borderRadius: 'var(--radius-md)' }}>
-                    No employees currently assigned to this shift.
+                    {showDetail.employees === null ? 'The assigned-employee count could not be loaded.' : 'No employees currently assigned to this shift.'}
                   </div>
                 )}
               </div>

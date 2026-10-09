@@ -13,6 +13,7 @@ import { auditService } from '../audit/auditService';
 import { notificationService } from '../notifications/notificationService';
 import { overtimeReviewed } from '../notifications/notificationRules';
 import { companyDateStr } from '../../utils/companyDate';
+import { isPayrollLocked, payrollPeriodOf } from '../payroll/payrollRules';
 import {
   estimateOvertime, validateOvertimeRequest, validateOvertimeApproval, approvedOvertimeHours, minutesToHours,
   ACTIVE_OVERTIME_STATUSES, type OtEstimate,
@@ -182,6 +183,18 @@ export const overtimeService = {
       const invalid = validateOvertimeApproval(Number(approvedHours), Number(req.requested_overtime_hours), Number(req.eligible_overtime_hours));
       if (invalid) return { error: new Error(invalid) };
       approved = Math.round(Number(approvedHours) * 100) / 100;
+
+      // Policy: overtime cannot be approved once that month's payroll is approved/being paid/paid/closed
+      // (it could never be paid). Rejecting is still allowed.
+      const period = payrollPeriodOf(req.work_date);
+      if (!period) return { error: new Error('This request has no valid work date.') };
+      const { data: payrollRow, error: payrollErr } = await (supabase.from('payroll') as any)
+        .select('status').eq('employee_id', req.employee_id)
+        .eq('payroll_year', period.year).eq('payroll_month', period.month).maybeSingle();
+      if (payrollErr) return { error: new Error('Could not check this month\'s payroll status, so the overtime was not approved. Please try again.') };
+      if (payrollRow && isPayrollLocked(payrollRow.status)) {
+        return { error: new Error(`Payroll for ${period.month}/${period.year} is already ${String(payrollRow.status).replace('_', ' ').toLowerCase()}, so overtime for that month can no longer be approved.`) };
+      }
     } else if (!remarks || !remarks.trim()) {
       return { error: new Error('Please give a reason for rejecting.') };
     }

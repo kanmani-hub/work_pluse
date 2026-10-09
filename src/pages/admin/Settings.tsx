@@ -6,6 +6,9 @@ import {
 import { useSearchParams } from 'react-router-dom';
 import { appSettingsService, type AppSettings } from '../../services/settings/appSettingsService';
 import { globalSettingsService } from '../../services/settings/globalSettingsService';
+import { formatSavedAt } from '../../utils/lastUpdated';
+import { addHoliday, removeHoliday } from '../../services/settings/holidayRules';
+import { WFH_DEDUCTION_POLICY_APPROVED } from '../../services/payroll/payrollRules';
 import { payrollSettingsService, type PayrollSettings } from '../../services/payroll/payrollSettingsService';
 
 const navCategories = [
@@ -29,9 +32,12 @@ const AdminSettings: React.FC = () => {
   const [initialState, setInitialState] = useState<CombinedSettings | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
   
-  const [lastSaved, setLastSaved] = useState('Never');
+  // From app_settings.updated_at (set by the database trigger on every save); never invented
+  const [lastSaved, setLastSaved] = useState('Not available');
   const [toast, setToast] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [holidayDraft, setHolidayDraft] = useState({ date: '', name: '' });
+  const [holidayError, setHolidayError] = useState<string | null>(null);
   
   // Modals
   const [confirmModal, setConfirmModal] = useState<any>(null);
@@ -41,6 +47,7 @@ const AdminSettings: React.FC = () => {
     setErrorMsg('');
     try {
       const combined = await globalSettingsService.loadSettings();
+      setLastSaved(formatSavedAt(combined.updated_at));
       setSettings(JSON.parse(JSON.stringify(combined)));
       setInitialState(JSON.parse(JSON.stringify(combined)));
       setHasChanges(false);
@@ -109,11 +116,7 @@ const AdminSettings: React.FC = () => {
       
       // Refresh the settings to get the actual updated_at
       const freshSettings = await globalSettingsService.getSettings();
-      if (freshSettings.updated_at) {
-        setLastSaved(new Date(freshSettings.updated_at).toLocaleString());
-      } else {
-        setLastSaved(`Today, ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`);
-      }
+      setLastSaved(formatSavedAt(freshSettings.updated_at));
       setToast('Settings saved successfully');
       setTimeout(() => setToast(''), 3000);
     } catch (e: any) {
@@ -207,6 +210,28 @@ const AdminSettings: React.FC = () => {
             {day}
           </label>
         ))}
+      </div>
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>Public Holidays</h3>
+      <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>Holidays are not working days: payroll does not count them as absence (LOP). Click Save Changes to apply.</p>
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div><label className="form-label">Date</label><input type="date" className="form-control" value={holidayDraft.date} onChange={e => setHolidayDraft(h => ({ ...h, date: e.target.value }))}/></div>
+        <div style={{ flex: 1, minWidth: '12rem' }}><label className="form-label">Holiday name</label><input type="text" className="form-control" value={holidayDraft.name} onChange={e => setHolidayDraft(h => ({ ...h, name: e.target.value }))}/></div>
+        <button type="button" className="btn btn-outline" onClick={() => {
+          const res = addHoliday(settings.app.publicHolidays, holidayDraft.date, holidayDraft.name);
+          setHolidayError(res.error);
+          if (!res.error) { handleChangeApp('publicHolidays', res.list); setHolidayDraft({ date: '', name: '' }); }
+        }}>Add holiday</button>
+      </div>
+      {holidayError && <div style={{ color: 'var(--danger)', fontSize: '0.8125rem', marginTop: '0.5rem' }}>{holidayError}</div>}
+      <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+        {(settings.app.publicHolidays || []).length === 0
+          ? <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>No public holidays configured.</div>
+          : (settings.app.publicHolidays || []).map(h => (
+            <div key={h.date} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
+              <span><strong>{h.date}</strong> — {h.name}</span>
+              <button type="button" className="btn btn-outline" style={{ fontSize: '0.75rem' }} onClick={() => handleChangeApp('publicHolidays', removeHoliday(settings.app.publicHolidays, h.date))}>Remove</button>
+            </div>
+          ))}
       </div>
     </div>
   );
@@ -591,6 +616,9 @@ const AdminSettings: React.FC = () => {
       )}
 
       <h3 className="section-title" style={{ marginTop: '2rem' }}>WFH Deduction</h3>
+      {!WFH_DEDUCTION_POLICY_APPROVED && (
+        <div className="warning-box" style={{ marginBottom: '0.75rem' }}><AlertCircle size={16}/> WFH deductions are disabled in payroll until a WFH deduction policy is approved. This setting currently has no effect on salary.</div>
+      )}
       <div className="toggle-row">
         <div><div style={{ fontWeight: 600 }}>Deduct for WFH Days</div></div>
         <input type="checkbox" className="toggle" checked={settings.payroll.enableWfhDeduction} onChange={e => handleChangePayroll('enableWfhDeduction', e.target.checked)}/>
