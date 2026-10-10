@@ -7,6 +7,9 @@ import { OT_REASON_TEXT, validateOvertimeRequest, formatHours, minutesToHours } 
 import { formatDay } from '../../services/notifications/notificationRules';
 import { formatShiftClock } from '../../services/attendance/employeeDashboardRules';
 import { companyDateStr } from '../../utils/companyDate';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps } from '../../services/common/cardDetails';
+import { myOvertimeCards, type MyOvertimeCard } from '../../services/common/myRequestCards';
 
 const STATUS_BADGE: Record<string, string> = { PENDING: 'badge-warning', APPROVED: 'badge-success', REJECTED: 'badge-danger', CANCELLED: 'badge-gray' };
 
@@ -51,11 +54,10 @@ const EmployeeOvertime: React.FC = () => {
   const requestable = useMemo(() => days.filter(d => d.estimate.eligible && (!d.request || ['REJECTED', 'CANCELLED'].includes(d.request.status))), [days]);
   const requests = useMemo(() => days.filter(d => d.request).map(d => ({ ...d.request, day: d })), [days]);
   const thisMonth = companyDateStr().slice(0, 7);
-  const kpi = useMemo(() => ({
-    pending: requests.filter(r => r.status === 'PENDING').length,
-    approvedHours: requests.filter(r => r.status === 'APPROVED' && String(r.work_date).startsWith(thisMonth)).reduce((s, r) => s + Number(r.approved_overtime_hours || 0), 0),
-    potentialDays: requestable.length,
-  }), [requests, requestable, thisMonth]);
+  // Cards and their detail rows come from one builder (own attendance / requests only)
+  const myOt = useMemo(() => myOvertimeCards(days, thisMonth), [days, thisMonth]);
+  const kpi = { pending: myOt.cards.pending.count, approvedHours: myOt.approvedHours, potentialDays: myOt.cards.requestable.count };
+  const [openCard, setOpenCard] = useState<MyOvertimeCard | null>(null);
 
   const openRequest = (d: OvertimeDay) => {
     setRequestDay(d); setHours(String(d.estimate.potentialHours)); setReason(''); setFormError('');
@@ -110,9 +112,9 @@ const EmployeeOvertime: React.FC = () => {
       {toast && <div className="card" role="status" style={{ borderLeft: '4px solid var(--success)', color: 'var(--success)' }}>{toast}</div>}
 
       <div className="tracking-kpi-grid">
-        <div className="tracking-kpi-card"><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Pending requests</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{kpi.pending}</div></div>
-        <div className="tracking-kpi-card"><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Approved this month</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{formatHours(Math.round(kpi.approvedHours * 100) / 100)}</div></div>
-        <div className="tracking-kpi-card"><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Days you can request</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{kpi.potentialDays}</div></div>
+        <div className="tracking-kpi-card" {...clickableCardProps('Pending requests', () => setOpenCard('pending'))}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Pending requests</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{kpi.pending}</div></div>
+        <div className="tracking-kpi-card" {...clickableCardProps('Approved this month', () => setOpenCard('approved'))}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Approved this month</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{formatHours(Math.round(kpi.approvedHours * 100) / 100)}</div></div>
+        <div className="tracking-kpi-card" {...clickableCardProps('Days you can request', () => setOpenCard('requestable'))}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Days you can request</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{kpi.potentialDays}</div></div>
       </div>
 
       <div className="card">
@@ -208,6 +210,20 @@ const EmployeeOvertime: React.FC = () => {
         </div>
       )}
       <style>{`@keyframes slideUp { from { transform: translateY(40px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }`}</style>
+      {openCard && (() => {
+        const meta: Record<MyOvertimeCard, [string, React.ReactNode, string, string]> = {
+          pending: ['Pending Overtime Requests', myOt.cards.pending.count, 'Requests', 'Your overtime requests waiting for an admin decision.'],
+          approved: [`Overtime Approved — ${thisMonth}`, formatHours(Math.round(myOt.approvedHours * 100) / 100), `Approved hours (${myOt.cards.approved.count} requests)`, 'Sum of the hours the admin approved for work dates this month. Requested or possible hours are never counted.'],
+          requestable: ['Days You Can Request', myOt.cards.requestable.count, 'Days', 'Recent days where your worked time after the shift is eligible and no active request exists.'],
+        };
+        const [title, total, label, explain] = meta[openCard];
+        return <RecordsModal open title={title} total={total} totalLabel={label}
+          columns={[{ key: 'date', label: 'Work Date' }, { key: 'shift', label: 'Shift' }, { key: 'clockIn', label: 'Clock In' }, { key: 'clockOut', label: 'Clock Out' },
+            { key: 'possible', label: 'Possible', align: 'right', format: (v: any) => formatHours(v) }, { key: 'requested', label: 'Requested', align: 'right', format: (v: any) => (v === null ? '—' : formatHours(v)) },
+            { key: 'approved', label: 'Approved', align: 'right', format: (v: any) => (v === null ? '—' : formatHours(v)) }, { key: 'status', label: 'Status' }]}
+          rows={myOt.cards[openCard].rows} loading={loading} error={error} emptyMessage="No matching overtime records."
+          explanation={[explain, 'Overtime pay is calculated in payroll using the company’s configured rate. Only your own records are shown.']} onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

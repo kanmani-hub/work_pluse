@@ -99,7 +99,7 @@ export const payrollService = {
     // Find all attendance records for this date
     const { data: attendanceRecords, error: attErr } = await supabase
       .from('attendance')
-      .select('employee_id, status, clock_in_at, clock_out_at, shift_template:shift_template_id(name)')
+      .select('*, shift_template:shift_template_id(*)')
       .eq('attendance_date', dateStr) as any;
 
     if (attErr || !attendanceRecords) {
@@ -108,8 +108,16 @@ export const payrollService = {
 
     const { data: employees, error: empErr } = await supabase
       .from('employees')
-      .select('id, first_name, last_name, employee_code, departments(name)')
+      .select('id, first_name, last_name, employee_code, departments(name), office:office_id(name)')
       .in('id', attendanceRecords.map((a: any) => a.employee_id)) as any;
+
+    // Overtime requests for the date (display only: approval status / hours). A failed lookup is
+    // reported on the rows as unavailable — never shown as "no request".
+    const otRes = await (supabase.from('overtime_requests' as any) as any)
+      .select('employee_id, status, eligible_overtime_hours, requested_overtime_hours, approved_overtime_hours')
+      .eq('work_date', dateStr);
+    const otRequestsError: string | null = otRes?.error ? otRes.error.message : null;
+    const otRequests: any[] = Array.isArray(otRes?.data) ? otRes.data : [];
 
     if (empErr || !employees) return { data: null, error: new Error(`Employees could not be loaded: ${empErr?.message || 'no data returned'}`) };
 
@@ -164,7 +172,11 @@ export const payrollService = {
           lopImpact: lopImpact,
           otherDeductions: otherDed,
           totalDailyImpact: lateDed + breakDed + lopImpact + otherDed,
-          rawCalc: c
+          rawCalc: c,
+          // Display details for the summary-card breakdowns (no effect on any amount)
+          attendance: att,
+          overtimeRequests: otRequests.filter((o: any) => o.employee_id === emp.id),
+          overtimeRequestsError: otRequestsError,
         });
       }
     }
@@ -571,7 +583,9 @@ export const payrollService = {
         dailyRate,
         deductionItems,
         salary,
-        settings
+        settings,
+        // The app settings this calculation used (break allowance, grace period) — for display
+        appSettings
       },
       error: null
     };

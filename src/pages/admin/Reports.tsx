@@ -13,6 +13,9 @@ import { reportDateRange } from '../../services/reports/reportRules';
 import { companyDateStr } from '../../utils/companyDate';
 import { formatLastUpdated } from '../../utils/lastUpdated';
 import { formatMinutes } from '../../services/attendance/employeeDashboardRules';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps, EMPLOYEE_COLUMNS, formatDuration } from '../../services/common/cardDetails';
+import { departmentSummary, type ReportCard } from '../../services/reports/reportCardRules';
 
 const AdminReports: React.FC = () => {
   const navigate = useNavigate();
@@ -33,6 +36,7 @@ const AdminReports: React.FC = () => {
   const [exportModal, setExportModal] = useState(false);
   const [employeeDrawer, setEmployeeDrawer] = useState<any>(null);
   const [deptDrawer, setDeptDrawer] = useState<any>(null);
+  const [openCard, setOpenCard] = useState<ReportCard | null>(null);
 
   // Filters
   const [filters, setFilters] = useState({
@@ -262,6 +266,7 @@ const AdminReports: React.FC = () => {
     </div>
   );
 
+  const deptFigures = deptDrawer ? departmentSummary(metrics.cardRecords, deptDrawer) : null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', position: 'relative' }}>
       
@@ -326,13 +331,13 @@ const AdminReports: React.FC = () => {
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Employees', () => setOpenCard('totalEmployees'))}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users size={16}/> Total Employees</div>
             </div>
             <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.totalEmployees}</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Attendance Rate', () => setOpenCard('attendanceRate'))}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Activity size={16}/> Attendance Rate</div>
             </div>
@@ -343,37 +348,37 @@ const AdminReports: React.FC = () => {
               </div>
             )}
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Present (employee-days)', () => setOpenCard('present'))}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CheckCircle2 size={16}/> Present (employee-days)</div>
             </div>
             <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.attendanceDetail ? metrics.attendanceDetail.present : metrics.presentToday}</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => setActiveTab('Attendance')}>
+          <div className="summary-card-small" {...clickableCardProps('Late Arrivals', () => { setActiveTab('Attendance'); setOpenCard('late'); })}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--warning)' }}><Clock size={16}/> Late Arrivals</div>
             </div>
             <div className="sc-val" style={{ marginTop: '0.5rem', color: 'var(--warning)' }}>{metrics.lateArrivals}</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => setActiveTab('WFH')}>
+          <div className="summary-card-small" {...clickableCardProps('WFH Employees', () => { setActiveTab('WFH'); setOpenCard('wfh'); })}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><MapPin size={16}/> WFH Employees</div>
             </div>
             <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.wfhEmployees}</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => setActiveTab('Leave')}>
+          <div className="summary-card-small" {...clickableCardProps('On Leave', () => { setActiveTab('Leave'); setOpenCard('onLeave'); })}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary-700)' }}><CalendarDays size={16}/> On Leave</div>
             </div>
             <div className="sc-val" style={{ marginTop: '0.5rem', color: 'var(--primary-700)' }}>{metrics.onLeave}</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => setActiveTab('Working Hours')}>
+          <div className="summary-card-small" {...clickableCardProps('Avg Working Hrs', () => { setActiveTab('Working Hours'); setOpenCard('avgHours'); })}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Clock size={16}/> Avg Working Hrs</div>
             </div>
             <div className="sc-val" style={{ marginTop: '0.5rem' }}>{metrics.avgWorkingHours}</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => setActiveTab('Payroll')}>
+          <div className="summary-card-small" {...clickableCardProps('Payroll Processed', () => { setActiveTab('Payroll'); setOpenCard('payroll'); })}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileText size={16}/> Payroll Processed</div>
             </div>
@@ -536,16 +541,16 @@ const AdminReports: React.FC = () => {
               
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem' }}>
                 <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
-                  <div className="sc-val">0</div><div className="sc-title">Employees</div>
+                  <div className="sc-val">{deptFigures ? deptFigures.employees : '—'}</div><div className="sc-title">Employees</div>
                 </div>
                 <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
                   <div className="sc-val">{(() => { const d = (metrics.departmentAttendance || []).find((x: any) => x.dept === deptDrawer); return d ? `${d.val}%` : '—'; })()}</div><div className="sc-title">Attendance Rate</div>
                 </div>
                 <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
-                  <div className="sc-val">0h 0m</div><div className="sc-title">Avg Working Hrs</div>
+                  <div className="sc-val">{deptFigures && deptFigures.avgWorkingMinutes !== null ? formatDuration(deptFigures.avgWorkingMinutes) : '—'}</div><div className="sc-title">Avg Working Hrs</div>
                 </div>
                 <div className="tracking-kpi-card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)' }}>
-                  <div className="sc-val">₹0</div><div className="sc-title">Payroll Total</div>
+                  <div className="sc-val">{deptFigures ? `₹${deptFigures.payrollNet.toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : '—'}</div><div className="sc-title">Payroll Total</div>
                 </div>
               </div>
               
@@ -603,6 +608,28 @@ const AdminReports: React.FC = () => {
         .skeleton { background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%); background-size: 200% 100%; animation: skeleton-loading 1.5s infinite; }
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
+      {openCard && (() => {
+        const recs = metrics.cardRecords?.[openCard] || { count: 0, rows: [] };
+        const range = `${filters.dateRange}${filters.dept !== 'All' ? ' · department filter' : ''}${filters.office !== 'All' ? ' · office filter' : ''}`;
+        const ad = metrics.attendanceDetail;
+        const meta: Record<ReportCard, { title: string; total: React.ReactNode; label: string; cols: any[]; explain: string[]; empty: string }> = {
+          totalEmployees: { title: 'Total Employees', total: metrics.totalEmployees, label: 'Active employees', cols: [...EMPLOYEE_COLUMNS, { key: 'status', label: 'Status' }], explain: ['ACTIVE employees matching the department / office filters.'], empty: 'No active employees match the filters.' },
+          attendanceRate: { title: 'Attendance Rate', total: metrics.attendanceRate, label: ad ? `${ad.present} present ÷ ${ad.expected} expected employee-days` : 'Attendance rate', cols: [...EMPLOYEE_COLUMNS, { key: 'date', label: 'Date' }, { key: 'outcome', label: 'Outcome' }],
+            explain: ['Rate = present employee-days ÷ expected employee-days (working days from Settings, up to today; full-day approved leave is not expected).', 'Each row is one expected employee-day.'], empty: 'No expected employee-days in this range.' },
+          present: { title: 'Present (employee-days)', total: recs.count, label: 'Employee-days', cols: [...EMPLOYEE_COLUMNS, { key: 'date', label: 'Date' }, { key: 'outcome', label: 'Outcome' }], explain: ['Expected employee-days with a clock-in.'], empty: 'No one was present in this range.' },
+          late: { title: 'Late Arrivals', total: metrics.lateArrivals, label: 'Attendance records', cols: [...EMPLOYEE_COLUMNS, { key: 'date', label: 'Date' }, { key: 'shiftStart', label: 'Shift Start' }, { key: 'clockIn', label: 'Clock In' }, { key: 'lateMinutes', label: 'Late (min)', align: 'right' }, { key: 'status', label: 'Status' }],
+            explain: ['Attendance records in the range with recorded late minutes (as stored at clock-in, after the shift grace period).'], empty: 'No late arrivals in this range.' },
+          wfh: { title: 'WFH Employees', total: metrics.wfhEmployees, label: 'Approved WFH requests', cols: [...EMPLOYEE_COLUMNS, { key: 'date', label: 'WFH Date' }, { key: 'status', label: 'Status' }], explain: ['APPROVED WFH requests dated within the range.'], empty: 'No approved WFH in this range.' },
+          onLeave: { title: 'On Leave', total: metrics.onLeave, label: 'Approved leave requests', cols: [...EMPLOYEE_COLUMNS, { key: 'leaveType', label: 'Leave Type' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'halfDay', label: 'Half Day' }], explain: ['APPROVED leave requests overlapping the range.'], empty: 'No approved leave in this range.' },
+          avgHours: { title: 'Average Working Hours', total: metrics.avgWorkingHours, label: `Average of ${recs.count} attendance records`, cols: [...EMPLOYEE_COLUMNS, { key: 'date', label: 'Date' }, { key: 'clockIn', label: 'Clock In' }, { key: 'clockOut', label: 'Clock Out' }, { key: 'workedHours', label: 'Worked', align: 'right' }],
+            explain: ['Average of the stored worked hours of the attendance records that have them. Records without worked hours (for example, no clock-out yet) are left out, never estimated.'], empty: 'No completed attendance in this range.' },
+          payroll: { title: 'Payroll Processed', total: metrics.payrollProcessed, label: 'Net of approved / payment-pending / paid payroll', cols: [...EMPLOYEE_COLUMNS, { key: 'status', label: 'Status' }, { key: 'gross', label: 'Gross', align: 'right' }, { key: 'deductions', label: 'Deductions', align: 'right' }, { key: 'net', label: 'Net', align: 'right' }],
+            explain: ['Sum of Net for payroll records of the range’s starting month with status APPROVED, PAYMENT_PENDING or PAID (shown in lakhs on the card).'], empty: 'No processed payroll for this month.' },
+        };
+        const m = meta[openCard];
+        return <RecordsModal open title={m.title} subtitle={`Range: ${range}`} total={m.total} totalLabel={m.label} columns={m.cols} rows={recs.rows}
+          loading={loading} error={loadError || null} emptyMessage={m.empty} explanation={[...m.explain, 'Uses the report’s current date range and filters. Exports are unchanged.']} onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

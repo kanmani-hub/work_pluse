@@ -13,6 +13,10 @@ import { RequestTimeline } from '../../components/requests/RequestTimeline';
 import { toBalanceRow, findBalance, toLeaveTypeRows } from '../../services/leave/leaveAdminRules';
 import { PersistedSettingToggle, useStoredAppSettings } from '../../components/settings/PersistedSettingToggle';
 import { realtimeService } from '../../services/realtime/realtimeService';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps } from '../../services/common/cardDetails';
+import { companyDateStr } from '../../utils/companyDate';
+import { leaveCards, type LeaveCard } from '../../services/common/requestCardRules';
 
 
 const AdminLeave: React.FC = () => {
@@ -42,6 +46,9 @@ const AdminLeave: React.FC = () => {
   const [reasonForm, setReasonForm] = useState('');
   const [requests, setRequests] = useState<any[]>([]);
   const [balances, setBalances] = useState<any[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
+  const [openCard, setOpenCard] = useState<LeaveCard | null>(null);
+  const today = companyDateStr();
   const [balanceError, setBalanceError] = useState('');
   // Real leave types from public.leave_types; null = not loaded / failed
   const [leaveTypes, setLeaveTypes] = useState<{ id: string; name: string; code: string; paid: boolean; active: boolean }[] | null>(null);
@@ -49,7 +56,8 @@ const AdminLeave: React.FC = () => {
 
   const fetchRequests = async () => {
     setLoading(true);
-    const { data } = await leaveService.getLeaveRequests();
+    const { data, error } = await leaveService.getLeaveRequests();
+    setListError(error ? (error as any).message || 'Unknown error' : null);
     if (data) {
       setRequests(data.map((r: any) => ({
         id: r.id,
@@ -76,7 +84,11 @@ const AdminLeave: React.FC = () => {
         requested_at: r.requested_at,
         created_at: r.created_at,
         reviewed_at: r.reviewed_at,
-        reviewed_by: r.reviewed_by
+        reviewed_by: r.reviewed_by,
+        // Raw values for summary-card details
+        start_date: r.start_date,
+        end_date: r.end_date,
+        total_days: r.total_days
       })));
     }
     
@@ -213,42 +225,35 @@ const AdminLeave: React.FC = () => {
           {[...Array(7)].map((_, i) => <div key={i} className="skeleton" style={{ height: '70px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
       ) : (() => {
-        const kpis = {
-          total: requests.length,
-          pending: pendingRequests.length,
-          approvedToday: requests.filter(r => r.status === 'APPROVED' && r.appliedOn === new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })).length,
-          onLeaveToday: requests.filter(r => r.status === 'APPROVED' && r.dates.includes(new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }))).length,
-          halfDay: requests.filter(r => r.halfDay).length,
-          alerts: requests.filter(r => r.conflicts?.length > 0).length,
-          rejected: requests.filter(r => r.status === 'REJECTED').length
-        };
+        const lc = leaveCards(requests, today);
+        const kpis = { total: lc.total.count, pending: lc.pending.count, approvedToday: lc.approvedToday.count, onLeaveToday: lc.onLeaveToday.count, halfDay: lc.halfDay.count, alerts: lc.alerts.count, rejected: lc.rejected.count };
         return (
         <div className="kpi-grid">
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Requests', () => setOpenCard('total'))}>
             <div className="sc-val">{kpis.total}</div>
             <div className="sc-title">Total Requests</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => { setView('Requests'); setFilterStatus('PENDING'); }}>
+          <div className="summary-card-small" {...clickableCardProps('Pending Requests', () => { setView('Requests'); setFilterStatus('PENDING'); setOpenCard('pending'); })}>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.pending}</div>
             <div className="sc-title">Pending Requests</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Approved Today', () => setOpenCard('approvedToday'))}>
             <div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.approvedToday}</div>
             <div className="sc-title">Approved Today</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('On Leave Today', () => setOpenCard('onLeaveToday'))}>
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.onLeaveToday}</div>
             <div className="sc-title">On Leave Today</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Half Day', () => setOpenCard('halfDay'))}>
             <div className="sc-val">{kpis.halfDay}</div>
             <div className="sc-title">Half Day</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => setView('Balances')}>
+          <div className="summary-card-small" {...clickableCardProps('Balance Alerts', () => { setView('Balances'); setOpenCard('alerts'); })}>
             <div className="sc-val" style={{ color: 'var(--danger)' }}>{kpis.alerts}</div>
             <div className="sc-title">Balance Alerts</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => { setView('Requests'); setFilterStatus('REJECTED'); }}>
+          <div className="summary-card-small" {...clickableCardProps('Rejected', () => { setView('Requests'); setFilterStatus('REJECTED'); setOpenCard('rejected'); })}>
             <div className="sc-val" style={{ color: 'var(--text-secondary)' }}>{kpis.rejected}</div>
             <div className="sc-title">Rejected</div>
           </div>
@@ -775,6 +780,20 @@ EmpC     AL  AL   —    —    —`}
         .skeleton { background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%); background-size: 200% 100%; animation: skeleton-loading 1.5s infinite; }
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
+      {openCard && (() => {
+        const m = ({
+          total: { title: 'Total Leave Requests', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'office', label: 'Office' }, { key: 'leaveType', label: 'Leave Type' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'days', label: 'Days', align: 'right' }, { key: 'halfDay', label: 'Half Day' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No leave requests yet.', explain: 'Every leave request visible to you, all statuses.' },
+          pending: { title: 'Pending Leave Requests', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'office', label: 'Office' }, { key: 'leaveType', label: 'Leave Type' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'days', label: 'Days', align: 'right' }, { key: 'halfDay', label: 'Half Day' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No leave requests are awaiting approval.', explain: 'Requests with status PENDING. Approve or reject them from the request list.' },
+          approvedToday: { title: 'Leave Approved Today', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'office', label: 'Office' }, { key: 'leaveType', label: 'Leave Type' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'days', label: 'Days', align: 'right' }, { key: 'halfDay', label: 'Half Day' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No leave request was approved today.', explain: 'Requests with status APPROVED whose review (approval) happened on today’s company date.' },
+          onLeaveToday: { title: 'On Leave Today', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'office', label: 'Office' }, { key: 'leaveType', label: 'Leave Type' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'days', label: 'Days', align: 'right' }, { key: 'halfDay', label: 'Half Day' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No approved leave covers today.', explain: 'APPROVED requests whose start–end range includes today. Pending requests are not counted.' },
+          halfDay: { title: 'Half-Day Leave Requests', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'office', label: 'Office' }, { key: 'leaveType', label: 'Leave Type' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'days', label: 'Days', align: 'right' }, { key: 'halfDay', label: 'Half Day' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No half-day leave requests.', explain: 'Requests marked as half day, all statuses.' },
+          alerts: { title: 'Leave Balance Alerts', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'office', label: 'Office' }, { key: 'leaveType', label: 'Leave Type' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'days', label: 'Days', align: 'right' }, { key: 'halfDay', label: 'Half Day' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No balance alerts.', explain: 'Requests flagged with a balance conflict.', notes: ['No balance-alert rule is configured, so no request is currently flagged. Employee balances are listed on the Balances tab.'] },
+          rejected: { title: 'Rejected Leave Requests', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'office', label: 'Office' }, { key: 'leaveType', label: 'Leave Type' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'days', label: 'Days', align: 'right' }, { key: 'halfDay', label: 'Half Day' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No rejected leave requests.', explain: 'Requests with status REJECTED.' },
+        } as Record<LeaveCard, any>)[openCard];
+        return <RecordsModal open title={m.title} subtitle={`Company date: ${today} (Asia/Kolkata)`} total={m.total ?? leaveCards(requests, today)[openCard].count} totalLabel={m.label || 'Requests'}
+          columns={m.cols} rows={leaveCards(requests, today)[openCard].rows} loading={loading} error={listError} emptyMessage={m.empty}
+          explanation={[m.explain, 'Read-only view: opening it does not approve, reject or change any request.']} notes={m.notes} onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

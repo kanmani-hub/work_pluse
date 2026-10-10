@@ -3,6 +3,8 @@ import { useGlobalSettings } from '../../services/settings/globalSettingsService
 import { breakService } from '../../services/attendance/breakService';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { Coffee, Search, Clock, FileText } from 'lucide-react';
+import { summarizeBreakDay, matchesBreakFilter, BREAK_STATUS_LABEL } from '../../services/attendance/breakSummaryRules';
+import { COMPANY_TIMEZONE } from '../../utils/companyDate';
 
 const AdminBreaks: React.FC = () => {
   const { settings } = useGlobalSettings();
@@ -11,6 +13,10 @@ const AdminBreaks: React.FC = () => {
   
   const [breaks, setBreaks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Re-render every minute so an in-progress break's elapsed time stays current
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNowMs(Date.now()), 60000); return () => clearInterval(t); }, []);
   
   const [filterDate, setFilterDate] = useState(() => {
     return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -22,9 +28,11 @@ const AdminBreaks: React.FC = () => {
   const fetchBreaks = async () => {
     setLoading(true);
     const { data, error } = await breakService.getBreakReport(filterDate);
+    setLoadError(error ? error.message : null);
     if (data) {
-      setBreaks(data); // data is now an array of attendance records
+      setBreaks(data); // attendance rows for the date, each with its attendance_breaks
     }
+    setNowMs(Date.now());
     setLoading(false);
   };
 
@@ -38,61 +46,35 @@ const AdminBreaks: React.FC = () => {
     };
   }, [filterDate]);
 
-  // Aggregate breaks per employee per attendance day
+  // One summary per attendance day, from the actual break sessions (see breakSummaryRules)
   const employeeBreakSummary = React.useMemo(() => {
     return breaks.map(att => {
-      const allowedMins = att.shift_template?.break_duration_minutes ?? appSettings.breakDurationMins ?? 75;
-      
-      let totalMins = 0;
-      let activeCount = 0;
-      
-      const sessions = (att.attendance_breaks || []).map((b: any) => {
-        let duration = 0;
-        if (b.duration_minutes !== null) {
-          duration = b.duration_minutes;
-        } else if (b.started_at && !b.ended_at) {
-          // If active, compute current elapsed based on Asia/Kolkata timezone
-          duration = Math.floor((new Date().getTime() - new Date(b.started_at).getTime()) / 60000);
-          activeCount += 1;
-        }
-        totalMins += duration;
-        return { ...b, computed_duration: duration };
-      });
-      
-      const excessMins = Math.max(0, totalMins - allowedMins);
-      const isDeductionApplicable = excessMins > 0 && payrollSettings?.enableBreakOverrunDeduction;
-      
-      let status = 'Within Limit';
-      if (activeCount > 0) status = 'Currently On Break';
-      else if (excessMins > 0) status = 'Excess Break';
-      
+      const sum = summarizeBreakDay(att, appSettings?.breakDurationMins, nowMs);
+      const isDeductionApplicable = (sum.excessMins || 0) > 0 && !!payrollSettings?.enableBreakOverrunDeduction;
       return {
         employee_id: att.employee_id,
         attendance_id: att.id,
         employee: att.employees,
         attendance: att,
-        allowedMins,
-        totalMins,
-        activeCount,
-        sessions,
-        excessMins,
-        status,
-        isDeductionApplicable
+        ...sum,
+        isDeductionApplicable,
       };
     });
-  }, [breaks, appSettings, payrollSettings]);
+  }, [breaks, appSettings, payrollSettings, nowMs]);
 
   // Apply Filters
-  const filteredSummary = employeeBreakSummary.filter(s => {
-    if (filterStatus === 'EXCESS' && s.excessMins === 0) return false;
-    if (filterStatus === 'WITHIN' && s.excessMins > 0) return false;
-    return true;
-  });
+  const filteredSummary = employeeBreakSummary.filter(s => matchesBreakFilter(s.status, filterStatus));
 
   const selectedDetails = employeeBreakSummary.find(s => s.employee_id === selectedEmployee);
 
-  const formatTime = (isoString: string) => {
-    return new Date(isoString).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const formatTime = (isoString: string | null) => {
+    if (!isoString || !Number.isFinite(new Date(isoString).getTime())) return '—';
+    return new Date(isoString).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: COMPANY_TIMEZONE });
+  };
+  const mins = (v: number | null) => (v === null ? 'Not configured' : `${v} min`);
+  const statusBadge = (st: keyof typeof BREAK_STATUS_LABEL) => {
+    const cls = st === 'ON_BREAK' ? 'badge-warning' : st === 'EXCESS' ? 'badge-danger' : st === 'UNVERIFIED' ? 'badge-gray' : 'badge-success';
+    return <span className={`badge ${cls}`}>{BREAK_STATUS_LABEL[st]}</span>;
   };
 
   return (
@@ -121,6 +103,9 @@ const AdminBreaks: React.FC = () => {
               <option value="ALL">All Break Statuses</option>
               <option value="WITHIN">Within Limit</option>
               <option value="EXCESS">Excess Break</option>
+              <option value="ON_BREAK">On Break</option>
+              <option value="NO_BREAKS">No Breaks Recorded</option>
+              <option value="UNVERIFIED">Unverified</option>
             </select>
           </div>
         </div>
@@ -150,10 +135,16 @@ const AdminBreaks: React.FC = () => {
                       <div className="spinner" style={{ margin: '0 auto' }}></div>
                     </td>
                   </tr>
+                ) : loadError ? (
+                  <tr>
+                    <td colSpan={7} role="alert" style={{ textAlign: 'center', padding: '3rem', color: 'var(--danger)' }}>
+                      Break records could not be loaded: {loadError}
+                    </td>
+                  </tr>
                 ) : filteredSummary.length === 0 ? (
                   <tr>
                     <td colSpan={7} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
-                      No break records found for this date.
+                      {breaks.length === 0 ? 'No attendance records for this date.' : 'No employees match this status filter.'}
                     </td>
                   </tr>
                 ) : (
@@ -166,26 +157,20 @@ const AdminBreaks: React.FC = () => {
                       <td>
                         <span className="badge badge-primary">{s.attendance?.shift_template?.name || 'Standard'}</span>
                       </td>
-                      <td>{s.allowedMins} min</td>
+                      <td>{mins(s.allowedMins)}</td>
                       <td>
-                        <span style={{ fontWeight: 600, color: s.excessMins > 0 ? 'var(--danger)' : 'inherit' }}>
+                        <span style={{ fontWeight: 600, color: (s.excessMins || 0) > 0 ? 'var(--danger)' : 'inherit' }}>
                           {s.totalMins} min
                         </span>
+                        {s.activeCount > 0 && <div style={{ fontSize: '0.7rem', color: 'var(--warning)' }}>in progress</div>}
+                        {s.sessions.length > 0 && <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{s.sessions.length} session{s.sessions.length === 1 ? '' : 's'}</div>}
                       </td>
                       <td>
-                        <span style={{ fontWeight: 600, color: s.excessMins > 0 ? 'var(--danger)' : 'var(--text-secondary)' }}>
-                          {s.excessMins} min
+                        <span style={{ fontWeight: 600, color: (s.excessMins || 0) > 0 ? 'var(--danger)' : 'var(--text-secondary)' }}>
+                          {s.excessMins === null ? '—' : `${s.excessMins} min`}
                         </span>
                       </td>
-                      <td>
-                        {s.status === 'Currently On Break' ? (
-                          <span className="badge badge-warning">{s.status}</span>
-                        ) : s.excessMins > 0 ? (
-                          <span className="badge badge-danger">Excess</span>
-                        ) : (
-                          <span className="badge badge-success">Within Limit</span>
-                        )}
-                      </td>
+                      <td>{statusBadge(s.status)}</td>
                       <td>
                         <button 
                           className="btn btn-outline" 
@@ -223,44 +208,59 @@ const AdminBreaks: React.FC = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Allowed Break</div>
-                  <div style={{ fontWeight: 600 }}>{selectedDetails.allowedMins} min</div>
+                  <div style={{ fontWeight: 600 }}>{mins(selectedDetails.allowedMins)}</div>
                 </div>
                 <div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Total Used</div>
-                  <div style={{ fontWeight: 600, color: selectedDetails.excessMins > 0 ? 'var(--danger)' : 'inherit' }}>{selectedDetails.totalMins} min</div>
+                  <div style={{ fontWeight: 600, color: (selectedDetails.excessMins || 0) > 0 ? 'var(--danger)' : 'inherit' }}>{selectedDetails.totalMins} min{selectedDetails.activeCount > 0 ? ' (in progress)' : ''}</div>
                 </div>
                 <div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Excess</div>
-                  <div style={{ fontWeight: 600, color: selectedDetails.excessMins > 0 ? 'var(--danger)' : 'inherit' }}>{selectedDetails.excessMins} min</div>
+                  <div style={{ fontWeight: 600, color: (selectedDetails.excessMins || 0) > 0 ? 'var(--danger)' : 'inherit' }}>{selectedDetails.excessMins === null ? '—' : `${selectedDetails.excessMins} min`}</div>
                 </div>
                 <div>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Deduction</div>
                   <div style={{ fontWeight: 600, color: selectedDetails.isDeductionApplicable ? 'var(--danger)' : 'var(--text-secondary)' }}>
-                    {selectedDetails.isDeductionApplicable ? 'Applicable' : '₹0'}
+                    {selectedDetails.isDeductionApplicable ? 'Applicable (calculated in Payroll)' : 'Not applicable'}
                   </div>
                 </div>
               </div>
             </div>
 
+            {selectedDetails.notes.length > 0 && (
+              <div role="note" style={{ marginBottom: '1rem', padding: '0.75rem', border: '1px solid var(--warning)', borderRadius: 'var(--radius-md)', fontSize: '0.8125rem' }}>
+                {selectedDetails.notes.map((n, i) => <div key={i}>{n}</div>)}
+              </div>
+            )}
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+              Total = sum of each session (end − start, whole minutes); an active break counts up to now. Excess = max(0, total − allowed).
+            </div>
+
             <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Sessions</h4>
+            {selectedDetails.sessions.length === 0 && (
+              <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>No break sessions were recorded for this attendance day.</div>
+            )}
             
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {selectedDetails.sessions.map((session: any, i: number) => (
-                <div key={session.id} style={{ padding: '0.75rem', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+                <div key={session.id || i} style={{ padding: '0.75rem', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.875rem' }}>
                     <span style={{ fontWeight: 600 }}>Session {i + 1}</span>
-                    {session.ended_at ? (
+                    {session.state === 'COMPLETED' ? (
                       <span className="badge badge-success" style={{ fontSize: '0.7rem' }}>Completed</span>
+                    ) : session.state === 'ACTIVE' ? (
+                      <span className="badge badge-warning" style={{ fontSize: '0.7rem' }}>In progress</span>
                     ) : (
-                      <span className="badge badge-warning" style={{ fontSize: '0.7rem' }}>Active</span>
+                      <span className="badge badge-gray" style={{ fontSize: '0.7rem' }} title={session.invalidReason}>Invalid — not counted</span>
                     )}
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
                     <div>
-                      {formatTime(session.started_at)} → {session.ended_at ? formatTime(session.ended_at) : 'Now'}
+                      {formatTime(session.started_at)} → {session.state === 'ACTIVE' ? 'Now' : formatTime(session.ended_at)}
+                      {session.break_type === 'AUTO_GPS' && <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}> · automatic (GPS)</span>}
                     </div>
                     <div style={{ fontWeight: 600 }}>
-                      {session.computed_duration} min
+                      {session.minutes === null ? (session.invalidReason || '—') : `${session.minutes} min`}
                     </div>
                   </div>
                 </div>

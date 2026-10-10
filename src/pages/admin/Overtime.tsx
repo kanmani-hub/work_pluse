@@ -6,6 +6,9 @@ import { validateOvertimeApproval, formatHours } from '../../services/overtime/o
 import { formatDay } from '../../services/notifications/notificationRules';
 import { formatShiftClock } from '../../services/attendance/employeeDashboardRules';
 import { companyDateStr, COMPANY_TIMEZONE } from '../../utils/companyDate';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps } from '../../services/common/cardDetails';
+import { overtimeCards, type OvertimeCard } from '../../services/overtime/overtimeCardRules';
 
 const STATUS_BADGE: Record<string, string> = { PENDING: 'badge-warning', APPROVED: 'badge-success', REJECTED: 'badge-danger', CANCELLED: 'badge-gray' };
 const fmtTs = (iso?: string | null) => iso ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: COMPANY_TIMEZONE }) : '—';
@@ -41,11 +44,10 @@ const AdminOvertime: React.FC = () => {
   }, [load]);
 
   const month = companyDateStr().slice(0, 7);
-  const kpi = useMemo(() => ({
-    pending: rows.filter(r => r.status === 'PENDING').length,
-    approvedHours: Math.round(rows.filter(r => r.status === 'APPROVED' && String(r.work_date).startsWith(month)).reduce((s, r) => s + Number(r.approved_overtime_hours || 0), 0) * 100) / 100,
-    rejected: rows.filter(r => r.status === 'REJECTED' && String(r.work_date).startsWith(month)).length,
-  }), [rows, month]);
+  // Card numbers and their detail views come from the same builder
+  const otCards = useMemo(() => overtimeCards(rows, month), [rows, month]);
+  const kpi = { pending: otCards.pending.count, approvedHours: otCards.approved.hours, rejected: otCards.rejected.count };
+  const [openCard, setOpenCard] = useState<OvertimeCard | null>(null);
 
   const filtered = rows.filter(r => {
     if (status !== 'All' && r.status !== status) return false;
@@ -110,9 +112,9 @@ const AdminOvertime: React.FC = () => {
       {toast && <div className="card" role="status" style={{ borderLeft: '4px solid var(--success)', color: 'var(--success)' }}>{toast}</div>}
 
       <div className="tracking-kpi-grid">
-        <div className="tracking-kpi-card"><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Pending review</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{kpi.pending}</div></div>
-        <div className="tracking-kpi-card"><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Approved this month</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{formatHours(kpi.approvedHours)}</div></div>
-        <div className="tracking-kpi-card"><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Rejected this month</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{kpi.rejected}</div></div>
+        <div className="tracking-kpi-card" {...clickableCardProps('Pending review', () => setOpenCard('pending'))}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Pending review</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{kpi.pending}</div></div>
+        <div className="tracking-kpi-card" {...clickableCardProps('Approved this month', () => setOpenCard('approved'))}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Approved this month</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{formatHours(kpi.approvedHours)}</div></div>
+        <div className="tracking-kpi-card" {...clickableCardProps('Rejected this month', () => setOpenCard('rejected'))}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Rejected this month</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{kpi.rejected}</div></div>
       </div>
 
       <div className="card">
@@ -213,6 +215,20 @@ const AdminOvertime: React.FC = () => {
         </div>
       )}
       <style>{`@keyframes slideUp { from { transform: translateY(40px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }`}</style>
+      {openCard && (() => {
+        const cols = [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'workDate', label: 'Work Date' }, { key: 'shift', label: 'Shift' },
+          { key: 'requested', label: 'Requested', align: 'right' as const, format: (v: any) => formatHours(v) }, { key: 'eligible', label: 'Eligible', align: 'right' as const, format: (v: any) => formatHours(v) },
+          { key: 'approved', label: 'Approved', align: 'right' as const, format: (v: any) => (v === null ? '—' : formatHours(v)) }, { key: 'status', label: 'Status' }, { key: 'remarks', label: 'Remarks' }];
+        const meta: Record<OvertimeCard, { title: string; total: React.ReactNode; label: string; explain: string; empty: string }> = {
+          pending: { title: 'Overtime Pending Review', total: otCards.pending.count, label: 'Requests', empty: 'No overtime requests are awaiting review.', explain: 'Every PENDING overtime request. Approve or reject from the request list — the admin types the approved hours.' },
+          approved: { title: `Overtime Approved — ${month}`, total: formatHours(otCards.approved.hours), label: `Approved hours (${otCards.approved.count} requests)`, empty: 'No overtime approved for this month.', explain: 'APPROVED requests whose work date is in this company month; the total is the sum of the approved hours only (requested or eligible hours are never counted).' },
+          rejected: { title: `Overtime Rejected — ${month}`, total: otCards.rejected.count, label: 'Requests', empty: 'No overtime rejected this month.', explain: 'REJECTED requests whose work date is in this company month.' },
+        };
+        const m = meta[openCard];
+        return <RecordsModal open title={m.title} total={m.total} totalLabel={m.label} columns={cols} rows={otCards[openCard].rows} loading={loading} error={error}
+          emptyMessage={m.empty} explanation={[m.explain, 'Overtime pay is worked out in Payroll using the configured overtime rate; it is not calculated here. Opening this view does not approve or reject anything.']}
+          onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

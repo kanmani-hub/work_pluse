@@ -14,6 +14,9 @@ import { realtimeService } from '../../services/realtime/realtimeService';
 import { companyDateStr } from '../../utils/companyDate';
 import { shiftDateStr, permissionsOnDate, formatCompanyDateLabel } from '../../services/admin/permissionTimelineRules';
 import { PersistedSettingToggle, useStoredAppSettings } from '../../components/settings/PersistedSettingToggle';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps } from '../../services/common/cardDetails';
+import { permissionCards, hoursLabel, type PermissionCard } from '../../services/common/requestCardRules';
 
 const mockUsage: any[] = [];
 
@@ -47,7 +50,8 @@ const AdminPermission: React.FC = () => {
 
   const fetchRequests = async () => {
     setLoading(true);
-    const { data } = await permissionService.getPermissionRequests();
+    const { data, error } = await permissionService.getPermissionRequests();
+    setListError(error ? (error as any).message || 'Unknown error' : null);
     if (data) {
       setRequests(data.map((r: any) => {
         const hDur = Math.floor(r.duration_minutes / 60);
@@ -81,7 +85,10 @@ const AdminPermission: React.FC = () => {
           // Raw values for the date timeline
           dateISO: r.permission_date,
           startRaw: r.start_time,
-          endRaw: r.end_time
+          endRaw: r.end_time,
+          minutes: r.duration_minutes,
+          requested_at: r.requested_at,
+          reviewed_at: r.reviewed_at
         };
       }));
     }
@@ -116,6 +123,9 @@ const AdminPermission: React.FC = () => {
   });
 
   const pendingRequests = requests.filter(r => r.status === 'PENDING');
+  const [listError, setListError] = useState<string | null>(null);
+  const [openCard, setOpenCard] = useState<PermissionCard | null>(null);
+  const today = companyDateStr();
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -214,53 +224,35 @@ const AdminPermission: React.FC = () => {
           {[...Array(7)].map((_, i) => <div key={i} className="skeleton" style={{ height: '70px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
       ) : (() => {
-        let totalMinutes = 0;
-        requests.forEach(r => {
-          if (r.status === 'APPROVED') {
-             const m = r.duration.match(/(\d+)h (\d+)m/);
-             if (m) {
-               totalMinutes += parseInt(m[1]) * 60 + parseInt(m[2]);
-             }
-          }
-        });
-        const h = Math.floor(totalMinutes / 60);
-        const m = totalMinutes % 60;
-        const kpis = {
-          total: requests.length,
-          pending: pendingRequests.length,
-          approvedToday: requests.filter(r => r.status === 'APPROVED' && r.appliedOn === new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })).length,
-          activeToday: requests.filter(r => r.status === 'APPROVED' && r.date === new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })).length,
-          rejected: requests.filter(r => r.status === 'REJECTED').length,
-          totalHours: `${h}h ${m}m`,
-          alerts: 0 // usage alerts not implemented in mock
-        };
+        const pc = permissionCards(requests, today);
+        const kpis = { total: pc.total.count, pending: pc.pending.count, approvedToday: pc.approvedToday.count, activeToday: pc.activeToday.count, rejected: pc.rejected.count, totalHours: hoursLabel(pc.approvedMinutes), alerts: pc.alerts.count };
         return (
         <div className="kpi-grid">
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Requests', () => setOpenCard('total'))}>
             <div className="sc-val">{kpis.total}</div>
             <div className="sc-title">Total Requests</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => { setView('Requests'); setFilterStatus('PENDING'); }}>
+          <div className="summary-card-small" {...clickableCardProps('Pending', () => { setView('Requests'); setFilterStatus('PENDING'); setOpenCard('pending'); })}>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.pending}</div>
             <div className="sc-title">Pending</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Approved Today', () => setOpenCard('approvedToday'))}>
             <div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.approvedToday}</div>
             <div className="sc-title">Approved Today</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Active Today', () => setOpenCard('activeToday'))}>
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.activeToday}</div>
             <div className="sc-title">Active Today</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => { setView('Requests'); setFilterStatus('REJECTED'); }}>
+          <div className="summary-card-small" {...clickableCardProps('Rejected', () => { setView('Requests'); setFilterStatus('REJECTED'); setOpenCard('rejected'); })}>
             <div className="sc-val" style={{ color: 'var(--text-secondary)' }}>{kpis.rejected}</div>
             <div className="sc-title">Rejected</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Hours', () => setOpenCard('totalHours'))}>
             <div className="sc-val">{kpis.totalHours}</div>
             <div className="sc-title">Total Hours</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => setView('Usage')}>
+          <div className="summary-card-small" {...clickableCardProps('Limit Alerts', () => { setView('Usage'); setOpenCard('alerts'); })}>
             <div className="sc-val" style={{ color: 'var(--danger)' }}>{kpis.alerts}</div>
             <div className="sc-title">Limit Alerts</div>
           </div>
@@ -742,6 +734,20 @@ const AdminPermission: React.FC = () => {
         .skeleton { background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%); background-size: 200% 100%; animation: skeleton-loading 1.5s infinite; }
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
+      {openCard && (() => {
+        const m = ({
+          total: { title: 'Total Permission Requests', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'Date' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'duration', label: 'Duration' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No permission requests yet.', explain: 'Every permission request visible to you, all statuses.' },
+          pending: { title: 'Pending Permission Requests', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'Date' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'duration', label: 'Duration' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No permission requests are awaiting approval.', explain: 'Requests with status PENDING. Approve or reject them from the request list.' },
+          approvedToday: { title: 'Permissions Approved Today', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'Date' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'duration', label: 'Duration' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No permission was approved today.', explain: 'Requests with status APPROVED whose review (approval) happened on today’s company date.' },
+          activeToday: { title: 'Active Permissions Today', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'Date' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'duration', label: 'Duration' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No approved permission is dated today.', explain: 'APPROVED requests for today’s date.' },
+          rejected: { title: 'Rejected Permission Requests', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'Date' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'duration', label: 'Duration' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No rejected permission requests.', explain: 'Requests with status REJECTED.' },
+          totalHours: { title: 'Total Approved Permission Hours', label: 'Total hours', total: hoursLabel(permissionCards(requests, today).approvedMinutes), cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'Date' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'duration', label: 'Duration' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No approved permissions.', explain: 'Sum of the duration of every APPROVED permission request listed below.' },
+          alerts: { title: 'Permission Limit Alerts', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'Date' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'duration', label: 'Duration' }, { key: 'status', label: 'Status' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No limit alerts.', explain: 'Employees exceeding a permission usage limit.', notes: ['No permission usage-limit rule is configured, so no alert is raised. Usage per employee is on the Usage tab.'] },
+        } as Record<PermissionCard, any>)[openCard];
+        return <RecordsModal open title={m.title} subtitle={`Company date: ${today} (Asia/Kolkata)`} total={m.total ?? permissionCards(requests, today)[openCard].count} totalLabel={m.label || 'Requests'}
+          columns={m.cols} rows={permissionCards(requests, today)[openCard].rows} loading={loading} error={listError} emptyMessage={m.empty}
+          explanation={[m.explain, 'Read-only view: opening it does not approve, reject or change any request.']} notes={m.notes} onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

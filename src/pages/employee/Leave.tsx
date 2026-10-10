@@ -6,6 +6,9 @@ import {
 } from 'lucide-react';
 
 import { leaveService } from '../../services/leave/leaveService';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps } from '../../services/common/cardDetails';
+import { myLeaveBalanceDetail } from '../../services/common/myRequestCards';
 
 const EmployeeLeave: React.FC = () => {
   const { settings } = useGlobalSettings();
@@ -15,6 +18,7 @@ const EmployeeLeave: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<any[]>([]);
   const [balances, setBalances] = useState<any[]>([]);
+  const [openBalance, setOpenBalance] = useState<any>(null);
   const [leaveTypes, setLeaveTypes] = useState<any[]>([]);
   const [selectedDetail, setSelectedDetail] = useState<any>(null);
   const [toastMessage, setToastMessage] = useState('');
@@ -247,7 +251,7 @@ const EmployeeLeave: React.FC = () => {
         <>
           <div className="tracking-kpi-grid">
             {balances.length > 0 ? balances.map(b => (
-              <div key={b.id} className="tracking-kpi-card">
+              <div key={b.id} className="tracking-kpi-card" {...clickableCardProps(`${b.leave_types?.name || 'Leave'} balance`, () => setOpenBalance(b))}>
                 <div className="sc-title">{b.leave_types?.name}</div>
                 <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{b.remaining_days} Days <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)' }}>Available</span></div>
               </div>
@@ -618,6 +622,15 @@ const EmployeeLeave: React.FC = () => {
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
         @keyframes slideDown { from { transform: translate(-50%, -100%); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
       `}</style>
+      {openBalance && (() => {
+        const d = myLeaveBalanceDetail(openBalance, history);
+        const f = (v: number | null) => (v === null || Number.isNaN(v) ? 'not set' : `${v} day(s)`);
+        return <RecordsModal open title={`${d.name} Balance`} total={d.remaining === null ? '—' : `${d.remaining} Days`} totalLabel="Available"
+          columns={[{ key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'days', label: 'Days', align: 'right' }, { key: 'status', label: 'Status' }, { key: 'reason', label: 'Reason' }, { key: 'requestedOn', label: 'Requested On' }, { key: 'remarks', label: 'Remarks' }]}
+          rows={d.rows} loading={loading} emptyMessage={`You have no ${d.name} requests.`}
+          explanation={[`Allowance: ${f(d.allowance)} · Used: ${f(d.used)} · Available: ${f(d.remaining)}${d.monthly ? ' (per month, from the company’s casual-leave setting)' : ''}.`, 'Balances are maintained by the company; the requests below are your own requests of this leave type (all statuses).']}
+          onClose={() => setOpenBalance(null)} />;
+      })()}
     </div>
   );
 };

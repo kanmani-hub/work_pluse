@@ -11,6 +11,9 @@ import {
   Eye, Edit, Copy, Trash2, Moon, Lock, Unlock, UploadCloud,
   Check, History, Clock, MapPin, Sun
 } from 'lucide-react';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps, EMPLOYEE_COLUMNS } from '../../services/common/cardDetails';
+import { rosterCards, type RosterCard } from '../../services/shifts/rosterCardRules';
 
 const AdminRoster: React.FC = () => {
   const navigate = useNavigate();
@@ -26,6 +29,7 @@ const AdminRoster: React.FC = () => {
   const [periodRoster, setPeriodRoster] = useState<any>(null);
   const [rosterEntries, setRosterEntries] = useState<Record<string, Record<string, any>>>({});
   const [rosterError, setRosterError] = useState<string | null>(null);
+  const [openCard, setOpenCard] = useState<RosterCard | null>(null);
   const [rosterBusy, setRosterBusy] = useState(false);
   const status = periodRoster?.status === 'PUBLISHED' ? 'Published' : 'Draft';
   const [isLocked, setIsLocked] = useState(false);
@@ -314,53 +318,38 @@ const AdminRoster: React.FC = () => {
           {[...Array(6)].map((_, i) => <div key={i} className="skeleton" style={{ height: '70px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
       ) : (() => {
-        let scheduled = 0, morning = 0, evening = 0, night = 0, wfh = 0;
-        let unassigned = 0;
-        
-        filteredEmployees.forEach(emp => {
-          let hasAssignment = false;
-          weekDates.forEach(d => {
-            const cell = getEffectiveCellData(emp.id, d.date);
-            if (cell && cell.shift) {
-               hasAssignment = true;
-               const type = cell.shiftData?.shift_type;
-               if (type === 'MORNING') morning++;
-               if (type === 'EVENING') evening++;
-               if (type === 'NIGHT') night++;
-               if (cell.mode === 'WFH') wfh++;
-            }
-          });
-          if (hasAssignment) scheduled++; else unassigned++;
-        });
+        // Same counting as before, now from one shared builder so cards and details reconcile
+        const rc = rosterCards(filteredEmployees, weekDates.map(d => d.date), getEffectiveCellData);
+        const [scheduled, morning, evening, night, wfh, unassigned] = [rc.scheduled.count, rc.morning.count, rc.evening.count, rc.night.count, rc.wfh.count, rc.unassigned.count];
         
         return (
         <div className="kpi-grid">
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Scheduled', () => setOpenCard('scheduled'))}>
             <div className="sc-header"><div className="sc-icon"><Users size={16} /></div></div>
             <div className="sc-val">{scheduled}</div>
             <div className="sc-title">Scheduled</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Morning', () => setOpenCard('morning'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-50)', color: 'var(--warning-600)' }}><Sun size={16} /></div></div>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>{morning}</div>
             <div className="sc-title">Morning</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Evening', () => setOpenCard('evening'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-50)', color: 'var(--primary-600)' }}><Clock size={16} /></div></div>
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{evening}</div>
             <div className="sc-title">Evening</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Night', () => setOpenCard('night'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--purple-50)', color: 'var(--purple-600)' }}><Moon size={16} /></div></div>
             <div className="sc-val" style={{ color: 'var(--purple-700)' }}>{night}</div>
             <div className="sc-title">Night</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('WFH', () => setOpenCard('wfh'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-50)', color: 'var(--success-600)' }}><MapPin size={16} /></div></div>
             <div className="sc-val" style={{ color: 'var(--success)' }}>{wfh}</div>
             <div className="sc-title">WFH</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Unassigned', () => setOpenCard('unassigned'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--gray-100)', color: 'var(--text-secondary)' }}><AlertTriangle size={16} /></div></div>
             <div className="sc-val" style={{ color: 'var(--text-primary)' }}>{unassigned}</div>
             <div className="sc-title">Unassigned</div>
@@ -677,6 +666,25 @@ const AdminRoster: React.FC = () => {
           .cal-s-name { font-size: 0.65rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
         }
       `}</style>
+      {openCard && (() => {
+        const rc = rosterCards(filteredEmployees, weekDates.map(d => d.date), getEffectiveCellData);
+        const dayCols = [...EMPLOYEE_COLUMNS, { key: 'date', label: 'Date' }, { key: 'shift', label: 'Shift' }, { key: 'timing', label: 'Timing' }, { key: 'mode', label: 'Mode' }, { key: 'source', label: 'Source' }];
+        const empCols = [...EMPLOYEE_COLUMNS, { key: 'workDays', label: 'Working days', align: 'right' as const }, { key: 'weekOffs', label: 'Week offs', align: 'right' as const }];
+        const meta: Record<RosterCard, { title: string; label: string; cols: any[]; empty: string; explain: string }> = {
+          scheduled: { title: 'Scheduled Employees', label: 'Employees', cols: empCols, empty: 'No employee has a working shift this week.', explain: 'Employees (matching the page filters) with at least one working-shift day in the week.' },
+          morning: { title: 'Morning Shift Days', label: 'Employee-days', cols: dayCols, empty: 'No morning-shift days this week.', explain: 'One row per employee per day whose effective shift is a MORNING shift.' },
+          evening: { title: 'Evening Shift Days', label: 'Employee-days', cols: dayCols, empty: 'No evening-shift days this week.', explain: 'One row per employee per day whose effective shift is an EVENING shift.' },
+          night: { title: 'Night Shift Days', label: 'Employee-days', cols: dayCols, empty: 'No night-shift days this week.', explain: 'One row per employee per day whose effective shift is a NIGHT shift.' },
+          wfh: { title: 'WFH Days', label: 'Employee-days', cols: dayCols, empty: 'No WFH working days this week.', explain: 'One row per employee per working day rostered as WFH.' },
+          unassigned: { title: 'Unassigned Employees', label: 'Employees', cols: empCols, empty: 'Every employee has at least one working shift this week.', explain: 'Employees (matching the page filters) with no working-shift day in the week (week offs only, or nothing assigned).' },
+        };
+        const m = meta[openCard];
+        const status = periodRoster ? (periodRoster.status === 'PUBLISHED' ? 'Published roster' : 'Draft roster (not used by payroll until published)') : 'No roster saved — default shift assignments';
+        return <RecordsModal open title={m.title} subtitle={`Week ${weekDates[0].date} to ${weekDates[6].date} (Mon–Sun, Asia/Kolkata) · ${status}`}
+          total={rc[openCard].count} totalLabel={m.label} columns={m.cols} rows={rc[openCard].rows} loading={loading} error={rosterError}
+          emptyMessage={m.empty} explanation={[m.explain, 'Effective day = saved roster entry for that date, otherwise the employee’s default shift assignment. Opening this view does not save or publish the roster.']}
+          onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

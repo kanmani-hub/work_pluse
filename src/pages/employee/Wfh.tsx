@@ -7,6 +7,9 @@ import { wfhService } from '../../services/wfh/wfhService';
 import { useGlobalSettings } from '../../services/settings/globalSettingsService';
 import { useAuth } from '../../context/AuthContext';
 import { qaTimeService } from '../../services/qa/qaTimeService';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps } from '../../services/common/cardDetails';
+import { myWfhCards, type MyWfhCard } from '../../services/common/myRequestCards';
 
 const EmployeeWfh: React.FC = () => {
   const { settings } = useGlobalSettings();
@@ -29,6 +32,8 @@ const EmployeeWfh: React.FC = () => {
   // Attendance Prototype State (If today is WFH)
   const [isWfhToday, setIsWfhToday] = useState(false);
   const [metrics, setMetrics] = useState({ used: 0, pending: 0, approved: 0, rejected: 0, remaining: 0 });
+  const [openCard, setOpenCard] = useState<MyWfhCard | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const [upcomingWfh, setUpcomingWfh] = useState<any[]>([]);
   
   const [todayAttendanceState, setTodayAttendanceState] = useState<'not_started' | 'working' | 'on_break' | 'clocked_out'>('not_started');
@@ -41,6 +46,7 @@ const EmployeeWfh: React.FC = () => {
     
 
     const { data, error } = await wfhService.getMyWFHRequests(employee.id);
+    setListError(error ? (error as any).message || 'Unknown error' : null);
     
     if (data) {
       const mapped = data.map((h: any) => ({
@@ -216,6 +222,12 @@ const EmployeeWfh: React.FC = () => {
   const calendarDays = Array.from({length: daysInMonth}, (_, i) => i + 1);
   const emptyCells = Array.from({length: startEmptyCells}, (_, i) => i);
 
+  // Cards and their detail rows come from one builder (own requests only), same rules as the limit check
+  const wfhNow = qaTimeService.getDate();
+  const wfhToday = `${wfhNow.getFullYear()}-${String(wfhNow.getMonth() + 1).padStart(2, '0')}-${String(wfhNow.getDate()).padStart(2, '0')}`;
+  const wfhLimit = appSettings?.wfhMaxDaysPerMonth !== undefined ? Number(appSettings.wfhMaxDaysPerMonth) : 2;
+  const myWfh = myWfhCards(history, wfhToday, wfhLimit);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', position: 'relative' }}>
       
@@ -254,25 +266,25 @@ const EmployeeWfh: React.FC = () => {
       ) : (
         <>
           <div className="tracking-kpi-grid">
-            <div className="tracking-kpi-card">
+            <div className="tracking-kpi-card" {...clickableCardProps('WFH Used', () => setOpenCard('used'))}>
               <div className="sc-title">WFH Used</div>
-              <div className="sc-val">{metrics.used} Days</div>
+              <div className="sc-val">{myWfh.used} Days</div>
             </div>
-            <div className="tracking-kpi-card">
+            <div className="tracking-kpi-card" {...clickableCardProps('WFH Remaining', () => setOpenCard('remaining'))}>
               <div className="sc-title">WFH Remaining</div>
-              <div className="sc-val">{metrics.remaining} Days</div>
+              <div className="sc-val">{myWfh.remaining} Days</div>
             </div>
-            <div className="tracking-kpi-card">
+            <div className="tracking-kpi-card" {...clickableCardProps('Pending Requests', () => setOpenCard('pending'))}>
               <div className="sc-title">Pending Requests</div>
-              <div className="sc-val" style={{ color: 'var(--warning)' }}>{metrics.pending}</div>
+              <div className="sc-val" style={{ color: 'var(--warning)' }}>{myWfh.cards.pending.count}</div>
             </div>
-            <div className="tracking-kpi-card">
+            <div className="tracking-kpi-card" {...clickableCardProps('Approved', () => setOpenCard('approved'))}>
               <div className="sc-title">Approved</div>
-              <div className="sc-val" style={{ color: 'var(--success)' }}>{metrics.approved}</div>
+              <div className="sc-val" style={{ color: 'var(--success)' }}>{myWfh.cards.approved.count}</div>
             </div>
-            <div className="tracking-kpi-card">
+            <div className="tracking-kpi-card" {...clickableCardProps('Rejected', () => setOpenCard('rejected'))}>
               <div className="sc-title">Rejected</div>
-              <div className="sc-val" style={{ color: 'var(--danger)' }}>{metrics.rejected}</div>
+              <div className="sc-val" style={{ color: 'var(--danger)' }}>{myWfh.cards.rejected.count}</div>
             </div>
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '-1rem' }}>
@@ -709,6 +721,21 @@ const EmployeeWfh: React.FC = () => {
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
         @keyframes slideDown { from { transform: translate(-50%, -100%); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
       `}</style>
+      {openCard && (() => {
+        const limitNote = appSettings?.wfhMaxDaysPerMonth !== undefined ? `Monthly WFH limit configured in Settings: ${wfhLimit} days.` : 'No monthly WFH limit is saved in Settings, so the app default (2 days) is used.';
+        const meta: Record<MyWfhCard, [string, React.ReactNode, string, string[]]> = {
+          used: ['WFH Used', `${myWfh.used} Days`, 'Days used this month', ['Your APPROVED WFH days this month up to today (a half day counts 0.5).']],
+          remaining: ['WFH Remaining', `${myWfh.remaining} Days`, 'Days remaining', [`Remaining = limit (${wfhLimit}) − used (${myWfh.used}), never below 0. The days used are listed below.`, limitNote]],
+          pending: ['Pending Requests', myWfh.cards.pending.count, 'Requests', ['Your WFH requests awaiting approval.']],
+          approved: ['Approved', myWfh.cards.approved.count, 'Requests', ['All your APPROVED WFH requests.']],
+          rejected: ['Rejected', myWfh.cards.rejected.count, 'Requests', ['All your REJECTED WFH requests.']],
+        };
+        const [title, total, label, explain] = meta[openCard];
+        return <RecordsModal open title={title} subtitle={`Today: ${wfhToday}`} total={total} totalLabel={label}
+          columns={[{ key: 'date', label: 'Date' }, { key: 'type', label: 'Type' }, { key: 'status', label: 'Status' }, { key: 'reason', label: 'Reason' }, { key: 'requestedOn', label: 'Requested On' }, { key: 'remarks', label: 'Remarks' }]}
+          rows={myWfh.cards[openCard].rows} loading={loading} error={listError} emptyMessage="No matching WFH requests."
+          explanation={[...explain, 'Only your own requests are shown.']} onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

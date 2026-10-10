@@ -73,6 +73,8 @@ export interface AttendanceStats {
   rate: number | null;   // 0..100, null when nothing was expected
   trend: { date: string; label: string; val: number }[];
   departments: { dept: string; val: number }[];
+  /** Employee-days behind the numbers above (for card detail views): PRESENT / ABSENT are the expected days, LEAVE the full-day leave days */
+  days: { employee_id: string; date: string; outcome: 'PRESENT' | 'ABSENT' | 'LEAVE'; wfh: boolean }[];
 }
 
 export function computeAttendanceStats(input: AttendanceStatsInput): AttendanceStats {
@@ -91,6 +93,7 @@ export function computeAttendanceStats(input: AttendanceStatsInput): AttendanceS
   let expectedDays = 0, presentDays = 0, leaveDays = 0, wfhPresentDays = 0;
   const daily: Record<string, { expected: number; present: number }> = {};
   const dept: Record<string, { expected: number; present: number }> = {};
+  const days: AttendanceStats['days'] = [];
 
   for (let date = input.startDate; date <= last; date = addDays(date, 1)) {
     const isWorkingDay = working.has(weekdayName(date).toLowerCase());
@@ -99,13 +102,14 @@ export function computeAttendanceStats(input: AttendanceStatsInput): AttendanceS
       let expected = false;
       if (wasPresent) expected = true;
       else if (isWorkingDay) {
-        if (fullLeave(e.id, date)) leaveDays++;
+        if (fullLeave(e.id, date)) { leaveDays++; days.push({ employee_id: e.id, date, outcome: 'LEAVE', wfh: false }); }
         else expected = true;
       }
       if (!expected) continue;
       expectedDays++;
       if (wasPresent) presentDays++;
       if (wasPresent && wfhDays.has(`${e.id}|${date}`)) wfhPresentDays++;
+      days.push({ employee_id: e.id, date, outcome: wasPresent ? 'PRESENT' : 'ABSENT', wfh: wasPresent && wfhDays.has(`${e.id}|${date}`) });
       (daily[date] ||= { expected: 0, present: 0 }).expected++;
       if (wasPresent) daily[date].present++;
       const dn = e?.departments?.name || 'Unassigned';
@@ -126,7 +130,7 @@ export function computeAttendanceStats(input: AttendanceStatsInput): AttendanceS
     absentDays: Math.max(0, expectedDays - presentDays),
     wfhPresentDays,
     rate: expectedDays > 0 ? pct(presentDays, expectedDays) : null,
-    trend, departments,
+    trend, departments, days,
   };
 }
 

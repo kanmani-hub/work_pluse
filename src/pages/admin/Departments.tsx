@@ -6,6 +6,9 @@ import {
 } from 'lucide-react';
 
 import { departmentService } from '../../services/department/departmentService';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps, EMPLOYEE_COLUMNS } from '../../services/common/cardDetails';
+import { departmentCards, type DepartmentCard } from '../../services/common/orgCardRules';
 
 const AdminDepartments: React.FC = () => {
   const navigate = useNavigate();
@@ -14,6 +17,9 @@ const AdminDepartments: React.FC = () => {
   
   const [departments, setDepartments] = useState<any[]>([]);
   const [unassignedCount, setUnassignedCount] = useState(0);
+  const [unassignedEmployees, setUnassignedEmployees] = useState<any[]>([]);
+  const [cardError, setCardError] = useState<string | null>(null);
+  const [openCard, setOpenCard] = useState<DepartmentCard | null>(null);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   
@@ -30,7 +36,10 @@ const AdminDepartments: React.FC = () => {
 
   const fetchDepartments = async () => {
     setLoading(true);
-    const { data, unassigned, error } = await departmentService.getDepartments();
+    const res: any = await departmentService.getDepartments();
+    const { data, unassigned, error } = res;
+    setUnassignedEmployees(res.unassignedEmployees || []);
+    setCardError(error?.message || res.unassignedError?.message || null);
     if (data) {
       setDepartments(data);
     }
@@ -49,6 +58,8 @@ const AdminDepartments: React.FC = () => {
     setTimeout(() => setToast(''), 3000);
   };
 
+  const cards = departmentCards(departments, unassignedEmployees);
+  void unassignedCount;
   const filteredDepts = departments.filter(d => {
     const matchesSearch = d.name?.toLowerCase().includes(search.toLowerCase());
     const statusLabel = d.is_active ? 'Active' : 'Inactive';
@@ -163,24 +174,24 @@ const AdminDepartments: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Departments', () => setOpenCard('total'))}>
             <div className="sc-header"><div className="sc-icon"><Building2 size={18} /></div></div>
-            <div className="sc-val">{departments.length}</div>
+            <div className="sc-val">{cards.total.count}</div>
             <div className="sc-title">Total Departments</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Active Departments', () => setOpenCard('active'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-100)', color: 'var(--success)' }}><CheckCircle2 size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--success)' }}>{departments.filter(d => d.is_active).length}</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{cards.active.count}</div>
             <div className="sc-title">Active Departments</div>
           </div>
-          <div className="tracking-kpi-card" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Employees', () => setOpenCard('employees'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}><Users size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{departments.reduce((sum, d) => sum + (d.employeeCount || 0), 0)}</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{cards.employees.count}</div>
             <div className="sc-title">Total Employees</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Unassigned Employees', () => setOpenCard('unassigned'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-100)', color: 'var(--warning)' }}><AlertTriangle size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>{unassignedCount}</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>{cards.unassigned.count}</div>
             <div className="sc-title">Unassigned Employees</div>
           </div>
         </div>
@@ -489,6 +500,19 @@ const AdminDepartments: React.FC = () => {
         .skeleton { background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%); background-size: 200% 100%; animation: skeleton-loading 1.5s infinite; }
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
+      {openCard && (() => {
+        const deptCols = [{ key: 'department', label: 'Department' }, { key: 'status', label: 'Status' }, { key: 'employees', label: 'Employees', align: 'right' as const }];
+        const empCols = [...EMPLOYEE_COLUMNS, { key: 'status', label: 'Status' }];
+        const meta: Record<DepartmentCard, { title: string; label: string; cols: any[]; empty: string; explain: string }> = {
+          total: { title: 'Total Departments', label: 'Departments', cols: deptCols, empty: 'No departments exist yet.', explain: 'Every department record, active or inactive.' },
+          active: { title: 'Active Departments', label: 'Departments', cols: deptCols, empty: 'No active departments.', explain: 'Departments marked active.' },
+          employees: { title: 'Employees by Department', label: 'Employees', cols: empCols, empty: 'No employees are assigned to a department.', explain: 'Every employee linked to a department (all statuses), grouped by department — the sum of the Employees column in the table.' },
+          unassigned: { title: 'Unassigned Employees', label: 'Employees', cols: empCols, empty: 'Every active employee has a department.', explain: 'ACTIVE employees with no department set.' },
+        };
+        const m = meta[openCard];
+        return <RecordsModal open title={m.title} total={cards[openCard].count} totalLabel={m.label} columns={m.cols} rows={cards[openCard].rows}
+          loading={loading} error={openCard === 'unassigned' || openCard === 'employees' ? cardError : null} emptyMessage={m.empty} explanation={[m.explain]} onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

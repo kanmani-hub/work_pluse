@@ -9,6 +9,9 @@ import {
 import { shiftService } from '../../services/shifts/shiftService';
 import { validateShiftTimes, getShiftDurationMinutes, formatDurationMinutes } from '../../utils/shiftTime';
 import { useStoredAppSettings } from '../../components/settings/PersistedSettingToggle';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps, EMPLOYEE_COLUMNS } from '../../services/common/cardDetails';
+import { shiftCards, type ShiftCard } from '../../services/common/orgCardRules';
 
 const AdminShifts: React.FC = () => {
   const navigate = useNavigate();
@@ -16,6 +19,9 @@ const AdminShifts: React.FC = () => {
   const [toast, setToast] = useState('');
   
   const [shifts, setShifts] = useState<any[]>([]);
+  const [shiftMembers, setShiftMembers] = useState<Record<string, any[]> | null>(null);
+  const [openCard, setOpenCard] = useState<ShiftCard | null>(null);
+  const cards = shiftCards(shifts, shiftMembers);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterOvernight, setFilterOvernight] = useState('All');
@@ -50,6 +56,7 @@ const AdminShifts: React.FC = () => {
   const fetchShifts = async () => {
     setLoading(true);
     const [{ data }, countRes] = await Promise.all([shiftService.getShifts(), shiftService.getCurrentAssignmentCounts()]);
+    setShiftMembers(countRes.members || null);
     setCountError(countRes.error ? `Assigned-employee counts could not be loaded: ${countRes.error.message || 'unknown error'}` : '');
     if (data) {
       setShifts(data.map((d: any) => ({
@@ -228,24 +235,24 @@ const AdminShifts: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Shifts', () => setOpenCard('total'))}>
             <div className="sc-header"><div className="sc-icon"><Clock size={18} /></div></div>
-            <div className="sc-val">{shifts.length}</div>
+            <div className="sc-val">{cards.total.count}</div>
             <div className="sc-title">Total Shifts</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Active Shifts', () => setOpenCard('active'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-100)', color: 'var(--success)' }}><CheckCircle2 size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--success)' }}>{shifts.filter(s => s.status === 'Active').length}</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{cards.active.count}</div>
             <div className="sc-title">Active Shifts</div>
           </div>
-          <div className="tracking-kpi-card" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
+          <div className="tracking-kpi-card" {...clickableCardProps('Employees Assigned', () => setOpenCard('employees'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}><Users size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{countError ? '—' : shifts.reduce((acc, s) => acc + (s.employees || 0), 0)}</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{countError ? '—' : cards.employees.count}</div>
             <div className="sc-title" title={countError || 'Employees whose current shift assignment is one of these shifts'}>Employees Assigned</div>
           </div>
-          <div className="tracking-kpi-card" onClick={() => setFilterOvernight('Overnight')} style={{ cursor: 'pointer' }}>
+          <div className="tracking-kpi-card" {...clickableCardProps('Overnight Shifts', () => { setFilterOvernight('Overnight'); setOpenCard('overnight'); })}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--purple-100)', color: 'var(--purple-700)' }}><Moon size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--purple-700)' }}>{shifts.filter(s => s.overnight).length}</div>
+            <div className="sc-val" style={{ color: 'var(--purple-700)' }}>{cards.overnight.count}</div>
             <div className="sc-title">Overnight Shifts</div>
           </div>
         </div>
@@ -800,6 +807,20 @@ const AdminShifts: React.FC = () => {
         .skeleton { background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%); background-size: 200% 100%; animation: skeleton-loading 1.5s infinite; }
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
+      {openCard && (() => {
+        const shiftCols = [{ key: 'shift', label: 'Shift' }, { key: 'code', label: 'Code' }, { key: 'timing', label: 'Timing' }, { key: 'requiredHours', label: 'Required Hrs', align: 'right' as const },
+          { key: 'breakMins', label: 'Break (min)', align: 'right' as const }, { key: 'grace', label: 'Grace (min)', align: 'right' as const }, { key: 'overnight', label: 'Overnight' }, { key: 'status', label: 'Status' }];
+        const meta: Record<ShiftCard, { title: string; label: string; cols: any[]; empty: string; explain: string }> = {
+          total: { title: 'Total Shifts', label: 'Shifts', cols: shiftCols, empty: 'No shift templates exist yet.', explain: 'Every configured shift template, active or inactive.' },
+          active: { title: 'Active Shifts', label: 'Shifts', cols: shiftCols, empty: 'No active shifts.', explain: 'Shift templates marked active.' },
+          employees: { title: 'Employees Assigned to Shifts', label: 'Employees', cols: [...EMPLOYEE_COLUMNS, { key: 'shift', label: 'Shift' }, { key: 'timing', label: 'Timing' }],
+            empty: 'No active employee currently has a shift assignment.', explain: 'ACTIVE employees whose current shift assignment (latest effective date on or before today, not ended) is one of these shifts. Day-level roster overrides are not counted.' },
+          overnight: { title: 'Overnight Shifts', label: 'Shifts', cols: shiftCols, empty: 'No overnight shifts.', explain: 'Shift templates that cross midnight.' },
+        };
+        const m = meta[openCard];
+        return <RecordsModal open title={m.title} total={cards[openCard].count} totalLabel={m.label} columns={m.cols} rows={cards[openCard].rows}
+          loading={loading} error={openCard === 'employees' ? (countError || null) : null} emptyMessage={m.empty} explanation={[m.explain]} onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

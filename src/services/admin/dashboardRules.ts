@@ -8,6 +8,7 @@
  *  - Attendance rate: present / workforce.
  */
 import { isWorkforceEmployee } from '../reports/reportRules';
+import { employeeFields, istTime } from '../common/cardDetails';
 
 export interface DashboardInput {
   employees: any[];   // { id, status, role:{name}, employment_type, office_id }
@@ -45,4 +46,42 @@ export function computeDashboardStats(input: DashboardInput) {
     activeWfh: wfhIds.size,
     onsite: Math.max(0, workforce.filter(e => e.office_id != null && !wfhIds.has(e.id)).length),
   };
+}
+
+// ---- Card details (same sets as computeDashboardStats, so each list length equals its card) ----
+
+export interface DashboardPendingInput {
+  leave: any[];      // PENDING leave_requests rows (with employees(...) and leave_types(name))
+  wfh: any[];        // PENDING wfh_requests rows (with employees(...))
+  permission: any[]; // PENDING permission_requests rows (with employees(...))
+}
+
+export type DashboardCard = 'employees' | 'working' | 'pending' | 'onLeave';
+
+export function dashboardCardDetails(input: DashboardInput, pending: DashboardPendingInput): Record<DashboardCard, Record<string, any>[]> {
+  const workforce = (input.employees || []).filter(isWorkforceEmployee);
+  const byId = new Map(workforce.map(e => [e.id, e]));
+  const att = (input.attendance || []).filter(a => byId.has(a.employee_id));
+
+  const employees = workforce.map(e => ({ __key: e.id, ...employeeFields(e), type: e.employment_type || '—', status: e.status || '—' }));
+
+  const seenWorking = new Set<string>();
+  const working = att.filter(a => a.clock_in_at && !a.clock_out_at && !seenWorking.has(a.employee_id) && seenWorking.add(a.employee_id))
+    .map(a => ({ __key: a.employee_id, ...employeeFields(byId.get(a.employee_id)), clockIn: istTime(a.clock_in_at), status: a.status || 'WORKING', clockOut: 'Not clocked out yet' }));
+
+  const seenLeave = new Set<string>();
+  const onLeave = (input.leaves || [])
+    .filter(l => byId.has(l.employee_id) && l.start_date <= input.today && l.end_date >= input.today && !seenLeave.has(l.employee_id) && seenLeave.add(l.employee_id))
+    .map(l => ({ __key: l.employee_id, ...employeeFields(byId.get(l.employee_id)), leaveType: l.leave_types?.name || '—', from: l.start_date, to: l.end_date }));
+
+  const pend = (rows: any[], type: string, path: string, date: (r: any) => string) => (rows || []).map(r => ({
+    __key: `${type}-${r.id}`, type, ...employeeFields(r.employees), date: date(r), status: r.status || 'PENDING', module: path,
+  }));
+  const pendingRows = [
+    ...pend(pending.leave, 'Leave', '/admin/leave', r => r.start_date === r.end_date ? r.start_date : `${r.start_date} → ${r.end_date}`),
+    ...pend(pending.wfh, 'WFH', '/admin/wfh', r => r.request_date),
+    ...pend(pending.permission, 'Permission', '/admin/permission', r => `${r.permission_date}${r.start_time ? ` ${String(r.start_time).slice(0, 5)}–${String(r.end_time || '').slice(0, 5)}` : ''}`),
+  ];
+
+  return { employees, working, pending: pendingRows, onLeave };
 }

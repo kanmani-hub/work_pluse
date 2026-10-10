@@ -46,14 +46,30 @@ export function inAuditRange(log: any, range: AuditRange, today: string): boolea
 }
 
 /** Counters for the logs ALREADY filtered by date range. */
+/** The conditions behind each summary counter (shared by the counters and their detail views). */
+export const AUDIT_CARD_FILTERS = {
+  total: (_l: any, _today: string) => true,
+  today: (l: any, today: string) => !!l?.created_at && companyDateStr(l.created_at) === today,
+  admin: (l: any) => actorRole(l) === 'Admin',
+  hr: (l: any) => actorRole(l) === 'HR',
+  security: (l: any) => String(l?.module || '').toUpperCase() === 'SECURITY',
+  critical: (l: any) => String(l?.metadata?.severity || '').toLowerCase() === 'critical',
+};
+export type AuditCard = keyof typeof AUDIT_CARD_FILTERS;
+
 export function summarizeAuditLogs(logs: any[], today: string) {
   const list = logs || [];
-  return {
-    total: list.length,
-    today: list.filter(l => l?.created_at && companyDateStr(l.created_at) === today).length,
-    admin: list.filter(l => actorRole(l) === 'Admin').length,
-    hr: list.filter(l => actorRole(l) === 'HR').length,
-    security: list.filter(l => String(l?.module || '').toUpperCase() === 'SECURITY').length,
-    critical: list.filter(l => String(l?.metadata?.severity || '').toLowerCase() === 'critical').length,
-  };
+  const n = (k: AuditCard) => list.filter(l => AUDIT_CARD_FILTERS[k](l, today)).length;
+  return { total: n('total'), today: n('today'), admin: n('admin'), hr: n('hr'), security: n('security'), critical: n('critical') };
+}
+
+/** Log entries behind one summary counter, as display rows (read-only). */
+export function auditCardRows(logs: any[], today: string, card: AuditCard): Record<string, any>[] {
+  return (logs || []).filter(l => AUDIT_CARD_FILTERS[card](l, today)).map(l => ({
+    __key: l.id,
+    when: l.created_at ? new Date(l.created_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—',
+    actor: l.employees ? `${l.employees.first_name || ''} ${l.employees.last_name || ''}`.trim() : 'System',
+    role: actorRole(l), module: l.module || '—', action: l.action || '—', description: l.description || '—',
+    severity: l.metadata?.severity || l.severity || '—', result: l.result || '—',
+  }));
 }

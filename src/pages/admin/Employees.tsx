@@ -13,6 +13,11 @@ import { salaryService } from '../../services/payroll/salaryService';
 import { payrollService } from '../../services/payroll/payrollService';
 import SalaryEditor from '../../components/SalaryEditor';
 import { exportService } from '../../services/export/exportService';
+import { supabase } from '../../lib/supabase';
+import { companyDateStr } from '../../utils/companyDate';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps, EMPLOYEE_COLUMNS } from '../../services/common/cardDetails';
+import { employeeCards, type EmployeeCard } from '../../services/employees/employeeCardRules';
 
 const AdminEmployees: React.FC = () => {
   const navigate = useNavigate();
@@ -30,6 +35,12 @@ const AdminEmployees: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState('All');
   
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // Summary-card details (read-only): approved leave / WFH covering today
+  const [todayLeaves, setTodayLeaves] = useState<any[]>([]);
+  const [todayWfh, setTodayWfh] = useState<any[]>([]);
+  const [cardError, setCardError] = useState<string | null>(null);
+  const [openCard, setOpenCard] = useState<EmployeeCard | null>(null);
+  const today = companyDateStr();
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
   // Drawers & Modals
@@ -70,6 +81,14 @@ const AdminEmployees: React.FC = () => {
     if (offRes.data) setOffices(offRes.data);
     if (roleRes.data) setRoles(roleRes.data);
     if (shiftRes.data) setShifts(shiftRes.data);
+    const [leaveRes, wfhRes] = await Promise.all([
+      supabase.from('leave_requests').select('employee_id, start_date, end_date, leave_types(name)')
+        .eq('status', 'APPROVED').lte('start_date', today).gte('end_date', today),
+      supabase.from('wfh_requests').select('employee_id, request_date').eq('status', 'APPROVED').eq('request_date', today),
+    ]);
+    setTodayLeaves((leaveRes.data as any[]) || []);
+    setTodayWfh((wfhRes.data as any[]) || []);
+    setCardError(leaveRes.error?.message || wfhRes.error?.message || null);
     setLoading(false);
   };
 
@@ -83,6 +102,7 @@ const AdminEmployees: React.FC = () => {
   };
 
   // Filter Logic
+  const cards = employeeCards(employees, todayLeaves, todayWfh, today);
   const filteredEmployees = employees.filter(emp => {
     const searchString = `${emp.first_name} ${emp.last_name} ${emp.employee_code} ${emp.email}`.toLowerCase();
     const matchesSearch = searchString.includes(search.toLowerCase());
@@ -309,29 +329,29 @@ const AdminEmployees: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="tracking-kpi-card" onClick={() => setFilterStatus('All')} style={{ cursor: 'pointer', borderColor: filterStatus==='All' ? 'var(--primary-300)' : '' }}>
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Employees', () => { setFilterStatus('All'); setOpenCard('total'); })} style={{ cursor: 'pointer', borderColor: filterStatus==='All' ? 'var(--primary-300)' : '' }}>
             <div className="sc-header"><div className="sc-icon"><Users size={18} /></div></div>
-            <div className="sc-val">{employees.length}</div>
+            <div className="sc-val">{cards.total.count}</div>
             <div className="sc-title">Total Employees</div>
           </div>
-          <div className="tracking-kpi-card" onClick={() => setFilterStatus('ACTIVE')} style={{ cursor: 'pointer', borderColor: filterStatus==='ACTIVE' ? 'var(--success-300)' : '' }}>
+          <div className="tracking-kpi-card" {...clickableCardProps('Active', () => { setFilterStatus('ACTIVE'); setOpenCard('active'); })} style={{ cursor: 'pointer', borderColor: filterStatus==='ACTIVE' ? 'var(--success-300)' : '' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-100)', color: 'var(--success)' }}><UserCheck size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--success)' }}>{employees.filter(e => e.status === 'ACTIVE').length}</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{cards.active.count}</div>
             <div className="sc-title">Active</div>
           </div>
-          <div className="tracking-kpi-card" onClick={() => setFilterStatus('INACTIVE')} style={{ cursor: 'pointer', borderColor: filterStatus==='INACTIVE' ? 'var(--gray-300)' : '' }}>
+          <div className="tracking-kpi-card" {...clickableCardProps('Inactive', () => { setFilterStatus('INACTIVE'); setOpenCard('inactive'); })} style={{ cursor: 'pointer', borderColor: filterStatus==='INACTIVE' ? 'var(--gray-300)' : '' }}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--gray-200)', color: 'var(--gray-700)' }}><UserX size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--gray-700)' }}>{employees.filter(e => e.status === 'INACTIVE').length}</div>
+            <div className="sc-val" style={{ color: 'var(--gray-700)' }}>{cards.inactive.count}</div>
             <div className="sc-title">Inactive</div>
           </div>
-          <div className="tracking-kpi-card" onClick={() => setFilterStatus('On Leave')} style={{ cursor: 'pointer', borderColor: filterStatus==='On Leave' ? 'var(--warning-300)' : '' }}>
+          <div className="tracking-kpi-card" {...clickableCardProps('On Leave', () => setOpenCard('onLeave'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-100)', color: 'var(--warning)' }}><CalendarOff size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>0</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>{cardError ? '—' : cards.onLeave.count}</div>
             <div className="sc-title">On Leave</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('WFH Today', () => setOpenCard('wfhToday'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}><Home size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>0</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{cardError ? '—' : cards.wfhToday.count}</div>
             <div className="sc-title">WFH Today</div>
           </div>
         </div>
@@ -936,6 +956,24 @@ const AdminEmployees: React.FC = () => {
         .skeleton { background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%); background-size: 200% 100%; animation: skeleton-loading 1.5s infinite; }
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
+      {openCard && (() => {
+        const meta: Record<EmployeeCard, { title: string; extra: { key: string; label: string }[]; empty: string; explain: string }> = {
+          total: { title: 'Total Employees', extra: [{ key: 'status', label: 'Status' }], empty: 'No employees are visible to you.', explain: 'Every employee record returned by the employee directory.' },
+          active: { title: 'Active Employees', extra: [{ key: 'status', label: 'Status' }], empty: 'No active employees.', explain: 'Employees whose status is ACTIVE.' },
+          inactive: { title: 'Inactive Employees', extra: [{ key: 'status', label: 'Status' }], empty: 'No inactive employees.', explain: 'Employees whose status is INACTIVE.' },
+          onLeave: { title: 'On Leave Today', extra: [{ key: 'leaveType', label: 'Leave Type' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }], empty: 'No employee is on approved leave today.', explain: `Employees with an APPROVED leave request covering ${today} (Asia/Kolkata). Pending requests are not counted; each employee is counted once.` },
+          wfhToday: { title: 'WFH Today', extra: [{ key: 'date', label: 'Date' }, { key: 'status', label: 'Employee Status' }], empty: 'No employee has approved WFH today.', explain: `Employees with an APPROVED WFH request dated ${today} (Asia/Kolkata). Each employee is counted once.` },
+        };
+        const m = meta[openCard];
+        const needsLeaveData = openCard === 'onLeave' || openCard === 'wfhToday';
+        return (
+          <RecordsModal open title={m.title} subtitle={needsLeaveData ? `Date: ${today}` : undefined}
+            total={cards[openCard].count} totalLabel="Employees"
+            columns={[...EMPLOYEE_COLUMNS, ...m.extra]} rows={cards[openCard].rows}
+            loading={loading} error={needsLeaveData ? cardError : null}
+            emptyMessage={m.empty} explanation={[m.explain]} onClose={() => setOpenCard(null)} />
+        );
+      })()}
     </div>
   );
 };

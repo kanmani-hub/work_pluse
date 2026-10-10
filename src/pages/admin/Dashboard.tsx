@@ -9,7 +9,9 @@ import {
 import { supabase } from '../../lib/supabase';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { companyDateStr } from '../../utils/companyDate';
-import { computeDashboardStats } from '../../services/admin/dashboardRules';
+import { computeDashboardStats, dashboardCardDetails, type DashboardCard } from '../../services/admin/dashboardRules';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps, EMPLOYEE_COLUMNS } from '../../services/common/cardDetails';
 
 const AdminDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -33,6 +35,9 @@ const AdminDashboard: React.FC = () => {
   const [permReqs, setPermReqs] = useState<any[]>([]);
   const [liveStatus, setLiveStatus] = useState<any[]>([]);
   const [shifts, setShifts] = useState<any[]>([]);
+  // Rows behind the KPI cards (same data and sets as the counts)
+  const [cardRows, setCardRows] = useState<Record<DashboardCard, any[]>>({ employees: [], working: [], pending: [], onLeave: [] });
+  const [openCard, setOpenCard] = useState<DashboardCard | null>(null);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -42,15 +47,16 @@ const AdminDashboard: React.FC = () => {
         const today = companyDateStr();
         const queries = await Promise.all([
           // Same eligibility as Admin → Attendance / Reports: ACTIVE and role is not ADMIN (see dashboardRules)
-          supabase.from('employees').select('id, status, employment_type, office_id, role:role_id(name)').eq('status', 'ACTIVE'),
-          supabase.from('wfh_requests').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
-          supabase.from('leave_requests').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
-          supabase.from('permission_requests').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
+          supabase.from('employees').select('id, status, employment_type, office_id, role:role_id(name), first_name, last_name, employee_code, departments(name), office:office_id(name)').eq('status', 'ACTIVE'),
+          // Pending requests: the rows themselves (their number is the Pending Action count)
+          supabase.from('wfh_requests').select('id, employee_id, request_date, status, employees!wfh_requests_employee_id_fkey(first_name, last_name, employee_code, departments(name))').eq('status', 'PENDING'),
+          supabase.from('leave_requests').select('id, employee_id, start_date, end_date, status, leave_types(name), employees!leave_requests_employee_id_fkey(first_name, last_name, employee_code, departments(name))').eq('status', 'PENDING'),
+          supabase.from('permission_requests').select('id, employee_id, permission_date, start_time, end_time, status, employees!permission_requests_employee_id_fkey(first_name, last_name, employee_code, departments(name))').eq('status', 'PENDING'),
           supabase.from('attendance').select('employee_id, status, clock_in_at, clock_out_at').eq('attendance_date', today),
           supabase.from('shift_templates').select('*').eq('is_active', true).order('start_time'),
           supabase.from('wfh_requests').select('employee_id').eq('status', 'APPROVED').eq('request_date', today),
           // Approved leave covering today (pending requests are not "on leave")
-          supabase.from('leave_requests').select('employee_id, start_date, end_date').eq('status', 'APPROVED').lte('start_date', today).gte('end_date', today)
+          supabase.from('leave_requests').select('employee_id, start_date, end_date, leave_types(name)').eq('status', 'APPROVED').lte('start_date', today).gte('end_date', today)
         ]);
 
         if (queries.some(q => q.error)) {
@@ -59,22 +65,27 @@ const AdminDashboard: React.FC = () => {
 
         const [
           { data: empData },
-          { count: wfhCount },
-          { count: leaveCount },
-          { count: permCount },
+          { data: wfhPendingRows },
+          { data: leavePendingRows },
+          { data: permPendingRows },
           { data: attendanceData },
           { data: shiftsData },
           { data: approvedWfhData },
           { data: approvedLeaveData }
         ] = queries as any[];
 
-        const d = computeDashboardStats({
+        const dashInput = {
           employees: (empData as any[]) || [],
           attendance: (attendanceData as any[]) || [],
           leaves: (approvedLeaveData as any[]) || [],
           approvedWfhToday: (approvedWfhData as any[]) || [],
           today,
-        });
+        };
+        const d = computeDashboardStats(dashInput);
+        const wfhCount = (wfhPendingRows as any[] || []).length;
+        const leaveCount = (leavePendingRows as any[] || []).length;
+        const permCount = (permPendingRows as any[] || []).length;
+        setCardRows(dashboardCardDetails(dashInput, { leave: leavePendingRows || [], wfh: wfhPendingRows || [], permission: permPendingRows || [] }));
 
         setStats({
           employees: d.employees,
@@ -203,7 +214,7 @@ const AdminDashboard: React.FC = () => {
         <div className="bento-grid">
           
           {/* Top KPI row */}
-          <div className="bento-col-3 kpi-card">
+          <div className="bento-col-3 kpi-card" {...clickableCardProps('Total Employees', () => setOpenCard('employees'))}>
             <div className="kpi-header">
               <div className="kpi-icon" style={{ background: 'var(--primary-50)', color: 'var(--accent-primary)' }}><Users size={16} /></div>
               Total Employees
@@ -213,7 +224,7 @@ const AdminDashboard: React.FC = () => {
             </div>
           </div>
           
-          <div className="bento-col-3 kpi-card">
+          <div className="bento-col-3 kpi-card" {...clickableCardProps('Working Now', () => setOpenCard('working'))}>
             <div className="kpi-header">
               <div className="kpi-icon" style={{ background: 'var(--success-50)', color: 'var(--success)' }}><Activity size={16} /></div>
               Working Now
@@ -223,7 +234,7 @@ const AdminDashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="bento-col-3 kpi-card">
+          <div className="bento-col-3 kpi-card" {...clickableCardProps('Pending Action', () => setOpenCard('pending'))}>
             <div className="kpi-header">
               <div className="kpi-icon" style={{ background: 'var(--warning-50)', color: 'var(--warning)' }}><AlertTriangle size={16} /></div>
               Pending Action
@@ -233,7 +244,7 @@ const AdminDashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="bento-col-3 kpi-card">
+          <div className="bento-col-3 kpi-card" {...clickableCardProps('On Leave', () => setOpenCard('onLeave'))}>
             <div className="kpi-header">
               <div className="kpi-icon" style={{ background: 'var(--danger-50)', color: 'var(--danger)' }}><CalendarOff size={16} /></div>
               On Leave
@@ -371,6 +382,25 @@ const AdminDashboard: React.FC = () => {
           
         </div>
       )}
+      <RecordsModal
+        open={openCard !== null}
+        onClose={() => setOpenCard(null)}
+        title={openCard === 'employees' ? 'Total Employees' : openCard === 'working' ? 'Working Now' : openCard === 'pending' ? 'Pending Action' : 'On Leave Today'}
+        subtitle={`Today (${companyDateStr()})`}
+        loading={loading}
+        error={errorState}
+        rows={openCard ? cardRows[openCard] : []}
+        columns={openCard === 'employees' ? [...EMPLOYEE_COLUMNS, { key: 'type', label: 'Employment type' }, { key: 'status', label: 'Status' }]
+          : openCard === 'working' ? [...EMPLOYEE_COLUMNS, { key: 'clockIn', label: 'Clock in' }, { key: 'clockOut', label: 'Clock out' }, { key: 'status', label: 'Status' }]
+          : openCard === 'pending' ? [{ key: 'type', label: 'Request' }, { key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'Date' }, { key: 'status', label: 'Status' },
+              { key: 'module', label: 'Open', format: (v: string) => <button type="button" className="btn btn-outline" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }} onClick={() => navigate(v)}>Review</button> }]
+          : [...EMPLOYEE_COLUMNS, { key: 'leaveType', label: 'Leave type' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }]}
+        emptyMessage={openCard === 'working' ? 'Nobody is clocked in right now.' : openCard === 'pending' ? 'There are no pending requests.' : openCard === 'onLeave' ? 'Nobody is on approved leave today.' : 'No active employees were found.'}
+        explanation={openCard === 'employees' ? ['Active employees whose role is not Admin (the same workforce used by Attendance and Reports).']
+          : openCard === 'working' ? ['Clocked in today and not yet clocked out. Working hours are not shown until the employee clocks out.']
+          : openCard === 'pending' ? ['Leave, WFH and permission requests with status PENDING. Opening this list does not approve or reject anything — use Review to open the module.']
+          : ['Employees with an APPROVED leave covering today. Pending requests are not counted.']}
+      />
     </div>
   );
 };

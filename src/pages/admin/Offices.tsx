@@ -7,6 +7,9 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { locationAutocomplete, type LocationSuggestion } from '../../services/location/locationAutocomplete';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps, EMPLOYEE_COLUMNS } from '../../services/common/cardDetails';
+import { officeCards, type OfficeCard } from '../../services/common/orgCardRules';
 
 const AdminOffices: React.FC = () => {
   const navigate = useNavigate();
@@ -14,6 +17,9 @@ const AdminOffices: React.FC = () => {
   const [toast, setToast] = useState('');
   
   const [offices, setOffices] = useState<any[]>([]);
+  const [cardError, setCardError] = useState<string | null>(null);
+  const [openCard, setOpenCard] = useState<OfficeCard | null>(null);
+  const cards = officeCards(offices);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterGeofence, setFilterGeofence] = useState('All');
@@ -45,7 +51,8 @@ const AdminOffices: React.FC = () => {
   // Fetch offices from Supabase
   const fetchOffices = async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('offices').select('*, employees(id)').order('name');
+    const { data, error } = await supabase.from('offices').select('*, employees(id, first_name, last_name, employee_code, status, departments(name))').order('name');
+    setCardError(error?.message || null);
     if (data) {
       setOffices(data.map((o: any) => ({
         id: o.id,
@@ -55,6 +62,7 @@ const AdminOffices: React.FC = () => {
         lat: o.latitude,
         lng: o.longitude,
         employees: o.employees ? o.employees.length : 0,
+        members: o.employees || [],
         radius: o.geofence_radius || 200,
         geofence: o.geofence_radius != null, // Assuming radius existence means enabled for now, or true if there's a flag
         status: o.is_active ? 'Active' : 'Inactive'
@@ -184,24 +192,24 @@ const AdminOffices: React.FC = () => {
         </div>
       ) : (
         <div className="kpi-grid">
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Offices', () => setOpenCard('total'))}>
             <div className="sc-header"><div className="sc-icon"><Building2 size={18} /></div></div>
-            <div className="sc-val">{offices.length}</div>
+            <div className="sc-val">{cards.total.count}</div>
             <div className="sc-title">Total Offices</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Active Offices', () => setOpenCard('active'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--success-100)', color: 'var(--success)' }}><CheckCircle2 size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--success)' }}>{offices.filter(o => o.status === 'Active').length}</div>
+            <div className="sc-val" style={{ color: 'var(--success)' }}>{cards.active.count}</div>
             <div className="sc-title">Active Offices</div>
           </div>
-          <div className="tracking-kpi-card" onClick={() => navigate('/admin/employees')} style={{ cursor: 'pointer' }}>
+          <div className="tracking-kpi-card" {...clickableCardProps('Employees Assigned', () => setOpenCard('employees'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--primary-100)', color: 'var(--primary-700)' }}><Users size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{offices.reduce((acc, o) => acc + o.employees, 0)}</div>
+            <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{cards.employees.count}</div>
             <div className="sc-title">Employees Assigned</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Geofencing Enabled', () => setOpenCard('geofence'))}>
             <div className="sc-header"><div className="sc-icon" style={{ backgroundColor: 'var(--warning-100)', color: 'var(--warning)' }}><MapPin size={18} /></div></div>
-            <div className="sc-val" style={{ color: 'var(--warning)' }}>{offices.filter(o => o.geofence).length}</div>
+            <div className="sc-val" style={{ color: 'var(--warning)' }}>{cards.geofence.count}</div>
             <div className="sc-title">Geofencing Enabled</div>
           </div>
         </div>
@@ -745,6 +753,18 @@ const AdminOffices: React.FC = () => {
         .skeleton { background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%); background-size: 200% 100%; animation: skeleton-loading 1.5s infinite; }
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
+      {openCard && (() => {
+        const officeCols = [{ key: 'office', label: 'Office' }, { key: 'address', label: 'Address' }, { key: 'status', label: 'Status' }, { key: 'geofence', label: 'Geofence' }, { key: 'employees', label: 'Employees', align: 'right' as const }];
+        const meta: Record<OfficeCard, { title: string; label: string; cols: any[]; empty: string; explain: string }> = {
+          total: { title: 'Total Offices', label: 'Offices', cols: officeCols, empty: 'No offices exist yet.', explain: 'Every office record, active or inactive.' },
+          active: { title: 'Active Offices', label: 'Offices', cols: officeCols, empty: 'No active offices.', explain: 'Offices marked active.' },
+          employees: { title: 'Employees Assigned to Offices', label: 'Employees', cols: [...EMPLOYEE_COLUMNS, { key: 'status', label: 'Status' }], empty: 'No employees are assigned to an office.', explain: 'Every employee linked to an office (all statuses) — the sum of the Employees column in the office table.' },
+          geofence: { title: 'Geofencing Enabled', label: 'Offices', cols: officeCols, empty: 'No office has a geofence radius set.', explain: 'Offices with a geofence radius configured (the page treats a saved radius as enabled).' },
+        };
+        const m = meta[openCard];
+        return <RecordsModal open title={m.title} total={cards[openCard].count} totalLabel={m.label} columns={m.cols} rows={cards[openCard].rows}
+          loading={loading} error={cardError} emptyMessage={m.empty} explanation={[m.explain]} onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

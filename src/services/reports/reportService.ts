@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { companyDateStr } from '../../utils/companyDate';
 import { computeAttendanceStats, averageRequiredMinutes } from './reportRules';
+import { reportCardRecords } from './reportCardRules';
 import { loadStoredAppSettings } from '../settings/settingsPatch';
 import { appSettingsService } from '../settings/appSettingsService';
 
@@ -10,7 +11,7 @@ export const reportService = {
    */
   async getDashboardMetrics(startDate: string, endDate: string, departmentId?: string, officeId?: string) {
     // Basic employee count and filter IDs
-    let empQuery = supabase.from('employees').select('id, status, role:role_id(name), departments(name)', { count: 'exact' }).eq('status', 'ACTIVE');
+    let empQuery = supabase.from('employees').select('id, status, first_name, last_name, employee_code, role:role_id(name), departments(name), office:office_id(name)', { count: 'exact' }).eq('status', 'ACTIVE');
     if (departmentId && departmentId !== 'All') empQuery = empQuery.eq('department_id', departmentId);
     if (officeId && officeId !== 'All') empQuery = empQuery.eq('office_id', officeId);
     
@@ -32,7 +33,7 @@ export const reportService = {
 
     // Fetch attendance for the range
     let attQuery = supabase.from('attendance')
-      .select('id, employee_id, status, clock_in_at, late_minutes, early_logout_minutes, worked_hours, required_hours, attendance_date, employees!inner(departments(name)), shift_templates(required_hours, start_time, end_time, crosses_midnight)')
+      .select('id, employee_id, status, clock_in_at, clock_out_at, late_minutes, early_logout_minutes, worked_hours, required_hours, attendance_date, employees!inner(first_name, last_name, employee_code, departments(name), office:office_id(name)), shift_templates(required_hours, start_time, end_time, crosses_midnight)')
       .gte('attendance_date', startDate)
       .lte('attendance_date', endDate);
     if (hasFilter) attQuery = attQuery.in('employee_id', empIds);
@@ -44,7 +45,7 @@ export const reportService = {
 
     // Fetch WFH for the range
     let wfhQuery = supabase.from('wfh_requests')
-      .select('employee_id, request_date', { count: 'exact' })
+      .select('employee_id, request_date, employees!wfh_requests_employee_id_fkey(first_name, last_name, employee_code, departments(name))', { count: 'exact' })
       .eq('status', 'APPROVED')
       .gte('request_date', startDate)
       .lte('request_date', endDate);
@@ -54,7 +55,7 @@ export const reportService = {
     // Fetch approved leave OVERLAPPING the range (a leave that starts before or ends after the
     // range still covers days inside it)
     let leaveQuery = supabase.from('leave_requests')
-      .select('employee_id, start_date, end_date, is_half_day')
+      .select('employee_id, start_date, end_date, is_half_day, leave_types(name), employees!leave_requests_employee_id_fkey(first_name, last_name, employee_code, departments(name))')
       .eq('status', 'APPROVED')
       .lte('start_date', endDate)
       .gte('end_date', startDate);
@@ -72,7 +73,7 @@ export const reportService = {
     const startMonth = new Date(startDate).getMonth() + 1;
     const startYear = new Date(startDate).getFullYear();
     let payrollQuery = supabase.from('payroll')
-      .select('net_salary')
+      .select('id, employee_id, status, gross_salary, total_deductions, net_salary, employees!payroll_employee_id_fkey(first_name, last_name, employee_code, departments(name))')
       .in('status', ['APPROVED', 'PAYMENT_PENDING', 'PAID'])
       .eq('payroll_month', startMonth)
       .eq('payroll_year', startYear);
@@ -166,6 +167,11 @@ export const reportService = {
       payrollProcessed: `₹${(totalPayroll / 100000).toFixed(1)}L`,
       departmentAttendance,
       attendanceTrend,
+      // Records behind each summary card (same rows and conditions as the numbers above)
+      cardRecords: reportCardRecords({
+        employees: (emps as any[]) || [], attendance: (attendanceLogs as any[]) || [], wfh: (wfhRows as any[]) || [],
+        leaves: (leaveRows as any[]) || [], payroll: (payrollData as any[]) || [], days: stats.days,
+      }),
       // Employee-days in the selected range (present / approved-WFH requests / full-day leave / absent)
       workforceDistribution: {
         present: Math.max(0, stats.presentDays - stats.wfhPresentDays), // present in office

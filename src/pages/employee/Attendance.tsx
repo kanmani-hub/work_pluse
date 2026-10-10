@@ -15,6 +15,9 @@ import { selectCurrentAttendance } from '../../services/attendance/currentAttend
 import { companyDateStr, previousDateStr, COMPANY_TIMEZONE } from '../../utils/companyDate';
 import { attendanceActionMessage } from '../../services/attendance/employeeDashboardRules';
 import { supabase } from '../../lib/supabase';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps } from '../../services/common/cardDetails';
+import { myAttendanceCards, type MyAttendanceCard } from '../../services/attendance/employeeAttendanceCards';
 
 const SearchIcon = ({size, color}: any) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
 
@@ -31,7 +34,7 @@ const EmployeeAttendance: React.FC = () => {
   const [todayAttendance, setTodayAttendance] = useState<any>(null);
   const [todayBreaks, setTodayBreaks] = useState<any[]>([]);
   const [currentShift, setCurrentShift] = useState<any>(null);
-  const [summaryStats, setSummaryStats] = useState({ workingDays: 0, present: 0, late: 0, halfDay: 0, leave: 0, wfh: 0, totalHours: '0h 0m' });
+  const [openCard, setOpenCard] = useState<MyAttendanceCard | null>(null);
   const [effectiveTime, setEffectiveTime] = useState(0);
   const [breakSeconds, setBreakSeconds] = useState(0);
   const [activeBreakInfo, setActiveBreakInfo] = useState<any>(null);
@@ -53,42 +56,14 @@ const EmployeeAttendance: React.FC = () => {
   const [clockOutBusy, setClockOutBusy] = useState(false);
 
 
-  useEffect(() => {
-    let workingDays = 0, present = 0, late = 0, halfDay = 0, leave = 0;
-    let totalSeconds = 0;
-    let totalLateMins = 0;
-
-    const currentMonthHistory = history.filter(item => {
-      const d = new Date(item.rawDate);
-      return d.getMonth() === currentDate.getMonth() && d.getFullYear() === currentDate.getFullYear();
-    });
-
-    currentMonthHistory.forEach(row => {
-      workingDays++;
-      if (['PRESENT', 'COMPLETED', 'WORKING', 'ON_BREAK', 'LATE', 'EARLY LOGOUT', 'HALF_DAY'].includes(row.status?.toUpperCase())) present++;
-      if (row.lateMin > 0) {
-        late++;
-        totalLateMins += row.lateMin;
-      }
-      if (row.originalStatus === 'HALF DAY' || row.is_half_day) halfDay++;
-      if (row.originalStatus === 'LEAVE' || row.status === 'LEAVE') leave++;
-
-      if (row.worked_hours) {
-         totalSeconds += Math.floor(row.worked_hours * 3600);
-      } else {
-         const match = String(row.hours).match(/(\d+)h\s*(\d+)m/);
-         if (match) {
-            totalSeconds += (parseInt(match[1]) * 3600) + (parseInt(match[2]) * 60);
-         }
-      }
-    });
-
-    const totalH = Math.floor(totalSeconds / 3600);
-    const totalM = Math.floor((totalSeconds % 3600) / 60);
-    
-    // eslint-disable-next-line react-compiler/react-compiler
-    setSummaryStats({ workingDays, present, late, halfDay, leave, totalHours: `${totalH}h ${totalM}m`, totalLateMinutes: totalLateMins } as any);
-  }, [history, currentDate]);
+  // Month cards and their detail rows come from one builder (own records only)
+  const monthKey = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
+  const myCards = myAttendanceCards(history, monthKey);
+  const summaryStats = {
+    workingDays: myCards.cards.workingDays.count, present: myCards.cards.present.count, late: myCards.cards.late.count,
+    totalLateMinutes: myCards.totalLateMinutes, halfDay: myCards.cards.halfDay.count, leave: myCards.cards.leave.count,
+    wfh: myCards.cards.wfh.count, totalHours: myCards.totalHoursLabel,
+  };
 
   const currentMonthStr = currentDate.toLocaleString('en-US', { month: 'long', year: 'numeric' });
   // Clock In is allowed inside the office, or on an approved WFH day (locationService returns 'WFH')
@@ -766,35 +741,35 @@ const EmployeeAttendance: React.FC = () => {
         </div>
       ) : (
         <div className="tracking-kpi-grid">
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Working Days', () => setOpenCard('workingDays'))}>
             <div className="sc-title">Working Days</div>
             <div className="sc-val">{summaryStats.workingDays}</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Present', () => setOpenCard('present'))}>
             <div className="sc-title">Present</div>
             <div className="sc-val" style={{ color: 'var(--success)' }}>{summaryStats.present}</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Late', () => setOpenCard('late'))}>
             <div className="sc-title">Late</div>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>{summaryStats.late}</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Late Minutes', () => setOpenCard('lateMinutes'))}>
             <div className="sc-title">Total Late Minutes</div>
-            <div className="sc-val" style={{ color: 'var(--danger)' }}>{(summaryStats as any).totalLateMinutes || 0}m</div>
+            <div className="sc-val" style={{ color: 'var(--danger)' }}>{summaryStats.totalLateMinutes}m</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Half Day', () => setOpenCard('halfDay'))}>
             <div className="sc-title">Half Day</div>
             <div className="sc-val" style={{ color: '#ca8a04' }}>{summaryStats.halfDay}</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Leave', () => setOpenCard('leave'))}>
             <div className="sc-title">Leave</div>
             <div className="sc-val" style={{ color: '#2563eb' }}>{summaryStats.leave}</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('WFH', () => setOpenCard('wfh'))}>
             <div className="sc-title">WFH</div>
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{summaryStats.wfh}</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Hours', () => setOpenCard('totalHours'))}>
             <div className="sc-title">Total Hours</div>
             <div className="sc-val">{summaryStats.totalHours}</div>
           </div>
@@ -1279,6 +1254,23 @@ const EmployeeAttendance: React.FC = () => {
           to { transform: rotate(360deg); }
         }
       `}</style>
+      {openCard && (() => {
+        const meta: Record<MyAttendanceCard, [string, React.ReactNode, string, string]> = {
+          workingDays: ['Working Days', summaryStats.workingDays, 'Days', 'Your attendance records in this month.'],
+          present: ['Present', summaryStats.present, 'Days', 'Days with a present / working / completed / late / early-logout / half-day status.'],
+          late: ['Late', summaryStats.late, 'Days', 'Days with recorded late minutes (after the shift grace period, as stored at clock-in).'],
+          lateMinutes: ['Total Late Minutes', `${summaryStats.totalLateMinutes}m`, 'Late minutes', 'Sum of the late minutes of the days listed.'],
+          halfDay: ['Half Day', summaryStats.halfDay, 'Days', 'Days marked as half day.'],
+          leave: ['Leave', summaryStats.leave, 'Days', 'Attendance records with status LEAVE.'],
+          wfh: ['WFH', summaryStats.wfh, 'Days', 'Attendance records in WFH mode.'],
+          totalHours: ['Total Hours', summaryStats.totalHours, 'Worked hours', 'Sum of the stored worked hours of the days listed. Days without a clock-out add nothing; hours are never estimated.'],
+        };
+        const [title, total, label, explain] = meta[openCard];
+        return <RecordsModal open title={title} subtitle={currentMonthStr} total={total} totalLabel={label}
+          columns={[{ key: 'date', label: 'Date' }, { key: 'shift', label: 'Shift' }, { key: 'mode', label: 'Mode' }, { key: 'clockIn', label: 'Clock In' }, { key: 'clockOut', label: 'Clock Out' }, { key: 'hours', label: 'Worked' }, { key: 'lateMinutes', label: 'Late (min)', align: 'right' }, { key: 'status', label: 'Status' }]}
+          rows={myCards.cards[openCard].rows} loading={loading} emptyMessage="No matching attendance records this month."
+          explanation={[explain, 'Only your own attendance records are shown.']} onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

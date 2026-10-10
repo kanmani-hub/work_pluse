@@ -11,6 +11,10 @@ import {
 import { wfhService } from '../../services/wfh/wfhService';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { useAuth } from '../../context/AuthContext';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps } from '../../services/common/cardDetails';
+import { companyDateStr } from '../../utils/companyDate';
+import { wfhCards, type WfhCard } from '../../services/common/requestCardRules';
 
 const AdminWfh: React.FC = () => {
   const { employee } = useAuth();
@@ -37,10 +41,14 @@ const AdminWfh: React.FC = () => {
   const [reasonForm, setReasonForm] = useState('');
   
   const [requests, setRequests] = useState<any[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
+  const [openCard, setOpenCard] = useState<WfhCard | null>(null);
+  const today = companyDateStr();
 
   const fetchRequests = async () => {
     setLoading(true);
-    const { data } = await wfhService.getWFHRequests();
+    const { data, error } = await wfhService.getWFHRequests();
+    setListError(error ? (error as any).message || 'Unknown error' : null);
     if (data) {
       setRequests(data.map((r: any) => ({
         id: r.id,
@@ -60,7 +68,11 @@ const AdminWfh: React.FC = () => {
         approvedBy: r.reviewed_by ? 'Admin' : '-',
         halfDay: false,
         conflicts: [],
-        rejectReason: r.reviewer_remarks
+        rejectReason: r.reviewer_remarks,
+        // Raw values for summary-card details
+        requestDate: r.request_date,
+        requested_at: r.requested_at,
+        reviewed_at: r.reviewed_at
       })));
     }
     setLoading(false);
@@ -182,37 +194,31 @@ const AdminWfh: React.FC = () => {
           {[...Array(6)].map((_, i) => <div key={i} className="skeleton" style={{ height: '70px', borderRadius: 'var(--radius-md)' }} />)}
         </div>
       ) : (() => {
-        const kpis = {
-          totalRequests: requests.length,
-          pending: pendingRequests.length,
-          approvedToday: requests.filter(r => r.status === 'APPROVED' && r.date === new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })).length,
-          activeWfhToday: requests.filter(r => r.status === 'APPROVED' && r.date === new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })).length,
-          alerts: requests.filter(r => r.conflicts?.length > 0).length,
-          rejected: requests.filter(r => r.status === 'REJECTED').length
-        };
+        const wc = wfhCards(requests, today);
+        const kpis = { totalRequests: wc.total.count, pending: wc.pending.count, approvedToday: wc.approvedToday.count, activeWfhToday: wc.activeToday.count, alerts: wc.alerts.count, rejected: wc.rejected.count };
         return (
         <div className="kpi-grid">
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Requests', () => setOpenCard('total'))}>
             <div className="sc-val">{kpis.totalRequests}</div>
             <div className="sc-title">Total Requests</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => { setView('Requests'); setFilterStatus('PENDING'); }}>
+          <div className="summary-card-small" {...clickableCardProps('Pending Requests', () => { setView('Requests'); setFilterStatus('PENDING'); setOpenCard('pending'); })}>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.pending}</div>
             <div className="sc-title">Pending Requests</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Approved Today', () => setOpenCard('approvedToday'))}>
             <div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.approvedToday}</div>
             <div className="sc-title">Approved Today</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Active WFH Today', () => setOpenCard('activeToday'))}>
             <div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.activeWfhToday}</div>
             <div className="sc-title">Active WFH Today</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Policy Alerts', () => setOpenCard('alerts'))}>
             <div className="sc-val" style={{ color: 'var(--danger)' }}>{kpis.alerts}</div>
             <div className="sc-title">Policy Alerts</div>
           </div>
-          <div className="summary-card-small cursor-pointer" onClick={() => { setView('Requests'); setFilterStatus('REJECTED'); }}>
+          <div className="summary-card-small" {...clickableCardProps('Rejected', () => { setView('Requests'); setFilterStatus('REJECTED'); setOpenCard('rejected'); })}>
             <div className="sc-val" style={{ color: 'var(--text-secondary)' }}>{kpis.rejected}</div>
             <div className="sc-title">Rejected</div>
           </div>
@@ -619,6 +625,19 @@ EmpC     WFH WFH  —    —    —`}
         .skeleton { background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%); background-size: 200% 100%; animation: skeleton-loading 1.5s infinite; }
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
+      {openCard && (() => {
+        const m = ({
+          total: { title: 'Total WFH Requests', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'WFH Date' }, { key: 'status', label: 'Status' }, { key: 'reason', label: 'Reason' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No WFH requests yet.', explain: 'Every WFH request visible to you, all statuses.' },
+          pending: { title: 'Pending WFH Requests', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'WFH Date' }, { key: 'status', label: 'Status' }, { key: 'reason', label: 'Reason' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No WFH requests are awaiting approval.', explain: 'Requests with status PENDING. Approve or reject them from the request list.' },
+          approvedToday: { title: 'WFH Approved Today', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'WFH Date' }, { key: 'status', label: 'Status' }, { key: 'reason', label: 'Reason' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No WFH request was approved today.', explain: 'Requests with status APPROVED whose review (approval) happened on today’s company date.' },
+          activeToday: { title: 'Active WFH Today', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'WFH Date' }, { key: 'status', label: 'Status' }, { key: 'reason', label: 'Reason' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No employee has approved WFH today.', explain: 'Requests with status APPROVED for today’s date.' },
+          alerts: { title: 'WFH Policy Alerts', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'WFH Date' }, { key: 'status', label: 'Status' }, { key: 'reason', label: 'Reason' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No policy alerts.', explain: 'Requests flagged with a policy conflict.', notes: ['No WFH policy-conflict rule is configured, so no request is currently flagged.'] },
+          rejected: { title: 'Rejected WFH Requests', cols: [{ key: 'employee', label: 'Employee' }, { key: 'code', label: 'Employee ID' }, { key: 'department', label: 'Department' }, { key: 'date', label: 'WFH Date' }, { key: 'status', label: 'Status' }, { key: 'reason', label: 'Reason' }, { key: 'submitted', label: 'Submitted' }, { key: 'reviewed', label: 'Reviewed' }, { key: 'remarks', label: 'Remarks' }], empty: 'No rejected WFH requests.', explain: 'Requests with status REJECTED.' },
+        } as Record<WfhCard, any>)[openCard];
+        return <RecordsModal open title={m.title} subtitle={`Company date: ${today} (Asia/Kolkata)`} total={m.total ?? wfhCards(requests, today)[openCard].count} totalLabel={m.label || 'Requests'}
+          columns={m.cols} rows={wfhCards(requests, today)[openCard].rows} loading={loading} error={listError} emptyMessage={m.empty}
+          explanation={[m.explain, 'Read-only view: opening it does not approve, reject or change any request.']} notes={m.notes} onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

@@ -15,12 +15,15 @@ export const departmentService = {
       .from('departments')
       .select(`
         *,
-        employees:employees(id)
+        employees:employees(id, first_name, last_name, employee_code, status, office:office_id(name))
       `)
       .order('name');
       
     // Fetch unassigned count
-    const { count: unassigned } = await supabase.from('employees').select('*', { count: 'exact', head: true }).is('department_id', null).eq('status', 'ACTIVE');
+    const { data: unassignedRows, error: unassignedError } = await supabase.from('employees')
+      .select('id, first_name, last_name, employee_code, status, office:office_id(name)')
+      .is('department_id', null).eq('status', 'ACTIVE');
+    const unassignedEmployees = (unassignedRows as any[]) || [];
       
     if (error) {
       console.error('Error fetching departments:', error);
@@ -33,7 +36,7 @@ export const departmentService = {
       employeeCount: d.employees ? d.employees.length : 0
     })) || [];
     
-    return { data: mapped, error: null, unassigned: unassigned || 0 };
+    return { data: mapped, error: null, unassigned: unassignedEmployees.length, unassignedEmployees, unassignedError };
   },
 
   async createDepartment(department: { name: string; description: string | null; is_active: boolean }) {

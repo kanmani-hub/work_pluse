@@ -9,6 +9,12 @@ import {
 import { exportService } from '../../services/export/exportService';
 import { payrollService } from '../../services/payroll/payrollService';
 import { unresolvedReviewItems, parsePayrollSnapshot } from '../../services/payroll/payrollRules';
+import { buildDailyMetrics } from '../../services/payroll/dailyMetricDetails';
+import type { MetricKey } from '../../services/payroll/dailyMetricDetails';
+import DailyMetricModal from '../../components/payroll/DailyMetricModal';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps, EMPLOYEE_COLUMNS } from '../../services/common/cardDetails';
+import { payrollMonthCards, clockedInCard, type PayrollMonthCard } from '../../services/payroll/payrollCardRules';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { payslipService } from '../../services/payroll/payslipService';
 import { payrollSettingsService, type PayrollSettings } from '../../services/payroll/payrollSettingsService';
@@ -56,6 +62,9 @@ const AdminPayroll: React.FC = () => {
   
   // Daily specific detail modal
   const [dailyDetailModal, setDailyDetailModal] = useState<any>(null);
+  // Summary-card breakdown (Today / Custom date view); independent of the per-employee popup
+  const [metricModal, setMetricModal] = useState<MetricKey | null>(null);
+  const [monthCard, setMonthCard] = useState<PayrollMonthCard | 'clockedIn' | null>(null);
 
   const [generateModal, setGenerateModal] = useState(false);
   const [paymentModal, setPaymentModal] = useState<any>(null);
@@ -180,6 +189,12 @@ const AdminPayroll: React.FC = () => {
     };
   };
   const kpis = getKPIs();
+  // Month cards and their detail rows share one builder (same filters as getKPIs)
+  const monthCards = payrollMonthCards(employees, monthPayrolls);
+  const clockedIn = clockedInCard(dailyReports);
+  // Card totals and their breakdowns come from the same rows and functions, so they always match
+  const dailyMetrics = buildDailyMetrics(dailyReports);
+  const dailyDateLabel = viewMode === 'TODAY' ? `Today (${new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })})` : `Date: ${customDate}`;
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -519,24 +534,24 @@ const AdminPayroll: React.FC = () => {
         <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', minWidth: 0 }}>
             <div className="kpi-grid">
-              <div className="tracking-kpi-card"><div className="sc-val">{kpis.total}</div><div className="sc-title">Total Employees</div></div>
-              <div className="tracking-kpi-card"><div className="sc-val">{kpis.generated}</div><div className="sc-title">Payroll Generated</div></div>
-              <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('UNDER_REVIEW')}><div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.underReview}</div><div className="sc-title">Under Review</div></div>
-              <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('APPROVED')}><div className="sc-val" style={{ color: '#a855f7' }}>{kpis.approved}</div><div className="sc-title">Approved</div></div>
-              <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('PAYMENT_PENDING')}><div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.paymentPending}</div><div className="sc-title">Payment Pending</div></div>
-              <div className="summary-card-small" style={{cursor:'pointer'}} onClick={() => setFilterStatus('PAID')}><div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.paid}</div><div className="sc-title">Paid</div></div>
+              <div className="tracking-kpi-card" {...clickableCardProps('Total Employees', () => setMonthCard('total'))}><div className="sc-val">{kpis.total}</div><div className="sc-title">Total Employees</div></div>
+              <div className="tracking-kpi-card" {...clickableCardProps('Payroll Generated', () => setMonthCard('generated'))}><div className="sc-val">{kpis.generated}</div><div className="sc-title">Payroll Generated</div></div>
+              <div className="summary-card-small" {...clickableCardProps('Under Review', () => { setFilterStatus('UNDER_REVIEW'); setMonthCard('underReview'); })}><div className="sc-val" style={{ color: 'var(--warning)' }}>{kpis.underReview}</div><div className="sc-title">Under Review</div></div>
+              <div className="summary-card-small" {...clickableCardProps('Approved', () => { setFilterStatus('APPROVED'); setMonthCard('approved'); })}><div className="sc-val" style={{ color: '#a855f7' }}>{kpis.approved}</div><div className="sc-title">Approved</div></div>
+              <div className="summary-card-small" {...clickableCardProps('Payment Pending', () => { setFilterStatus('PAYMENT_PENDING'); setMonthCard('paymentPending'); })}><div className="sc-val" style={{ color: 'var(--primary-700)' }}>{kpis.paymentPending}</div><div className="sc-title">Payment Pending</div></div>
+              <div className="summary-card-small" {...clickableCardProps('Paid', () => { setFilterStatus('PAID'); setMonthCard('paid'); })}><div className="sc-val" style={{ color: 'var(--success)' }}>{kpis.paid}</div><div className="sc-title">Paid</div></div>
             </div>
             
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', width: '100%', minWidth: 0 }}>
-              <div className="tracking-kpi-card">
+              <div className="tracking-kpi-card" {...clickableCardProps('Gross Payroll', () => setMonthCard('gross'))}>
                 <div className="sc-title">Gross Payroll</div>
                 <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--text-primary)' }}>₹{kpis.gross.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
               </div>
-              <div className="tracking-kpi-card">
+              <div className="tracking-kpi-card" {...clickableCardProps('Total Deductions', () => setMonthCard('deductions'))}>
                 <div className="sc-title">Total Deductions</div>
                 <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--danger)' }}>₹{kpis.deductions.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
               </div>
-              <div className="tracking-kpi-card" style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--success)' }}>
+              <div className="tracking-kpi-card" {...clickableCardProps('Net Payroll', () => setMonthCard('net'))} style={{ cursor: 'pointer', backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--success)' }}>
                 <div className="sc-title" style={{ color: 'var(--success)' }}>Net Payroll</div>
                 <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 800, color: 'var(--success)' }}>₹{kpis.net.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
               </div>
@@ -703,40 +718,28 @@ const AdminPayroll: React.FC = () => {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', minWidth: 0 }}>
           
           <div className="kpi-grid">
-            <div className="tracking-kpi-card">
-              <div className="sc-val">{dailyReports.length}</div>
+            <div className="tracking-kpi-card" {...clickableCardProps('Employees Clocked In', () => setMonthCard('clockedIn'))}>
+              <div className="sc-val">{clockedIn.count}</div>
               <div className="sc-title">Employees Clocked In</div>
             </div>
-            <div className="tracking-kpi-card">
-              <div className="sc-val" style={{ color: 'var(--danger)' }}>
-                ₹{dailyReports.reduce((sum, r) => sum + r.lateDeduction, 0).toLocaleString('en-IN')}
+            {([
+              { key: 'late', label: 'Late Deductions', color: 'var(--danger)' },
+              { key: 'break', label: 'Break Overrun Deductions', color: 'var(--danger)' },
+              { key: 'lop', label: 'LOP Impact', color: 'var(--danger)' },
+              { key: 'overtime', label: 'Overtime Pay', color: 'var(--success)' },
+              { key: 'total', label: 'Total Daily Deduction Impact', color: 'var(--danger)', bg: 'var(--danger-50)' },
+            ] as { key: MetricKey; label: string; color: string; bg?: string }[]).map(c => (
+              <div key={c.key} className="tracking-kpi-card" role="button" tabIndex={0}
+                aria-label={`${c.label}: ₹${dailyMetrics[c.key].total.toLocaleString('en-IN')}. Show details`}
+                onClick={() => setMetricModal(c.key)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setMetricModal(c.key); } }}
+                style={{ cursor: 'pointer', ...(c.bg ? { backgroundColor: c.bg } : {}) }}>
+                <div className="sc-val" style={{ color: c.color }}>
+                  ₹{dailyMetrics[c.key].total.toLocaleString('en-IN')}
+                </div>
+                <div className="sc-title">{c.label}</div>
               </div>
-              <div className="sc-title">Late Deductions</div>
-            </div>
-            <div className="tracking-kpi-card">
-              <div className="sc-val" style={{ color: 'var(--danger)' }}>
-                ₹{dailyReports.reduce((sum, r) => sum + r.breakDeduction, 0).toLocaleString('en-IN')}
-              </div>
-              <div className="sc-title">Break Overrun Deductions</div>
-            </div>
-            <div className="tracking-kpi-card">
-              <div className="sc-val" style={{ color: 'var(--danger)' }}>
-                ₹{dailyReports.reduce((sum, r) => sum + r.lopImpact, 0).toLocaleString('en-IN')}
-              </div>
-              <div className="sc-title">LOP Impact</div>
-            </div>
-            <div className="tracking-kpi-card">
-              <div className="sc-val" style={{ color: 'var(--success)' }}>
-                ₹{dailyReports.reduce((sum, r) => sum + r.overtimePay, 0).toLocaleString('en-IN')}
-              </div>
-              <div className="sc-title">Overtime Pay</div>
-            </div>
-            <div className="tracking-kpi-card" style={{ backgroundColor: 'var(--danger-50)' }}>
-              <div className="sc-val" style={{ color: 'var(--danger)' }}>
-                ₹{dailyReports.reduce((sum, r) => sum + r.totalDailyImpact, 0).toLocaleString('en-IN')}
-              </div>
-              <div className="sc-title">Total Daily Deduction Impact</div>
-            </div>
+            ))}
           </div>
 
           <div className="card" style={{ padding: 0 }}>
@@ -1246,7 +1249,48 @@ const AdminPayroll: React.FC = () => {
         .skeleton { background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%); background-size: 200% 100%; animation: skeleton-loading 1.5s infinite; }
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>
+      {/* Month summary cards + Employees Clocked In (read-only details) */}
+      {monthCard && (() => {
+        const inr = (v: any) => `₹${Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+        const period = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+        if (monthCard === 'clockedIn') {
+          return <RecordsModal open title="Employees Clocked In" subtitle={dailyDateLabel} total={clockedIn.count} totalLabel="Employees"
+            columns={[...EMPLOYEE_COLUMNS, { key: 'shift', label: 'Shift' }, { key: 'status', label: 'Status' }, { key: 'clockIn', label: 'Clock In' }, { key: 'clockOut', label: 'Clock Out' }, { key: 'elapsed', label: 'Elapsed (clock-in → clock-out)' }]}
+            rows={clockedIn.rows} loading={loading} error={error || null} emptyMessage="No attendance records for this date."
+            explanation={['One row per attendance record for the selected date (the same rows as the daily table).', 'Elapsed time is shown only when a clock-out exists; a missing clock-out is never turned into worked hours.']}
+            onClose={() => setMonthCard(null)} />;
+        }
+        const amountCols = [...EMPLOYEE_COLUMNS, { key: 'status', label: 'Status' },
+          { key: 'gross', label: 'Gross', align: 'right' as const, format: inr }, { key: 'overtime', label: 'Overtime', align: 'right' as const, format: inr },
+          { key: 'lop', label: 'LOP (in deductions)', align: 'right' as const, format: inr }, { key: 'otherDeductions', label: 'Other deductions', align: 'right' as const, format: inr },
+          { key: 'deductions', label: 'Total deductions', align: 'right' as const, format: inr }, { key: 'net', label: 'Net', align: 'right' as const, format: inr }];
+        const statusText = (t: string, st: string) => ({ title: t, label: 'Payroll records', money: false, cols: amountCols, explain: `Payroll records for ${period} with status ${st}.`, empty: `No payroll records with status ${st} for ${period}.` });
+        const meta: Record<PayrollMonthCard, { title: string; label: string; money: boolean; cols: any[]; explain: string; empty: string }> = {
+          total: { title: 'Total Employees', label: 'Active employees', money: false, cols: [...EMPLOYEE_COLUMNS, { key: 'status', label: `Payroll status (${period})` }], explain: 'ACTIVE employees, with the status of their payroll for the selected month (NOT_GENERATED when none exists).', empty: 'No active employees.' },
+          generated: { ...statusText('Payroll Generated', 'other than DRAFT'), explain: `Payroll records for ${period} in any status other than DRAFT.` },
+          underReview: statusText('Payroll Under Review', 'UNDER_REVIEW'),
+          approved: statusText('Payroll Approved', 'APPROVED'),
+          paymentPending: statusText('Payroll Payment Pending', 'PAYMENT_PENDING'),
+          paid: { ...statusText('Payroll Paid', 'PAID or CLOSED') },
+          gross: { title: 'Gross Payroll', label: 'Gross payroll', money: true, cols: amountCols, explain: `Sum of the stored Gross column of every payroll record for ${period} (all statuses).`, empty: `No payroll records for ${period}.` },
+          deductions: { title: 'Total Deductions', label: 'Total deductions', money: true, cols: amountCols, explain: `Sum of the stored Total deductions column for ${period}. LOP is shown separately but is already included in Total deductions (LOP + Other = Total), so nothing is counted twice.`, empty: `No payroll records for ${period}.` },
+          net: { title: 'Net Payroll', label: 'Net payroll', money: true, cols: amountCols, explain: `Sum of the stored Net column for ${period} (Net = Gross + Overtime − Total deductions, as calculated when the payroll was generated).`, empty: `No payroll records for ${period}.` },
+        };
+        const m = meta[monthCard];
+        const d = monthCards[monthCard];
+        return <RecordsModal open title={m.title} subtitle={`Payroll month: ${period}`} total={m.money ? inr(d.amount) : d.count} totalLabel={m.money ? `${m.label} (${d.count} records)` : m.label}
+          columns={m.cols} rows={d.rows} loading={loading} error={error || null} emptyMessage={m.empty}
+          explanation={[m.explain, 'Read-only: opening this view does not generate, approve or pay payroll.']} onClose={() => setMonthCard(null)} />;
+      })()}
       {/* Daily Detail Modal */}
+      <DailyMetricModal
+        metric={metricModal ? dailyMetrics[metricModal] : null}
+        dateLabel={dailyDateLabel}
+        loading={loading}
+        error={error || null}
+        onClose={() => setMetricModal(null)}
+      />
+
       {dailyDetailModal && (
         <div className="modal-overlay">
           <div className="modal-content" style={{ width: '90%', maxWidth: '600px' }}>

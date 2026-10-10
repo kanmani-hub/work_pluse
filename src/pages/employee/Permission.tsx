@@ -6,6 +6,10 @@ import {
 } from 'lucide-react';
 
 import { permissionService } from '../../services/permission/permissionService';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps } from '../../services/common/cardDetails';
+import { myPermissionCards, hm, type MyPermissionCard } from '../../services/common/myRequestCards';
+import { companyDateStr } from '../../utils/companyDate';
 
 const EmployeePermission: React.FC = () => {
   const { settings } = useGlobalSettings();
@@ -26,34 +30,17 @@ const EmployeePermission: React.FC = () => {
   const [reqError, setReqError] = useState('');
 
 
-  const [usedThisMonthMins, setUsedThisMonthMins] = useState(0);
-  const [pendingCount, setPendingCount] = useState(0);
-  const [approvedCount, setApprovedCount] = useState(0);
+  const [openCard, setOpenCard] = useState<MyPermissionCard | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
 
   const fetchPermissions = async () => {
     setLoading(true);
     const { data, error } = await permissionService.getMyPermissionRequests();
+    setListError(error ? (error as any).message || 'Unknown error' : null);
     if (data) {
-      let usedMins = 0;
-      let pending = 0;
-      let approved = 0;
       
-      const now = new Date();
-      const currentMonth = now.getMonth();
-      const currentYear = now.getFullYear();
 
       setHistory(data.map((h: any) => {
-        const d = new Date(h.permission_date);
-        
-        if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
-           if (h.status.toUpperCase() === 'APPROVED') {
-               usedMins += h.duration_minutes;
-               approved++;
-           } else if (h.status.toUpperCase() === 'PENDING') {
-               pending++;
-           }
-        }
-
         const hDur = Math.floor(h.duration_minutes / 60);
         const mDur = h.duration_minutes % 60;
         
@@ -82,9 +69,6 @@ const EmployeePermission: React.FC = () => {
           rejectReason: h.reviewer_remarks
         };
       }));
-      setUsedThisMonthMins(usedMins);
-      setPendingCount(pending);
-      setApprovedCount(approved);
     }
     setLoading(false);
   };
@@ -198,6 +182,10 @@ const EmployeePermission: React.FC = () => {
     }
   };
 
+  // Month cards and their detail rows come from one builder (own requests only)
+  const myPermMonth = companyDateStr().slice(0, 7);
+  const myPerm = myPermissionCards(history, myPermMonth);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', position: 'relative' }}>
       
@@ -226,23 +214,23 @@ const EmployeePermission: React.FC = () => {
       ) : (
         <>
           <div className="tracking-kpi-grid">
-            <div className="tracking-kpi-card">
+            <div className="tracking-kpi-card" {...clickableCardProps('Available Permission', () => setOpenCard('available'))}>
               <div className="sc-title">Available Permission</div>
               <div className="sc-val" style={{ color: 'var(--primary-700)' }}>
                 {`${appSettings?.permissionMaxHoursPerMonth ?? 3}h 0m`}
               </div>
             </div>
-            <div className="tracking-kpi-card">
+            <div className="tracking-kpi-card" {...clickableCardProps('Used This Month', () => setOpenCard('used'))}>
               <div className="sc-title">Used This Month</div>
-              <div className="sc-val">{`${Math.floor(usedThisMonthMins/60)}h ${usedThisMonthMins%60}m`}</div>
+              <div className="sc-val">{hm(myPerm.usedMinutes)}</div>
             </div>
-            <div className="tracking-kpi-card">
+            <div className="tracking-kpi-card" {...clickableCardProps('Pending', () => setOpenCard('pending'))}>
               <div className="sc-title">Pending</div>
-              <div className="sc-val" style={{ color: 'var(--warning)' }}>{pendingCount}</div>
+              <div className="sc-val" style={{ color: 'var(--warning)' }}>{myPerm.cards.pending.count}</div>
             </div>
-            <div className="tracking-kpi-card">
+            <div className="tracking-kpi-card" {...clickableCardProps('Approved', () => setOpenCard('approved'))}>
               <div className="sc-title">Approved</div>
-              <div className="sc-val" style={{ color: 'var(--success)' }}>{approvedCount}</div>
+              <div className="sc-val" style={{ color: 'var(--success)' }}>{myPerm.cards.approved.count}</div>
             </div>
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '-1rem' }}>
@@ -541,6 +529,20 @@ const EmployeePermission: React.FC = () => {
         @keyframes skeleton-loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
         @keyframes slideDown { from { transform: translate(-50%, -100%); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
       `}</style>
+      {openCard && (() => {
+        const limitH = appSettings?.permissionMaxHoursPerMonth;
+        const meta: Record<MyPermissionCard, [string, React.ReactNode, string, string[]]> = {
+          available: ['Available Permission', `${limitH ?? 3}h 0m`, 'Monthly limit', [limitH === undefined || limitH === null ? 'No monthly limit is saved in Settings, so the app default (3 hours) is shown.' : `Monthly permission limit configured in Settings: ${limitH} hours.`, `Approved this month: ${hm(myPerm.usedMinutes)} (listed below).`]],
+          used: ['Used This Month', hm(myPerm.usedMinutes), 'Approved time this month', ['Sum of the duration of your APPROVED permissions dated this month.']],
+          pending: ['Pending', myPerm.cards.pending.count, 'Requests', ['Your PENDING permission requests dated this month.']],
+          approved: ['Approved', myPerm.cards.approved.count, 'Requests', ['Your APPROVED permission requests dated this month.']],
+        };
+        const [title, total, label, explain] = meta[openCard];
+        return <RecordsModal open title={title} subtitle={`Month: ${myPermMonth}`} total={total} totalLabel={label}
+          columns={[{ key: 'date', label: 'Date' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }, { key: 'duration', label: 'Duration' }, { key: 'status', label: 'Status' }, { key: 'reason', label: 'Reason' }, { key: 'remarks', label: 'Remarks' }]}
+          rows={myPerm.cards[openCard].rows} loading={loading} error={listError} emptyMessage="No matching permission requests this month."
+          explanation={[...explain, 'Only your own requests are shown.']} onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };

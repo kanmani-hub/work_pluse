@@ -17,6 +17,18 @@ export function currentShiftByEmployee(assignments: any[], today: string): Map<s
   return new Map([...best.entries()].map(([emp, v]) => [emp, v.sid]));
 }
 
+/** Same rule as countAssignedEmployeesByShift, returning the employees themselves (for detail views). */
+export function assignedEmployeesByShift(assignments: any[], employees: any[], today: string): Record<string, any[]> {
+  const active = new Map((employees || []).filter(e => String(e?.status || '').toUpperCase() === 'ACTIVE').map(e => [e.id, e]));
+  const out: Record<string, any[]> = {};
+  for (const [emp, sid] of currentShiftByEmployee(assignments, today)) {
+    const e = active.get(emp);
+    if (!e) continue;
+    (out[sid] = out[sid] || []).push(e);
+  }
+  return out;
+}
+
 export function countAssignedEmployeesByShift(assignments: any[], employees: any[], today: string): Record<string, number> {
   const active = new Set((employees || []).filter(e => String(e?.status || '').toUpperCase() === 'ACTIVE').map(e => e.id));
   const counts: Record<string, number> = {};

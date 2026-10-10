@@ -7,12 +7,15 @@ import {
 import { exportService } from '../../services/export/exportService';
 import { auditService } from '../../services/audit/auditService';
 import { formatLastUpdated } from '../../utils/lastUpdated';
-import { actorRole, inAuditRange, summarizeAuditLogs } from '../../services/audit/auditLogRules';
+import { actorRole, inAuditRange, summarizeAuditLogs, auditCardRows, type AuditCard } from '../../services/audit/auditLogRules';
+import RecordsModal from '../../components/common/RecordsModal';
+import { clickableCardProps } from '../../services/common/cardDetails';
 import { companyDateStr } from '../../utils/companyDate';
 
 const AuditLogs: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [logs, setLogs] = useState<any[]>([]);
+  const [openCard, setOpenCard] = useState<AuditCard | null>(null);
   const [selectedLog, setSelectedLog] = useState<any>(null);
   const [viewMode, setViewMode] = useState<'table'|'timeline'>('table');
   const [exportModal, setExportModal] = useState(false);
@@ -150,27 +153,27 @@ const AuditLogs: React.FC = () => {
          <div className="skeleton" style={{ height: '100px', borderRadius: 'var(--radius-md)' }} />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Total Events', () => setOpenCard('total'))}>
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileText size={14}/> Total Events</div>
             <div className="sc-val">{summary.total}</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Today', () => setOpenCard('today'))}>
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Clock size={14}/> Today</div>
             <div className="sc-val">{summary.today}</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Admin Actions', () => setOpenCard('admin'))}>
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><ShieldCheck size={14}/> Admin Actions</div>
             <div className="sc-val">{summary.admin}</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('HR Actions', () => setOpenCard('hr'))}>
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users size={14}/> HR Actions</div>
             <div className="sc-val">{summary.hr}</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Security Events', () => setOpenCard('security'))}>
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--warning)' }}><Lock size={14}/> Security Events</div>
             <div className="sc-val" style={{ color: 'var(--warning)' }}>{summary.security}</div>
           </div>
-          <div className="tracking-kpi-card">
+          <div className="tracking-kpi-card" {...clickableCardProps('Critical Events', () => setOpenCard('critical'))}>
             <div className="sc-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--danger)' }}><AlertTriangle size={14}/> Critical Events</div>
             <div className="sc-val" style={{ color: 'var(--danger)' }}>{summary.critical}</div>
           </div>
@@ -457,6 +460,21 @@ const AuditLogs: React.FC = () => {
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { 100% { transform: rotate(360deg); } }
       `}</style>
+      {openCard && (() => {
+        const titles: Record<AuditCard, [string, string]> = {
+          total: ['Total Events', 'Every audit event in the selected date range.'],
+          today: ['Events Today', 'Events recorded on today’s company date (Asia/Kolkata).'],
+          admin: ['Admin Actions', 'Events whose actor has the ADMIN role.'],
+          hr: ['HR Actions', 'Events whose actor has the HR role.'],
+          security: ['Security Events', 'Events in the SECURITY module.'],
+          critical: ['Critical Events', 'Events whose severity is Critical.'],
+        };
+        const rows = auditCardRows(rangeLogs, today, openCard);
+        return <RecordsModal open title={titles[openCard][0]} subtitle={`Date range: ${filters.dateRange}`} total={rows.length} totalLabel="Events"
+          columns={[{ key: 'when', label: 'Date & Time' }, { key: 'actor', label: 'Actor' }, { key: 'role', label: 'Role' }, { key: 'module', label: 'Module' }, { key: 'action', label: 'Action' }, { key: 'description', label: 'Description' }, { key: 'severity', label: 'Severity' }, { key: 'result', label: 'Result' }]}
+          rows={rows} loading={loading} error={loadError || null} emptyMessage="No matching audit events in this range."
+          explanation={[titles[openCard][1], 'Uses the same date range as the counters. Audit history is read-only; the table filters and Export are unchanged.']} onClose={() => setOpenCard(null)} />;
+      })()}
     </div>
   );
 };
