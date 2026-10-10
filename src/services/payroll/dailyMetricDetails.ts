@@ -9,6 +9,7 @@
  * from the saved settings that calculation used.
  */
 
+import { resolveAllowedBreakMinutes } from '../attendance/breakRules';
 export type MetricKey = 'late' | 'break' | 'lop' | 'overtime' | 'total';
 
 export interface MetricColumn { key: string; label: string; align?: 'left' | 'right'; money?: boolean }
@@ -150,11 +151,9 @@ export function breakMetric(rows: any[]): MetricDetail {
   const any = rows[0];
   const s = pset(any);
   const rule = breakRuleText(s);
-  const allowed = calc(any).appSettings?.breakDurationMins || 75; // the allowance payroll uses (payrollDataService)
-  const shiftDiffers = rows.some(r => {
-    const sb = r.attendance?.shift_template?.break_duration_minutes;
-    return sb !== null && sb !== undefined && Number(sb) !== Number(allowed);
-  });
+  // Same allowance rule payroll uses (payrollDataService.payrollBreakAllowance / breakRules): shift first, then Settings
+  const allowedFor = (r: any) => resolveAllowedBreakMinutes(r.attendance?.shift_template?.break_duration_minutes, calc(r).appSettings?.breakDurationMins);
+  const missing = rows.some(r => (Number(r.attendance?.break_minutes) || 0) > 0 && allowedFor(r) === null);
   return {
     key: 'break', title: 'Break Overrun Deductions', isDeduction: true,
     total: sum(rows, r => r.breakDeduction),
@@ -164,14 +163,14 @@ export function breakMetric(rows: any[]): MetricDetail {
     ],
     rows: rows.filter(r => (r.breakOverrunMinutes || 0) > 0 || (r.breakDeduction || 0) > 0).map(r => ({
       ...who(r),
-      allowed: `${allowed} min`,
+      allowed: allowedFor(r) === null ? 'Not configured' : `${allowedFor(r)} min`,
       actual: `${Number(r.attendance?.break_minutes) || 0} min`,
       overrun: `${r.breakOverrunMinutes || 0} min`,
       formula: breakFormula(pset(r), r.breakOverrunMinutes || 0, calc(r).dailyRate || 0),
       amount: r2(r.breakDeduction),
     })),
-    explanation: rows.length ? [rule.text, `Overrun = actual break minutes − ${allowed} allowed minutes (Admin → Settings → Break duration).`, roundingNote(s)] : [],
-    notes: shiftDiffers ? ['Some shifts define their own break allowance; payroll currently uses the company break duration from Settings for this deduction.'] : [],
+    explanation: rows.length ? [rule.text, 'Overrun = max(0, actual break minutes − allowed minutes). Allowed = the shift’s break duration, or Admin → Settings → Break duration when the shift has none (same rule as Break Management).', roundingNote(s)] : [],
+    notes: missing ? ['Some employees have no break allowance configured (shift or Settings); no overrun is counted for them.'] : [],
     emptyMessage: 'No break overruns with a deduction were found for this date.',
   };
 }

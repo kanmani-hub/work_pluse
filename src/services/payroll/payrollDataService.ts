@@ -11,6 +11,7 @@ import { classifyPayrollDays, summarizeDays, isLopLeaveType } from './attendance
 import type { ClassifiedDay } from './attendanceClassification';
 import { companyDateStr } from '../../utils/companyDate';
 import { globalSettingsService } from '../settings/globalSettingsService';
+import { resolveAllowedBreakMinutes } from '../attendance/breakRules';
 
 export interface PayrollAttendanceSummary {
   workingDays: number;     // from settings or calculated
@@ -83,16 +84,29 @@ const EMPTY_LEAVE: PayrollLeaveSummary = { approvedLeave: 0, lopLeave: 0, totalL
 const day10 = (d: string) => String(d).slice(0, 10);
 const fail = (what: string, e: any) => new Error(`${what} could not be loaded: ${e?.message || e}`);
 
+/**
+ * Allowed break minutes for one attendance day — the same rule as Break Management, the break
+ * limit check and clock-out: the shift's break_duration_minutes, otherwise Admin → Settings.
+ * null = not configured (no excess is counted for that day).
+ */
+export function payrollBreakAllowance(row: any, appSettings?: any): number | null {
+  return resolveAllowedBreakMinutes(row?.shift_template?.break_duration_minutes, appSettings?.breakDurationMins);
+}
+
 /** Minute-based figures (late, break, overtime, early logout). These feed their own penalties, never LOP. */
 export function summarizeAttendanceMinutes(rows: any[], appSettings?: any) {
-  const breakLimit = appSettings?.breakDurationMins || 75;
   const n = (v: any) => Number(v) || 0;
+  const breakExcess = (a: any) => {
+    const allowed = payrollBreakAllowance(a, appSettings);
+    return allowed === null ? 0 : Math.max(0, n(a.break_minutes) - allowed);
+  };
   return {
     lateLogins: rows.filter(a => n(a.late_minutes) > 0).length,
     totalLateMinutes: rows.reduce((s, a) => s + n(a.late_minutes), 0),
     totalBreakOverrunMinutes: rows.reduce((s, a) => s + n(a.break_overrun_minutes), 0),
     totalOvertimeMinutes: rows.reduce((s, a) => s + n(a.overtime_minutes), 0),
-    totalBreakExcessMinutes: rows.reduce((s, a) => s + Math.max(0, n(a.break_minutes) - breakLimit), 0),
+    // Excess per day = max(0, stored break minutes − that day's allowance), summed
+    totalBreakExcessMinutes: rows.reduce((s, a) => s + breakExcess(a), 0),
     earlyLogouts: rows.filter(a => n(a.early_logout_minutes) > 0).length,
   };
 }
@@ -216,7 +230,7 @@ export const payrollDataService = {
     const end = day10(endDate);
     try {
       const [att, lv, emp, ros] = await Promise.all([
-        supabase.from('attendance').select('*')
+        supabase.from('attendance').select('*, shift_template:shift_template_id(break_duration_minutes)')
           .eq('employee_id', employeeId).gte('attendance_date', start).lte('attendance_date', end) as any,
         supabase.from('leave_requests').select('start_date, end_date, is_half_day, half_day_type, status, leave_types(name, code)')
           .eq('employee_id', employeeId).eq('status', 'APPROVED').lte('start_date', end).gte('end_date', start) as any,

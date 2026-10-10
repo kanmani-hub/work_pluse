@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { payrollDataService, rosterDaysFromAssignments } from './payrollDataService';
+import { payrollDataService, rosterDaysFromAssignments, summarizeAttendanceMinutes, payrollBreakAllowance } from './payrollDataService';
 import { supabase } from '../../lib/supabase';
 
 // Every table returns an empty list except the ones configured in __db; any table can fail.
@@ -265,5 +265,25 @@ describe('Saved settings and schedules drive the result (no hardcoded calendar)'
   it('no saved working days → payroll refuses (never assumes a calendar)', async () => {
     expect((await run({ ...APP, workingDays: [] })).error?.message).toMatch('Company working days are not configured');
     expect((await run({ ...APP, workingDays: undefined })).error?.message).toMatch('Company working days are not configured');
+  });
+});
+
+describe('Payroll break excess uses the same allowance as Break Management (shift first, then Settings)', () => {
+  const app = { breakDurationMins: 1 }; // the saved Settings value must not override a shift allowance
+  it('shift allowance wins; Settings only when the shift has none; not configured → nothing counted', () => {
+    const rows = [
+      { break_minutes: 95, shift_template: { break_duration_minutes: 80 } }, // 15 excess
+      { break_minutes: 45, shift_template: { break_duration_minutes: 80 } }, // within
+      { break_minutes: 80, shift_template: { break_duration_minutes: 80 } }, // exactly at limit
+      { break_minutes: 5, shift_template: null },                             // Settings 1 min → 4 excess
+    ];
+    expect(summarizeAttendanceMinutes(rows, app).totalBreakExcessMinutes).toBe(19);
+    expect(payrollBreakAllowance({ shift_template: null }, {})).toBe(null);
+    expect(summarizeAttendanceMinutes([{ break_minutes: 30, shift_template: null }], {}).totalBreakExcessMinutes).toBe(0);
+  });
+  it('attendance is read with the shift break allowance', async () => {
+    await payrollDataService._fetchPayrollDays('e1', '2026-10-01', '2026-10-09', APP, '2026-10-09');
+    const sel = (db.calls.attendance || []).find((c: any[]) => c[0] === 'select');
+    expect(String(sel?.[1])).toContain('shift_template:shift_template_id(break_duration_minutes)');
   });
 });
