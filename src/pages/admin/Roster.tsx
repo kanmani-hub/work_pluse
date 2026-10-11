@@ -19,7 +19,6 @@ const AdminRoster: React.FC = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
-  const [toastIsError, setToastIsError] = useState(false);
   const [employees, setEmployees] = useState<any[]>([]);
   const [shifts, setShifts] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -124,11 +123,9 @@ const AdminRoster: React.FC = () => {
     fetchData();
   }, []);
 
-  // Errors stay longer and are shown as errors (never with a success tick)
-  const showToast = (msg: string, isError = false) => {
+  const showToast = (msg: string) => {
     setToast(msg);
-    setToastIsError(isError);
-    setTimeout(() => setToast(''), isError ? 8000 : 3000);
+    setTimeout(() => setToast(''), 3000);
   };
 
   const filteredEmployees = useMemo(() => employees.filter(emp => {
@@ -148,16 +145,16 @@ const AdminRoster: React.FC = () => {
   };
 
   const handleCellClick = (empId: string, date: string) => {
-    if (isLocked) return showToast('Roster is locked. Unlock to make changes.', true);
+    if (isLocked) return showToast('Roster is locked. Unlock to make changes.');
     
-    if (periodRoster?.status === 'PUBLISHED') return showToast('This roster is published. Unpublish it before making changes.', true);
+    if (periodRoster?.status === 'PUBLISHED') return showToast('This roster is published. Unpublish it before making changes.');
     const existing = rosterEntries[empId]?.[date] || rosterData[empId]?.[date];
     if (existing?.type === 'Leave' || existing?.type === 'Holiday') {
       setConflictModal({ empId, date, type: existing.type });
     } else {
       setAssignModal({ empId, date, existing });
       if (existing?.type === 'Week Off') {
-        setFormData({ shift: '', mode: 'Week Off' });
+        setFormData({ shift: shifts[0]?.id || '', mode: 'Week Off' });
       } else if (existing?.shift) {
         setFormData({ shift: existing.shift, mode: existing.mode || 'Office' });
       } else {
@@ -168,75 +165,37 @@ const AdminRoster: React.FC = () => {
 
   const handleSaveAssign = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.shift && formData.mode !== 'Week Off') {
-      showToast('Choose a shift for a working day.', true);
-      return;
-    }
+    if (!formData.shift && formData.mode !== 'Week Off') return;
     
-    if (!assignModal?.empId || !assignModal?.date) {
-      showToast('Invalid selection for roster assignment.', true);
-      return;
-    }
-
     const { empId, date } = assignModal;
-    const cell = cellFromForm(formData.mode, formData.mode === 'Week Off' ? null : formData.shift);
-    if ('error' in cell) {
-      showToast(cell.error, true);
-      return;
-    }
-
-    setRosterBusy(true);
-    try {
-      // Saved to this week's roster (rosters / roster_assignments) — Week Off and WFH are stored too
-      const { error } = await rosterService.saveCell(weekDates[0].date, weekDates[6].date, empId, date, cell);
-      if (error) {
-        showToast('Roster not saved: ' + error.message, true);
-        return;
-      }
-      await loadRosters();
-      setAssignModal(null);
-      showToast(cell.dayType === 'WEEK_OFF' ? 'Week off saved to the draft roster' : `${cell.workMode === 'WFH' ? 'WFH' : 'Office'} shift saved to the draft roster`);
-    } catch (err: any) {
-      showToast('Roster not saved: ' + (err?.message || 'Unexpected error'), true);
-    } finally {
-      setRosterBusy(false);
-    }
+    const cell = cellFromForm(formData.mode, formData.shift);
+    if ('error' in cell) { showToast(cell.error); return; }
+    // Saved to this week's roster (rosters / roster_assignments) — Week Off and WFH are stored too
+    const { error } = await rosterService.saveCell(weekDates[0].date, weekDates[6].date, empId, date, cell);
+    if (error) { showToast('Roster not saved: ' + error.message); return; }
+    await loadRosters();
+    setAssignModal(null);
+    showToast(cell.dayType === 'WEEK_OFF' ? 'Week off saved to the draft roster' : 'Shift saved to the draft roster');
   };
 
   const handlePublish = async () => {
-    if (!periodRoster) return showToast('Save at least one roster entry before publishing.', true);
+    if (!periodRoster) return showToast('Save at least one roster entry before publishing.');
     setRosterBusy(true);
-    try {
-      const { error } = await rosterService.publish(periodRoster.id);
-      if (error) {
-        showToast(error.message, true);
-        return;
-      }
-      await loadRosters();
-      showToast('Roster published. Payroll now uses it for this week.');
-    } catch (err: any) {
-      showToast('Publish failed: ' + (err?.message || 'Unknown error'), true);
-    } finally {
-      setRosterBusy(false);
-    }
+    const { error } = await rosterService.publish(periodRoster.id);
+    setRosterBusy(false);
+    if (error) return showToast(error.message);
+    await loadRosters();
+    showToast('Roster published. Payroll now uses it for this week.');
   };
 
   const handleUnpublish = async () => {
     if (!periodRoster) return;
     setRosterBusy(true);
-    try {
-      const { error } = await rosterService.unpublish(periodRoster.id);
-      if (error) {
-        showToast(error.message, true);
-        return;
-      }
-      await loadRosters();
-      showToast('Roster unpublished (back to draft).');
-    } catch (err: any) {
-      showToast('Unpublish failed: ' + (err?.message || 'Unknown error'), true);
-    } finally {
-      setRosterBusy(false);
-    }
+    const { error } = await rosterService.unpublish(periodRoster.id);
+    setRosterBusy(false);
+    if (error) return showToast(error.message);
+    await loadRosters();
+    showToast('Roster unpublished (back to draft).');
   };
 
   // Calendar Math — pure company-date strings (see services/shifts/rosterDates.ts)
@@ -260,23 +219,19 @@ const AdminRoster: React.FC = () => {
   const rangeEnd = viewMode === 'Week' ? weekDates[6].date : `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
 
   const loadRosters = async () => {
-    try {
-      const [list, period] = await Promise.all([
-        rosterService.getRosters(rangeStart, rangeEnd),
-        rosterService.getPeriodRoster(weekDates[0].date, weekDates[6].date),
-      ]);
-      const err = list.error || period.error;
-      setRosterError(err ? err.message : null);
-      setPeriodRoster(period.roster);
-      const map: Record<string, Record<string, any>> = {};
-      for (const a of list.assignments) {
-        const owner = list.rosters.find((r: any) => r.id === a.roster_id);
-        (map[a.employee_id] ||= {})[String(a.assignment_date).slice(0, 10)] = { ...cellFromAssignment(a), rosterStatus: owner?.status };
-      }
-      setRosterEntries(map);
-    } catch (err: any) {
-      setRosterError(err?.message || 'Failed to load roster data');
+    const [list, period] = await Promise.all([
+      rosterService.getRosters(rangeStart, rangeEnd),
+      rosterService.getPeriodRoster(weekDates[0].date, weekDates[6].date),
+    ]);
+    const err = list.error || period.error;
+    setRosterError(err ? err.message : null);
+    setPeriodRoster(period.roster);
+    const map: Record<string, Record<string, any>> = {};
+    for (const a of list.assignments) {
+      const owner = list.rosters.find((r: any) => r.id === a.roster_id);
+      (map[a.employee_id] ||= {})[String(a.assignment_date).slice(0, 10)] = { ...cellFromAssignment(a), rosterStatus: owner?.status };
     }
+    setRosterEntries(map);
   };
 
   useEffect(() => { loadRosters(); }, [rangeStart, rangeEnd]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -311,8 +266,8 @@ const AdminRoster: React.FC = () => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', position: 'relative' }}>
       {toast && (
         <div style={{ position: 'fixed', top: '24px', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'var(--text-primary)', color: 'var(--bg-primary)', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-full)', zIndex: 1000, display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: 'var(--shadow-lg)', animation: 'slideDown 0.3s forwards' }}>
-          {toastIsError ? <AlertTriangle size={18} color="var(--danger)" /> : <CheckCircle2 size={18} color="var(--success)" />}
-          <span role={toastIsError ? 'alert' : 'status'}>{toast}</span>
+          <CheckCircle2 size={18} color="var(--success)" />
+          {toast}
         </div>
       )}
 
@@ -592,48 +547,25 @@ const AdminRoster: React.FC = () => {
             <form onSubmit={handleSaveAssign} style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="form-label">Shift Template</label>
-                <select
-                  className="form-control"
-                  value={formData.mode === 'Week Off' ? '' : formData.shift}
-                  onChange={e => setFormData({ ...formData, shift: e.target.value })}
-                  disabled={formData.mode === 'Week Off'}
-                >
-                  {formData.mode === 'Week Off' ? (
-                    <option value="">No shift (Week Off)</option>
-                  ) : (
-                    <>
-                      <option value="" disabled>Select a shift...</option>
-                      {shifts.map(s => (
-                        <option key={s.id} value={s.id}>{s.name} ({s.start_time?.slice(0,5)} - {s.end_time?.slice(0,5)})</option>
-                      ))}
-                    </>
-                  )}
+                <select className="form-control" value={formData.shift} onChange={e => setFormData({...formData, shift: e.target.value})} disabled={formData.mode === 'Week Off'}>
+                  {shifts.map(s => (
+                    <option key={s.id} value={s.id}>{s.name} ({s.start_time?.slice(0,5)} - {s.end_time?.slice(0,5)})</option>
+                  ))}
                 </select>
               </div>
               
               <div>
                 <label className="form-label">Work Mode / Exception</label>
-                <select
-                  className="form-control"
-                  value={formData.mode}
-                  onChange={e => {
-                    const newMode = e.target.value;
-                    setFormData({
-                      ...formData,
-                      mode: newMode,
-                      shift: newMode === 'Week Off' ? '' : (formData.shift || shifts[0]?.id || '')
-                    });
-                  }}
-                >
-                  <option value="Office">Office</option>
-                  <option value="WFH">WFH</option>
-                  <option value="Week Off">Week Off</option>
+                <select className="form-control" value={formData.mode} onChange={e => setFormData({...formData, mode: e.target.value})}>
+                  <option>Office</option>
+                  <option>WFH</option>
+                  <option>Week Off</option>
                 </select>
               </div>
               
               <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
                 <button type="button" className="btn btn-outline" onClick={() => setAssignModal(null)} style={{ flex: 1 }}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={rosterBusy}>Save</button>
+                <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Save</button>
               </div>
             </form>
           </div>
@@ -662,11 +594,6 @@ const AdminRoster: React.FC = () => {
         .shift-mode { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
         .text-primary { color: var(--primary-700); }
         .text-gray { color: var(--text-secondary); }
-
-        .roster-badge { padding: 0.5rem; border-radius: var(--radius-sm); font-size: clamp(0.7rem, 0.3vw + 0.55rem, 0.85rem); font-weight: 600; text-align: center; height: 100%; display: flex; align-items: center; justify-content: center; }
-        .roster-badge.bg-gray { background-color: var(--gray-100); color: var(--text-secondary); border: 1px dashed var(--border-color); }
-        .roster-badge.bg-leave { background-color: var(--danger-50); color: var(--danger); }
-        .roster-badge.bg-holiday { background-color: var(--warning-50); color: var(--warning-700); }
         
         .roster-empty { height: 100%; display: flex; align-items: center; justify-content: center; color: transparent; font-size: 0.75rem; font-weight: 500; transition: color 0.2s; }
         .roster-cell:hover .roster-empty { color: var(--text-secondary); }

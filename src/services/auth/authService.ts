@@ -89,22 +89,7 @@ export const authService = {
         return { profile, employee: null };
       }
 
-      let employee = employeeData as Employee;
-
-      // If auth user metadata defines a personalized name, overlay it so UI reflects it immediately
-      try {
-        const { data: authUserData } = await supabase.auth.getUser();
-        const meta = authUserData?.user?.user_metadata;
-        if (meta?.full_name || meta?.first_name) {
-          employee = {
-            ...employee,
-            first_name: meta.first_name || meta.full_name || employee.first_name,
-            last_name: meta.last_name !== undefined ? meta.last_name : employee.last_name,
-          };
-        }
-      } catch {
-        // Fallback gracefully to database row if getUser fails
-      }
+      const employee = employeeData as Employee;
 
       return { profile, employee };
     } catch (err) {

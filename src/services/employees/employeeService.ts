@@ -3,6 +3,7 @@ import type { Database } from '../../types/database';
 import { auditService } from '../audit/auditService';
 import { notificationService } from '../notifications/notificationService';
 import { shiftAssigned, profileChanged, changedProfileFields } from '../notifications/notificationRules';
+import { companyDateStr } from '../../utils/companyDate';
 
 /** Tell the employee which shift they now have (only after a successful save). */
 async function notifyShiftAssignment(employeeId: string, assignmentId: string | null | undefined, shiftTemplateId: string, effectiveDate: string) {
@@ -38,7 +39,7 @@ export const employeeService = {
           department:department_id (name),
           office:office_id (name),
           role:role_id (name),
-          shift_assignments!shift_assignments_employee_id_fkey(effective_date, shift_templates(name, start_time, end_time)),
+          shift_assignments!shift_assignments_employee_id_fkey(effective_date, shift_templates(id, name, start_time, end_time)),
           salary_structures(id, is_active, basic_salary)
         `)
         .order('first_name', { ascending: true });
@@ -71,7 +72,7 @@ export const employeeService = {
           department:department_id (name),
           office:office_id (name, address, latitude, longitude, geofence_radius),
           role:role_id (name),
-          shift_assignments!shift_assignments_employee_id_fkey(effective_date, shift_templates(name, start_time, end_time))
+          shift_assignments!shift_assignments_employee_id_fkey(effective_date, shift_templates(id, name, start_time, end_time))
         `)
         .eq('id', id)
         .single();
@@ -218,8 +219,7 @@ export const employeeService = {
    * Deactivate an employee (soft delete).
    */
   async deactivateEmployee(id: string): Promise<{ data: EmployeeRow | null; error: Error | null }> {
-    // Same value the rest of the app checks ('ACTIVE' / 'INACTIVE')
-    return this.updateEmployee(id, { status: 'INACTIVE' });
+    return this.updateEmployee(id, { status: 'Inactive' });
   },
 
   /**
@@ -346,14 +346,15 @@ export const employeeService = {
     return { data, error };
   },
 
-  async assignShift(employeeId: string, shiftTemplateId: string, effectiveDate: string) {
+  async assignShift(employeeId: string, shiftTemplateId: string, effectiveDate?: string) {
+    const targetDate = (effectiveDate && effectiveDate.trim() !== '') ? effectiveDate : companyDateStr();
     // Check if an assignment already exists for this date
-    const { data: existing, error: checkError } = await supabase
+    const { data: existing } = await supabase
       .from('shift_assignments')
       .select('id')
       .eq('employee_id', employeeId)
-      .eq('effective_date', effectiveDate)
-      .single();
+      .eq('effective_date', targetDate)
+      .maybeSingle();
 
     if (existing) {
       // Update existing
@@ -362,16 +363,16 @@ export const employeeService = {
         // @ts-ignore
         .update({ shift_template_id: shiftTemplateId })
         // @ts-ignore
-        .eq('id', existing.id);
+        .eq('id', (existing as any).id);
       if (!error) {
-        await notifyShiftAssignment(employeeId, (existing as any).id, shiftTemplateId, effectiveDate);
+        await notifyShiftAssignment(employeeId, (existing as any).id, shiftTemplateId, targetDate);
         import('../audit/auditService').then(({ auditService }) => {
           auditService.recordAuditLog({
             action: 'ROSTER_UPDATED',
             module: 'SETUP',
             entity_type: 'shift_assignments',
             entity_id: (existing as any).id,
-            description: `Updated shift assignment for employee ${employeeId} on ${effectiveDate}`
+            description: `Updated shift assignment for employee ${employeeId} on ${targetDate}`
           }).catch((e: any) => console.error('[AUDIT]', e));
         });
       }
@@ -383,21 +384,21 @@ export const employeeService = {
         .insert({
           employee_id: employeeId,
           shift_template_id: shiftTemplateId,
-          effective_date: effectiveDate,
+          effective_date: targetDate,
           assignment_type: 'PERMANENT'
         } as any)
         .select()
         .single();
         
       if (!error) {
-        await notifyShiftAssignment(employeeId, (data as any)?.id, shiftTemplateId, effectiveDate);
+        await notifyShiftAssignment(employeeId, (data as any)?.id, shiftTemplateId, targetDate);
         import('../audit/auditService').then(({ auditService }) => {
           auditService.recordAuditLog({
             action: 'ROSTER_CREATED',
             module: 'SETUP',
             entity_type: 'shift_assignments',
             entity_id: (data as any)?.id,
-            description: `Created shift assignment for employee ${employeeId} on ${effectiveDate}`
+            description: `Created shift assignment for employee ${employeeId} on ${targetDate}`
           }).catch((e: any) => console.error('[AUDIT]', e));
         });
       }

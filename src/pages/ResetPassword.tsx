@@ -68,8 +68,8 @@ const ResetPassword = () => {
   };
 
   return (
-    <div className="login-container">
-      <div className="login-card">
+    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: 'var(--bg-primary)', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+      <div className="card" style={{ width: '100%', maxWidth: '440px', padding: 'clamp(1.25rem, 4vw, 2.5rem)', display: 'flex', flexDirection: 'column', gap: '2rem', backgroundColor: 'var(--bg-surface)', boxShadow: 'var(--shadow-lg)' }}>
         <div className="login-header">
           <div className="logo-container" style={{ margin: '0 auto 1.5rem auto' }}>
             <div className="logo-icon">WP</div>

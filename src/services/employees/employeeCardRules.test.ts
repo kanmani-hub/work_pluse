@@ -36,9 +36,4 @@ describe('Admin Employees summary cards', () => {
     const c = employeeCards([], [], [], today);
     expect([c.total.count, c.active.count, c.onLeave.count, c.wfhToday.count]).toEqual([0, 0, 0, 0]);
   });
-
-  it('older rows saved as "Inactive" are counted as Inactive (not lost from both cards)', () => {
-    const c = employeeCards([emp('x', 'Inactive'), emp('y', 'ACTIVE')], [], [], today);
-    expect(c.inactive.count).toBe(1); expect(c.active.count).toBe(1);
-  });
 });

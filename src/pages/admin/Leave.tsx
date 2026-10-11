@@ -665,23 +665,25 @@ EmpC     AL  AL   —    —    —`}
               <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '2rem' }}>Configure leave types and company policies. Do not hard-code these as permanent system values.</p>
               
               <h3 className="section-title">Approval Workflow</h3>
-              <div style={{ backgroundColor: 'var(--gray-50)', padding: '1.5rem', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'center', gap: '1rem', alignItems: 'center', marginBottom: '2rem', fontFamily: 'monospace' }}>
+              <div style={{ backgroundColor: 'var(--gray-50)', padding: '1.5rem', borderRadius: 'var(--radius-md)', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '1rem', alignItems: 'center', marginBottom: '2rem', fontFamily: 'monospace' }}>
                 <div>Employee</div><div>→</div><div>Manager</div><div>→</div><div>HR</div><div>→</div><div style={{ color: 'var(--success-600)', fontWeight: 600 }}>Approved</div>
               </div>
 
               <h3 className="section-title">Leave Types</h3>
-              <table className="table" style={{ width: '100%', marginBottom: '2rem' }}>
-                <thead><tr><th>Leave Type</th><th>Code</th><th>Paid</th><th>Status</th></tr></thead>
-                <tbody>
-                  {leaveTypes === null ? (
-                    <tr><td colSpan={4} style={{ textAlign: 'center', color: leaveTypesError ? 'var(--danger)' : 'var(--text-secondary)' }}>{leaveTypesError || 'Loading leave types…'}</td></tr>
-                  ) : leaveTypes.length === 0 ? (
-                    <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>No leave types are configured.</td></tr>
-                  ) : leaveTypes.map(t => (
-                    <tr key={t.id}><td>{t.name}</td><td>{t.code}</td><td>{t.paid ? 'Yes' : 'No'}</td><td><span className={`badge ${t.active ? 'badge-success' : 'badge-gray'}`}>{t.active ? 'Active' : 'Inactive'}</span></td></tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="table-container" style={{ marginBottom: '2rem' }}>
+                <table className="table" style={{ width: '100%' }}>
+                  <thead><tr><th>Leave Type</th><th>Code</th><th>Paid</th><th>Status</th></tr></thead>
+                  <tbody>
+                    {leaveTypes === null ? (
+                      <tr><td colSpan={4} style={{ textAlign: 'center', color: leaveTypesError ? 'var(--danger)' : 'var(--text-secondary)' }}>{leaveTypesError || 'Loading leave types…'}</td></tr>
+                    ) : leaveTypes.length === 0 ? (
+                      <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>No leave types are configured.</td></tr>
+                    ) : leaveTypes.map(t => (
+                      <tr key={t.id}><td>{t.name}</td><td>{t.code}</td><td>{t.paid ? 'Yes' : 'No'}</td><td><span className={`badge ${t.active ? 'badge-success' : 'badge-gray'}`}>{t.active ? 'Active' : 'Inactive'}</span></td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
               <h3 className="section-title">Global Policy Settings</h3>
               {leaveSettings.loading ? (
@@ -692,7 +694,7 @@ EmpC     AL  AL   —    —    —`}
                   <button type="button" className="btn btn-outline" style={{ marginLeft: '0.75rem', fontSize: '0.75rem' }} onClick={() => leaveSettings.reload()}>Retry</button>
                 </div>
               ) : null}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 200px), 1fr))', gap: '1.25rem' }}>
                 <PersistedSettingToggle stored={leaveSettings} settingKey="allowHalfDayLeave" label="Allow Half Day"
                   enforcementNote="Saved company setting. Not yet enforced: the employee leave form still offers half day for single-day requests." />
                 <PersistedSettingToggle stored={leaveSettings} settingKey="allowNegativeBalance" label="Allow Negative Balance"

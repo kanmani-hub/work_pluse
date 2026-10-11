@@ -1,28 +1,5 @@
 -- =====================================================================================
--- PROPOSED (NOT APPLIED) — WorkPulse HR roster persistence, revision 3.1 (2026-10-11)
---
--- REVISION 3.1 (after the 2026-10-11 review; tested only on a local throwaway PostgreSQL 16):
---   * rosters.status becomes NOT NULL (the 1.0 pre-check already aborts if any row has NULL status;
---     the column default stays 'DRAFT'). Closes the gap where NULL passed the status check and
---     escaped the overlap guard.
---   * EXECUTE on the three new functions is revoked from anon and authenticated (Supabase's default
---     privileges grant it). Trigger firing does not check EXECUTE, so roster saves are unaffected.
---   * Roles documented as they are live: ADMIN and HR manage rosters (policies from 20261010131800).
---
--- REVISION 3 — matches the LIVE database as reported on 2026-10-10 (read-only checks):
---   * roster_assignments has NO day_type / work_mode → the app's save fails with
---     "Could not find the 'day_type' column of 'roster_assignments' in the schema cache".
---   * Write policies were added separately by supabase/migrations/20261010131800_fix_rosters_rls.sql:
---       "Manage rosters" / "Manage roster_assignments"  FOR ALL TO authenticated
---       USING / WITH CHECK (get_auth_role() IN ('ADMIN','HR'))
---     Revision 3 KEEPS those policies unchanged and no longer creates the "Admin manages …" policies
---     (that would duplicate them). The pre-check verifies their exact expressions first.
---     ADMIN and HR therefore manage rosters (create / change / delete); everyone signed in may read.
---     Owner decision 2026-10-11: keep ADMIN + HR. PART 5 (ADMIN only) is NOT part of this change.
---   * 1 DRAFT roster exists (2026-10-05 → 2026-10-11, Mon–Sun) with 0 entries. It is valid and is
---     reused by the app for that week; nothing is deleted.
---   * The app upserts on (roster_id, employee_id, assignment_date): that needs the unique
---     constraint in 1.1, so a column-only fix would still fail on the next save.
+-- PROPOSED (NOT APPLIED) — WorkPulse HR roster persistence, revision 2 (2026-10-09)
 -- Review notes: docs/proposals/PROPOSED_roster_persistence_REVIEW.md
 --
 -- Why: the Shift Roster page cannot save rosters today.
@@ -33,8 +10,7 @@
 --
 -- Owner decisions (2026-10-09): weekly offs are stored per date in the roster; a PUBLISHED roster
 -- drives payroll working days / weekly offs; attendance keeps using shift_assignments for the
--- clock-in shift (separate task). Roles (as live since 20261010131800, kept by owner decision 2026-10-11):
--- ADMIN and HR manage rosters; everyone signed in may read.
+-- clock-in shift (separate task). Roles: ADMIN manages rosters; everyone signed in may read (unchanged).
 --
 -- Revision 2 adds database-level safeguards (the app already applies the same rules; these make
 -- them impossible to bypass through direct API calls or concurrent edits):
@@ -73,8 +49,7 @@ FROM information_schema.columns
 WHERE table_schema = 'public' AND table_name IN ('rosters', 'roster_assignments')
 ORDER BY table_name, ordinal_position;
 
--- 0b. Current policies (revision 3 expects 4: the two "Allow authenticated users to read …" SELECT policies
---     and "Manage rosters" / "Manage roster_assignments" FOR ALL with get_auth_role() IN ('ADMIN','HR'))
+-- 0b. Current policies (expect only the two "Allow authenticated users to read …" SELECT policies)
 SELECT tablename, policyname, cmd, roles, qual, with_check
 FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('rosters', 'roster_assignments');
 
@@ -86,7 +61,7 @@ FROM pg_constraint WHERE conrelid::regclass::text IN ('rosters', 'roster_assignm
 SELECT tgrelid::regclass AS table_name, tgname FROM pg_trigger
 WHERE NOT tgisinternal AND tgrelid::regclass::text IN ('rosters', 'roster_assignments');
 
--- 0e. Row counts (1 / 0 on 2026-10-10). The checks 0f–0i below must all return no rows.
+-- 0e. Row counts (0 / 0 on 2026-10-09). If not 0, the checks 0f–0i below must all return no rows.
 SELECT (SELECT count(*) FROM rosters) AS rosters, (SELECT count(*) FROM roster_assignments) AS roster_assignments;
 
 -- 0f. Duplicate entries per roster / employee / date (expect no rows)
@@ -122,9 +97,6 @@ SET LOCAL lock_timeout = '5s';
 DO $$
 DECLARE n integer;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') OR NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-    RAISE EXCEPTION 'Pre-check failed: roles anon / authenticated not found (is this a Supabase project?).';
-  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'get_auth_role') THEN
     RAISE EXCEPTION 'Pre-check failed: public.get_auth_role() is missing.';
   END IF;
@@ -137,32 +109,8 @@ BEGIN
   END IF;
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public'
              AND policyname IN ('Admin manages rosters', 'Admin manages roster_assignments')) THEN
-    RAISE EXCEPTION 'Pre-check failed: the revision-2 "Admin manages" policies exist; review before continuing.';
+    RAISE EXCEPTION 'Pre-check failed: the Admin write policies already exist.';
   END IF;
-  -- Revision 3: the existing write policies must be exactly the reviewed ones (ADMIN / HR only):
-  -- FOR ALL, TO authenticated, and both USING and WITH CHECK = get_auth_role() IN ('ADMIN','HR')
-  -- (compared after removing spaces and a "public." prefix; exactly the two role literals allowed).
-  SELECT count(*) INTO n
-    FROM pg_policies p,
-         LATERAL (SELECT replace(replace(coalesce(p.qual, ''), ' ', ''), 'public.', '') AS q,
-                         replace(replace(coalesce(p.with_check, ''), ' ', ''), 'public.', '') AS w) x
-   WHERE p.schemaname = 'public'
-     AND ((p.tablename = 'rosters' AND p.policyname = 'Manage rosters')
-       OR (p.tablename = 'roster_assignments' AND p.policyname = 'Manage roster_assignments'))
-     AND p.cmd = 'ALL' AND p.roles = '{authenticated}'
-     AND x.q ~ '^[(]*get_auth_role[(][)]=ANY[(]' AND x.w ~ '^[(]*get_auth_role[(][)]=ANY[(]'
-     AND x.q LIKE '%''ADMIN''%' AND x.q LIKE '%''HR''%' AND x.w LIKE '%''ADMIN''%' AND x.w LIKE '%''HR''%'
-     AND (SELECT count(*) FROM regexp_matches(x.q, '''[^'']*''', 'g')) = 2
-     AND (SELECT count(*) FROM regexp_matches(x.w, '''[^'']*''', 'g')) = 2;
-  IF n <> 2 THEN
-    RAISE EXCEPTION 'Pre-check failed: "Manage rosters" / "Manage roster_assignments" are missing or differ from get_auth_role() IN (ADMIN, HR) — send PART 0b output for review.';
-  END IF;
-  -- No other write policy (and nothing for anon / public) may exist on these tables.
-  SELECT count(*) INTO n FROM pg_policies
-   WHERE schemaname = 'public' AND tablename IN ('rosters', 'roster_assignments')
-     AND policyname NOT IN ('Manage rosters', 'Manage roster_assignments',
-                            'Allow authenticated users to read rosters', 'Allow authenticated users to read roster_assignments');
-  IF n > 0 THEN RAISE EXCEPTION 'Pre-check failed: % unexpected polic(ies) on rosters / roster_assignments (see PART 0b).', n; END IF;
   SELECT count(*) INTO n FROM (SELECT 1 FROM roster_assignments GROUP BY roster_id, employee_id, assignment_date HAVING count(*) > 1) d;
   IF n > 0 THEN RAISE EXCEPTION 'Pre-check failed: % duplicate roster entries (see PART 0f).', n; END IF;
   SELECT count(*) INTO n FROM roster_assignments a JOIN rosters r ON r.id = a.roster_id
@@ -200,9 +148,6 @@ ALTER TABLE rosters ADD COLUMN published_by UUID REFERENCES employees(id) ON DEL
 UPDATE rosters SET published_at = COALESCE(updated_at, created_at, now()) WHERE status = 'PUBLISHED' AND published_at IS NULL;
 ALTER TABLE rosters ADD CONSTRAINT rosters_status_check
   CHECK (status IN ('DRAFT', 'PUBLISHED', 'ARCHIVED'));
--- 1.2a A roster always has a status (NULL would pass the CHECK above and escape the overlap guard).
---      Safe: the 1.0 pre-check has already aborted if any row has a NULL status; default stays 'DRAFT'.
-ALTER TABLE rosters ALTER COLUMN status SET NOT NULL;
 -- 1.2b A published roster always records when it was published.
 ALTER TABLE rosters ADD CONSTRAINT rosters_published_at_check
   CHECK (status <> 'PUBLISHED' OR published_at IS NOT NULL);
@@ -227,9 +172,6 @@ AS $$
          ) = 'service_role';
 $$;
 REVOKE ALL ON FUNCTION public.roster_guard_bypass() FROM PUBLIC;
--- Supabase grants EXECUTE on new functions to anon / authenticated by default: remove it too.
--- (Triggers do not need EXECUTE to fire; the guards call roster_guard_bypass() as the owner.)
-REVOKE EXECUTE ON FUNCTION public.roster_guard_bypass() FROM anon, authenticated;
 
 -- 1.4 roster_assignments guard (BEFORE INSERT / UPDATE / DELETE, per row)
 --     * the entry's date must be inside its roster's dates;
@@ -277,9 +219,6 @@ BEGIN
 END;
 $$;
 REVOKE ALL ON FUNCTION public.roster_assignments_guard() FROM PUBLIC;
--- Supabase grants EXECUTE on new functions to anon / authenticated by default: remove it too.
--- (Triggers do not need EXECUTE to fire; the guards call roster_guard_bypass() as the owner.)
-REVOKE EXECUTE ON FUNCTION public.roster_assignments_guard() FROM anon, authenticated;
 
 CREATE TRIGGER roster_assignments_guard
   BEFORE INSERT OR UPDATE OR DELETE ON roster_assignments
@@ -344,38 +283,33 @@ BEGIN
 END;
 $$;
 REVOKE ALL ON FUNCTION public.rosters_guard() FROM PUBLIC;
--- Supabase grants EXECUTE on new functions to anon / authenticated by default: remove it too.
--- (Triggers do not need EXECUTE to fire; the guards call roster_guard_bypass() as the owner.)
-REVOKE EXECUTE ON FUNCTION public.rosters_guard() FROM anon, authenticated;
 
 CREATE TRIGGER rosters_guard
   BEFORE UPDATE OR DELETE ON rosters
   FOR EACH ROW EXECUTE FUNCTION public.rosters_guard();
 
--- 1.6 Write policies: revision 3 creates NONE. The existing "Manage rosters" / "Manage roster_assignments"
---     (ADMIN / HR, checked in 1.0) stay as they are; reading stays as in 0002. See PART 5 for ADMIN-only.
+-- 1.6 Write policies (ADMIN only). Reading stays as in 0002 (all signed-in users); nothing is dropped.
+CREATE POLICY "Admin manages rosters" ON rosters
+  FOR ALL TO authenticated
+  USING (public.get_auth_role() = 'ADMIN')
+  WITH CHECK (public.get_auth_role() = 'ADMIN');
+
+CREATE POLICY "Admin manages roster_assignments" ON roster_assignments
+  FOR ALL TO authenticated
+  USING (public.get_auth_role() = 'ADMIN')
+  WITH CHECK (public.get_auth_role() = 'ADMIN');
 
 COMMIT;
 -- If anything above failed: run  ROLLBACK;  — no part of PART 1 is kept.
 
--- After COMMIT: make the API see the new columns immediately (harmless if it already reloaded).
-NOTIFY pgrst, 'reload schema';
-
 
 -- ===================== PART 2: VERIFY (read-only, after COMMIT) =====================
 -- 2a. New columns (expect day_type / work_mode NOT NULL with defaults; shift_template_id nullable;
---     rosters.published_at, published_by; rosters.status NOT NULL with default 'DRAFT')
+--     rosters.published_at, published_by)
 SELECT table_name, column_name, is_nullable, column_default
 FROM information_schema.columns
 WHERE table_schema = 'public' AND table_name IN ('rosters', 'roster_assignments')
-  AND column_name IN ('day_type', 'work_mode', 'shift_template_id', 'published_at', 'published_by', 'status');
-
--- 2a2. Function privileges (expect false for anon and authenticated on all three functions)
-SELECT p.proname,
-       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_can_execute,
-       has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authenticated_can_execute
-FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
-WHERE ns.nspname = 'public' AND p.proname IN ('roster_guard_bypass', 'roster_assignments_guard', 'rosters_guard');
+  AND column_name IN ('day_type', 'work_mode', 'shift_template_id', 'published_at', 'published_by');
 
 -- 2b. Constraints (expect: roster_assignments_day_type_check, _work_mode_check, _shift_for_work_check,
 --     _unique_day; rosters_status_check, rosters_published_at_check, rosters_no_overlapping_active)
@@ -386,11 +320,11 @@ FROM pg_constraint WHERE conrelid::regclass::text IN ('rosters', 'roster_assignm
 SELECT tgrelid::regclass AS table_name, tgname FROM pg_trigger
 WHERE NOT tgisinternal AND tgrelid::regclass::text IN ('rosters', 'roster_assignments') ORDER BY 1, 2;
 
--- 2d. Policies (expect UNCHANGED from PART 0b: per table the original SELECT policy + "Manage …" FOR ALL)
+-- 2d. Policies (expect, per table: the original SELECT policy + "Admin manages …" FOR ALL)
 SELECT tablename, policyname, cmd, qual, with_check
 FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('rosters', 'roster_assignments') ORDER BY 1, 2;
 
--- 2e. Data unchanged (same counts as PART 0e; the existing DRAFT roster is still there)
+-- 2e. Data unchanged (same counts as PART 0e)
 SELECT (SELECT count(*) FROM rosters) AS rosters, (SELECT count(*) FROM roster_assignments) AS roster_assignments;
 
 
@@ -484,7 +418,6 @@ BEGIN
   RAISE NOTICE 'Rollback confirmed: deleting % Week Off entries.', n;
 END $$;
 
--- (Revision 3 created no policies; "Manage …" policies from 20261010131800 are NOT touched here.)
 DROP POLICY IF EXISTS "Admin manages roster_assignments" ON roster_assignments;
 DROP POLICY IF EXISTS "Admin manages rosters" ON rosters;
 DROP TRIGGER IF EXISTS rosters_guard ON rosters;
@@ -496,7 +429,6 @@ DROP FUNCTION IF EXISTS public.roster_guard_bypass();
 ALTER TABLE rosters DROP CONSTRAINT IF EXISTS rosters_no_overlapping_active;
 ALTER TABLE rosters DROP CONSTRAINT IF EXISTS rosters_published_at_check;
 ALTER TABLE rosters DROP CONSTRAINT IF EXISTS rosters_status_check;
-ALTER TABLE rosters ALTER COLUMN status DROP NOT NULL;   -- back to the 0002 definition
 ALTER TABLE rosters DROP COLUMN IF EXISTS published_by;
 ALTER TABLE rosters DROP COLUMN IF EXISTS published_at;
 
@@ -512,27 +444,4 @@ ALTER TABLE roster_assignments DROP COLUMN IF EXISTS day_type;
 COMMIT;
 -- If anything failed: ROLLBACK;  (the database stays as it was before this rollback attempt)
 -- Then deploy an app version that does not use rosterService for writes.
-*/
-
-
--- ===================== PART 5: OPTIONAL — writes for ADMIN only (NOT APPROVED — do not run) =====
--- Owner decision 2026-10-11: ADMIN and HR keep managing rosters. Kept here only for reference.
--- Today "Manage rosters" / "Manage roster_assignments" let ADMIN **and HR** create, change and
--- delete rosters. The owner decision of 2026-10-09 was ADMIN only. Run this ONLY if that is still
--- wanted: it replaces the two policies in one transaction (no moment without a policy is visible to
--- other sessions). Reading is unchanged.
-/*
-BEGIN;
-SET LOCAL lock_timeout = '5s';
-DROP POLICY "Manage rosters" ON rosters;
-CREATE POLICY "Manage rosters" ON rosters
-  FOR ALL TO authenticated
-  USING (public.get_auth_role() = 'ADMIN')
-  WITH CHECK (public.get_auth_role() = 'ADMIN');
-DROP POLICY "Manage roster_assignments" ON roster_assignments;
-CREATE POLICY "Manage roster_assignments" ON roster_assignments
-  FOR ALL TO authenticated
-  USING (public.get_auth_role() = 'ADMIN')
-  WITH CHECK (public.get_auth_role() = 'ADMIN');
-COMMIT;
 */

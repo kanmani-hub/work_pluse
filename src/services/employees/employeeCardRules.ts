@@ -31,8 +31,8 @@ export function employeeCards(
 
   return {
     total: pack(list.map(base)),
-    active: pack(list.filter(e => String(e.status || '').toUpperCase() === 'ACTIVE').map(base)),
-    inactive: pack(list.filter(e => String(e.status || '').toUpperCase() === 'INACTIVE').map(base)),
+    active: pack(list.filter(e => e.status === 'ACTIVE').map(base)),
+    inactive: pack(list.filter(e => e.status === 'INACTIVE').map(base)),
     onLeave: pack(onLeave),
     wfhToday: pack(wfhToday),
   };

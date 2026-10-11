@@ -965,7 +965,7 @@ main, .app-content { width: 100%; max-width: 100%; min-width: 0; }
   .table-responsive { display: block; width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table { min-width: 600px; }
   
-  .map-container, .mock-map { width: 100% !important; max-width: 100% !important; min-width: 0 !important; height: 350px !important; aspect-ratio: 1/1 !important; }
+  .map-container, .mock-map { width: 100% !important; max-width: 100% !important; min-width: 0 !important; height: clamp(260px, 45vh, 380px) !important; aspect-ratio: auto !important; }
   
   .desktop-controls { display: none !important; }
   .drawer { width: 100% !important; max-width: 100% !important; }

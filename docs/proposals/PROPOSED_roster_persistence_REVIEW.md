@@ -68,33 +68,3 @@ With the migration, a Sun–Sat roster overlapping an existing Mon–Sun roster 
 3. In the **staging** SQL editor: PART 0 → compare → PART 1 with `ROLLBACK` (dry run) → PART 1 with `COMMIT` → PART 2 → PART 3 (expect all PASS).
 4. Point a local copy of the app at staging (`.env.staging`, `npm run kanz -- --mode staging`), check the screen shows staging data, create a staging Admin and Employee, and test: save Office/WFH/Week Off, re-save the same cell, publish, try editing (refused), unpublish, generate staging payroll and check a Week Off and a rostered Sunday change the absences. As the Employee, reading works and any write is refused.
 5. Only after that, plan production in a quiet window with a fresh PART 0.
-
-## Revision 3 (2026-10-10) — aligned with the live database
-
-Live state reported on 2026-10-10 (read-only): `day_type` / `work_mode` missing; policies
-`Manage rosters` / `Manage roster_assignments` (FOR ALL, `get_auth_role() IN ('ADMIN','HR')`) already
-exist from `supabase/migrations/20261010131800_fix_rosters_rls.sql`; 1 DRAFT roster (2026-10-05 → 2026-10-11), 0 entries.
-
-Changes from revision 2:
-- PART 1 no longer creates the `Admin manages …` policies (they would duplicate the existing ones).
-- New pre-checks: the two `Manage …` policies must exist exactly as `get_auth_role() IN ('ADMIN','HR')`
-  (FOR ALL, TO authenticated) and no other policy may exist on the two tables; otherwise PART 1 aborts.
-- `NOTIFY pgrst, 'reload schema';` after COMMIT so the API sees the new columns at once.
-- PART 5 (optional, commented out): narrow writes to ADMIN only, as decided on 2026-10-09. Needs explicit approval.
-- The existing DRAFT roster is valid (Mon–Sun, no overlaps, no entries) and is reused by the app; nothing is deleted.
-
-## Revision 3.1 (2026-10-11) — review follow-ups
-
-- **Who manages rosters:** ADMIN **and HR** can create, change, publish, unpublish and delete rosters and
-  roster entries (policies `Manage rosters` / `Manage roster_assignments`, from
-  `supabase/migrations/20261010131800_fix_rosters_rls.sql`). Every signed-in user can read them; anonymous
-  users cannot. Owner decision 2026-10-11: keep this. PART 5 (ADMIN only) is not part of the change.
-  The roster guards (dates inside the week, DRAFT-only edits, publish / unpublish rules) apply to ADMIN and HR alike.
-- `rosters.status` is made `NOT NULL` in PART 1 (default stays `DRAFT`). The PART 1 pre-check already aborts
-  if any roster has a NULL status, so existing data is never changed by this step.
-- `REVOKE EXECUTE … FROM anon, authenticated` on `roster_guard_bypass()`, `roster_assignments_guard()`,
-  `rosters_guard()`. Supabase grants EXECUTE on new functions to these roles by default; triggers do not need
-  it to fire and the guards call `roster_guard_bypass()` as the function owner, so saves are unaffected.
-  PART 2 (2a2) shows the result. New pre-check: the `anon` / `authenticated` roles must exist.
-- Rollback (PART 4) also returns `rosters.status` to nullable, as in 0002.
-- Tested only on a local throwaway PostgreSQL 16 that mirrors the live state (not Supabase, not staging).

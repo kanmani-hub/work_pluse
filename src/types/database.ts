@@ -291,10 +291,8 @@ export interface Database {
           start_date: string
           end_date: string
           description: string | null
-          status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+          status: string
           created_by: string | null
-          published_at: string | null
-          published_by: string | null
           created_at: string
           updated_at: string
         }
@@ -304,10 +302,8 @@ export interface Database {
           start_date: string
           end_date: string
           description?: string | null
-          status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+          status?: string
           created_by?: string | null
-          published_at?: string | null
-          published_by?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -317,10 +313,8 @@ export interface Database {
           start_date?: string
           end_date?: string
           description?: string | null
-          status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+          status?: string
           created_by?: string | null
-          published_at?: string | null
-          published_by?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -332,8 +326,8 @@ export interface Database {
           employee_id: string
           shift_template_id: string | null
           assignment_date: string
-          day_type: 'WORK' | 'WEEK_OFF'
-          work_mode: 'OFFICE' | 'WFH'
+          day_type: string
+          work_mode: string
           notes: string | null
           created_at: string
           updated_at: string
@@ -344,8 +338,8 @@ export interface Database {
           employee_id: string
           shift_template_id?: string | null
           assignment_date: string
-          day_type?: 'WORK' | 'WEEK_OFF'
-          work_mode?: 'OFFICE' | 'WFH'
+          day_type?: string
+          work_mode?: string
           notes?: string | null
           created_at?: string
           updated_at?: string
@@ -356,8 +350,8 @@ export interface Database {
           employee_id?: string
           shift_template_id?: string | null
           assignment_date?: string
-          day_type?: 'WORK' | 'WEEK_OFF'
-          work_mode?: 'OFFICE' | 'WFH'
+          day_type?: string
+          work_mode?: string
           notes?: string | null
           created_at?: string
           updated_at?: string

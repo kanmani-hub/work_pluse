@@ -64,7 +64,15 @@ export const rosterService = {
     const saved = await db().from('roster_assignments')
       .upsert(assignmentRow(roster.id, employeeId, date, cell), { onConflict: 'roster_id,employee_id,assignment_date' })
       .select().single();
-    if (saved.error || !saved.data) return { data: null, error: err('Roster entry could not be saved', saved.error || 'no data') };
+    if (saved.error || !saved.data) {
+      if (saved.error?.message?.includes('day_type') || saved.error?.message?.includes('schema cache')) {
+        return {
+          data: null,
+          error: new Error("Database schema missing 'day_type' column on 'roster_assignments'. Please run the migration 'supabase/migrations/20261011170000_roster_persistence.sql' in the Supabase SQL Editor.")
+        };
+      }
+      return { data: null, error: err('Roster entry could not be saved', saved.error || 'no data') };
+    }
     return { data: { roster, assignment: saved.data }, error: null };
   },
 

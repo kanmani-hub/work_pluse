@@ -233,6 +233,13 @@ pre, code {
   min-width: 600px; /* Ensure table doesn't squish too much, rely on horizontal scroll */
 }
 
+/* Card table overflow safety */
+.card:has(> .table),
+.card:has(> table) {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* 32. MAP */
 .map-container, .mock-map {
   width: 100%;
@@ -241,23 +248,54 @@ pre, code {
 }
 @media (max-width: 767px) {
   .map-container, .mock-map {
-    aspect-ratio: 1 / 1 !important;
-    height: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: clamp(240px, 45vh, 360px) !important;
+    aspect-ratio: auto !important;
   }
 }
 
 /* 34 & 35. MODALS & DRAWERS */
+.modal-overlay, .drawer-overlay {
+  padding: clamp(8px, 2vw, 20px) !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+
 @media (max-width: 767px) {
-  .modal-content, .modal {
+  .modal-content, .modal,
+  .modal-overlay > .card,
+  .drawer-overlay > .card,
+  .modal-overlay > div:not(.drawer),
+  .drawer-overlay > div:not(.drawer) {
     width: calc(100vw - 24px) !important;
     max-width: calc(100vw - 24px) !important;
-    max-height: calc(100vh - 32px) !important;
-    margin: 12px auto !important;
+    max-height: calc(100dvh - 32px) !important;
+    margin: auto !important;
     overflow-y: auto !important;
+    box-sizing: border-box !important;
   }
   .drawer-content, .drawer {
     width: 100% !important;
     max-width: 100% !important;
+    max-height: 100dvh !important;
+    overflow-y: auto !important;
+  }
+}
+
+/* NOTIFICATION DROPDOWN */
+.notification-dropdown {
+  width: min(350px, calc(100vw - 24px)) !important;
+  max-width: calc(100vw - 24px) !important;
+}
+@media (max-width: 480px) {
+  .notification-dropdown {
+    position: fixed !important;
+    top: calc(56px + 8px) !important;
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+    max-width: none !important;
   }
 }
 
