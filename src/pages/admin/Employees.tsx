@@ -18,7 +18,6 @@ import { companyDateStr } from '../../utils/companyDate';
 import RecordsModal from '../../components/common/RecordsModal';
 import { clickableCardProps, EMPLOYEE_COLUMNS } from '../../services/common/cardDetails';
 import { employeeCards, type EmployeeCard } from '../../services/employees/employeeCardRules';
-import { normalizeEmployeeStatus, isInactiveEmployee, salaryNeedsUpdate, assignShiftDefaults, assignOfficeDefaults } from '../../services/employees/employeeFormRules';
 
 const AdminEmployees: React.FC = () => {
   const navigate = useNavigate();
@@ -60,8 +59,6 @@ const AdminEmployees: React.FC = () => {
 
   // Form State
   const [formData, setFormData] = useState<any>({});
-  // Salary loaded when the edit form opened (null = none on file) — saved again only if it changes
-  const [loadedSalary, setLoadedSalary] = useState<number | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -110,7 +107,7 @@ const AdminEmployees: React.FC = () => {
     const searchString = `${emp.first_name} ${emp.last_name} ${emp.employee_code} ${emp.email}`.toLowerCase();
     const matchesSearch = searchString.includes(search.toLowerCase());
     const matchesDept = filterDept === 'All' ? true : filterDept === 'Unassigned' ? emp.department_id === null : emp.department_id === filterDept;
-    const matchesStatus = filterStatus === 'All' || normalizeEmployeeStatus(emp.status) === filterStatus;
+    const matchesStatus = filterStatus === 'All' || emp.status === filterStatus;
     return matchesSearch && matchesDept && matchesStatus;
   });
 
@@ -129,21 +126,40 @@ const AdminEmployees: React.FC = () => {
         setShowProfile(emp); 
         break;
       case 'edit': 
-        setFormData({ ...emp, status: normalizeEmployeeStatus(emp.status) || 'ACTIVE' });
-        setLoadedSalary(null);
+        setFormData(emp); 
         setShowEditForm(emp.id); 
         salaryService.getEmployeeSalaryStructure(emp.id).then(res => {
           if (res.data) {
             const salaryData: any = res.data;
-            setLoadedSalary(salaryData.basic_salary === null || salaryData.basic_salary === undefined ? null : Number(salaryData.basic_salary));
             setFormData((prev: any) => ({...prev, gross_salary: salaryData.basic_salary}));
           }
         });
         break;
       case 'deactivate': setDeactivateModal(emp); break;
       case 'reactivate': setReactivateModal(emp); break;
-      case 'shift': setFormData(assignShiftDefaults()); setAssignShiftModal(emp); break;
-      case 'office': setFormData(assignOfficeDefaults(emp)); setAssignOfficeModal(emp); break;
+      case 'shift': {
+        let currentShiftId = '';
+        if (emp.shift_assignments && emp.shift_assignments.length > 0) {
+          const sortedAssignments = [...emp.shift_assignments].sort((a: any, b: any) => new Date(b.effective_date).getTime() - new Date(a.effective_date).getTime());
+          const mostRecent = sortedAssignments.find((sa: any) => new Date(sa.effective_date) <= new Date()) || sortedAssignments[0];
+          if (mostRecent?.shift_templates?.id) {
+            currentShiftId = mostRecent.shift_templates.id;
+          }
+        }
+        setFormData({
+          effective_date: today,
+          shift_id: currentShiftId
+        });
+        setAssignShiftModal(emp);
+        break;
+      }
+      case 'office': {
+        setFormData({
+          office_id: emp.office_id || ''
+        });
+        setAssignOfficeModal(emp);
+        break;
+      }
       case 'attend': navigate('/admin/attendance'); break;
       case 'leave': navigate('/admin/leave'); break;
       case 'wfh': navigate('/admin/wfh'); break;
@@ -176,17 +192,10 @@ const AdminEmployees: React.FC = () => {
       if (error) {
         alert(error.message);
       } else {
-        // A new salary record only when the salary actually changed
-        let salaryError: any = null;
-        if (salaryNeedsUpdate(loadedSalary, gross_salary)) {
-          const res: any = await salaryService.updateSalaryStructure(showEditForm, { basic_salary: Number(gross_salary) });
-          salaryError = res?.error || null;
+        if (gross_salary !== undefined) {
+          await salaryService.updateSalaryStructure(showEditForm, { basic_salary: Number(gross_salary) });
         }
-        if (salaryError) {
-          alert(`Employee details were saved, but the salary could not be updated: ${salaryError.message || salaryError}`);
-        } else {
-          showToast('Employee updated successfully');
-        }
+        showToast('Employee updated successfully');
         setShowEditForm(null);
         loadData();
       }
@@ -196,16 +205,10 @@ const AdminEmployees: React.FC = () => {
       if (error) {
         alert(error.message);
       } else {
-        let salaryError: any = null;
-        if (data?.id && salaryNeedsUpdate(null, gross_salary)) {
-          const res: any = await salaryService.updateSalaryStructure(data.id, { basic_salary: Number(gross_salary) });
-          salaryError = res?.error || null;
+        if (data?.id && gross_salary !== undefined) {
+          await salaryService.updateSalaryStructure(data.id, { basic_salary: Number(gross_salary) });
         }
-        if (salaryError) {
-          alert(`Employee was added, but the salary could not be saved: ${salaryError.message || salaryError}. Set it from the employee's Payroll tab.`);
-        } else {
-          showToast('Employee added successfully');
-        }
+        showToast('Employee added successfully');
         setShowAddForm(false);
         loadData();
       }
@@ -254,10 +257,16 @@ const AdminEmployees: React.FC = () => {
 
   const handleAssignShift = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData.shift_id) {
+      alert('Please select a shift');
+      return;
+    }
     setLoading(true);
-    const { error } = await employeeService.assignShift(assignShiftModal.id, formData.shift_id, formData.effective_date);
+    const effectiveDate = formData.effective_date || today;
+    const { error } = await employeeService.assignShift(assignShiftModal.id, formData.shift_id, effectiveDate);
     if (!error) {
       setAssignShiftModal(null);
+      setFormData({});
       showToast('Shift assigned successfully');
       loadData();
     } else {
@@ -269,9 +278,11 @@ const AdminEmployees: React.FC = () => {
   const handleAssignOffice = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await employeeService.updateEmployee(assignOfficeModal.id, { office_id: formData.office_id });
+    const officeId = formData.office_id || assignOfficeModal.office_id || null;
+    const { error } = await employeeService.updateEmployee(assignOfficeModal.id, { office_id: officeId });
     if (!error) {
       setAssignOfficeModal(null);
+      setFormData({});
       showToast('Office assignment updated successfully');
       loadData();
     } else {
@@ -456,7 +467,7 @@ const AdminEmployees: React.FC = () => {
                     <td><input type="checkbox" checked={selectedIds.includes(emp.id)} onChange={() => toggleSelection(emp.id)} /></td>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div className="avatar" style={{ backgroundColor: isInactiveEmployee(emp.status) ? 'var(--gray-300)' : 'var(--primary-100)', color: isInactiveEmployee(emp.status) ? 'var(--gray-700)' : 'var(--primary-700)' }}>
+                        <div className="avatar" style={{ backgroundColor: emp.status === 'INACTIVE' ? 'var(--gray-300)' : 'var(--primary-100)', color: emp.status === 'INACTIVE' ? 'var(--gray-700)' : 'var(--primary-700)' }}>
                           {emp.first_name?.[0] || ''}{emp.last_name?.[0] || ''}
                         </div>
                         <div>
@@ -489,8 +500,8 @@ const AdminEmployees: React.FC = () => {
                       })()}
                     </td>
                     <td>
-                      <span className={`badge ${normalizeEmployeeStatus(emp.status) === 'ACTIVE' ? 'badge-success' : isInactiveEmployee(emp.status) ? 'badge-gray' : 'badge-warning'}`}>
-                        {normalizeEmployeeStatus(emp.status) || emp.status}
+                      <span className={`badge ${emp.status === 'ACTIVE' ? 'badge-success' : emp.status === 'INACTIVE' ? 'badge-gray' : 'badge-warning'}`}>
+                        {emp.status}
                       </span>
                     </td>
                     <td style={{ textAlign: 'right', position: 'relative' }}>
@@ -500,7 +511,7 @@ const AdminEmployees: React.FC = () => {
                         <div className="dropdown-menu" style={{ position: 'absolute', right: '30px', top: '12px', zIndex: 10 }}>
                           <button onClick={() => handleActionClick('profile', emp)} className="dropdown-item"><Eye size={14}/> View Profile</button>
                           <button onClick={() => handleActionClick('edit', emp)} className="dropdown-item"><Edit size={14}/> Edit Employee</button>
-                          {!isInactiveEmployee(emp.status) && (
+                          {emp.status !== 'INACTIVE' && (
                             <>
                               <button onClick={() => handleActionClick('shift', emp)} className="dropdown-item"><Clock size={14}/> Assign Shift</button>
                               <button onClick={() => handleActionClick('office', emp)} className="dropdown-item"><MapPin size={14}/> Assign Office</button>
@@ -514,7 +525,7 @@ const AdminEmployees: React.FC = () => {
                           )}
                           <div className="dropdown-divider"></div>
                           <button onClick={() => handleActionClick('delete', emp)} className="dropdown-item danger"><Trash2 size={14}/> Delete</button>
-                          {isInactiveEmployee(emp.status) && (
+                          {emp.status === 'INACTIVE' && (
                             <>
                               <div className="dropdown-divider"></div>
                               <button onClick={() => handleActionClick('reactivate', emp)} className="dropdown-item"><UserCheck size={14}/> Reactivate</button>
@@ -621,7 +632,7 @@ const AdminEmployees: React.FC = () => {
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, borderBottom: '1px solid var(--gray-200)', paddingBottom: '0.5rem', marginBottom: '1rem' }}>Salary Information</h3>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
-                    <label className="form-label">Basic Salary *</label>
+                    <label className="form-label">Gross Salary *</label>
                     <input required type="number" min="0" className="form-control" value={formData.gross_salary || ''} onChange={e => setFormData({...formData, gross_salary: e.target.value})} placeholder="e.g. 50000" />
                   </div>
                 </div>
@@ -686,7 +697,7 @@ const AdminEmployees: React.FC = () => {
             <div className="drawer-header" style={{ borderBottom: 'none', paddingBottom: 0 }}>
               <button className="icon-button" onClick={() => setShowProfile(null)} style={{ position: 'absolute', right: '1.5rem', top: '1.5rem' }}><X size={20} /></button>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '1.5rem' }}>
-                <div className="avatar" style={{ width: '80px', height: '80px', fontSize: '2rem', backgroundColor: isInactiveEmployee(showProfile.status) ? 'var(--gray-200)' : 'var(--primary-100)', color: isInactiveEmployee(showProfile.status) ? 'var(--gray-500)' : 'var(--primary-700)' }}>
+                <div className="avatar" style={{ width: '80px', height: '80px', fontSize: '2rem', backgroundColor: showProfile.status === 'INACTIVE' ? 'var(--gray-200)' : 'var(--primary-100)', color: showProfile.status === 'INACTIVE' ? 'var(--gray-500)' : 'var(--primary-700)' }}>
                   {showProfile.first_name?.[0]}{showProfile.last_name?.[0]}
                 </div>
                 <div>
@@ -697,7 +708,7 @@ const AdminEmployees: React.FC = () => {
                     <span>{showProfile.department?.name || 'Unassigned'}</span>
                     <span>•</span>
                     <span>{showProfile.designation || 'No Designation'}</span>
-                    <span className={`badge ${normalizeEmployeeStatus(showProfile.status) === 'ACTIVE' ? 'badge-success' : isInactiveEmployee(showProfile.status) ? 'badge-gray' : 'badge-warning'}`}>{normalizeEmployeeStatus(showProfile.status) || showProfile.status}</span>
+                    <span className={`badge ${showProfile.status === 'ACTIVE' ? 'badge-success' : showProfile.status === 'INACTIVE' ? 'badge-gray' : 'badge-warning'}`}>{showProfile.status}</span>
                   </div>
                 </div>
               </div>
@@ -806,11 +817,22 @@ const AdminEmployees: React.FC = () => {
             <form onSubmit={handleAssignShift} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="form-label">Effective Date</label>
-                <input type="date" required className="form-control" value={formData.effective_date || ''} onChange={e => setFormData({...formData, effective_date: e.target.value})} />
+                <input 
+                  type="date" 
+                  required 
+                  className="form-control" 
+                  value={formData.effective_date || today} 
+                  onChange={e => setFormData({ ...formData, effective_date: e.target.value })} 
+                />
               </div>
               <div>
                 <label className="form-label">Shift</label>
-                <select className="form-control" required value={formData.shift_id || ''} onChange={e => setFormData({...formData, shift_id: e.target.value})}>
+                <select 
+                  className="form-control" 
+                  required 
+                  value={formData.shift_id || ''} 
+                  onChange={e => setFormData({ ...formData, shift_id: e.target.value })}
+                >
                   <option value="">Select a shift...</option>
                   {shifts.map(s => (
                     <option key={s.id} value={s.id}>{s.name} ({s.start_time} - {s.end_time})</option>
@@ -818,7 +840,7 @@ const AdminEmployees: React.FC = () => {
                 </select>
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-                <button type="button" onClick={() => setAssignShiftModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
+                <button type="button" onClick={() => { setAssignShiftModal(null); setFormData({}); }} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
                 <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Assign Shift</button>
               </div>
             </form>
@@ -833,7 +855,7 @@ const AdminEmployees: React.FC = () => {
             <form onSubmit={handleAssignOffice} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="form-label">Office</label>
-                <select className="form-control" value={formData.office_id || ''} onChange={e => setFormData({...formData, office_id: e.target.value})}>
+                <select className="form-control" value={formData.office_id || assignOfficeModal.office_id || ''} onChange={e => setFormData({...formData, office_id: e.target.value})}>
                   <option value="">Select an office...</option>
                   {offices.map(o => (
                     <option key={o.id} value={o.id}>{o.name}</option>
@@ -841,7 +863,7 @@ const AdminEmployees: React.FC = () => {
                 </select>
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-                <button type="button" onClick={() => setAssignOfficeModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
+                <button type="button" onClick={() => { setAssignOfficeModal(null); setFormData({}); }} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
                 <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Assign Office</button>
               </div>
             </form>

@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Hourglass, Clock, AlertTriangle, X, RefreshCw } from 'lucide-react';
+import { Hourglass, Clock, AlertTriangle, X, RefreshCw, Plus } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { overtimeService, OT_NOT_SET_UP, type OvertimeDay } from '../../services/overtime/overtimeService';
-import { OT_REASON_TEXT, validateOvertimeRequest, formatHours, minutesToHours } from '../../services/overtime/overtimeRules';
+import { OT_REASON_TEXT, validateOvertimeRequest, formatHours, minutesToHours, ACTIVE_OVERTIME_STATUSES } from '../../services/overtime/overtimeRules';
 import { formatDay } from '../../services/notifications/notificationRules';
-import { formatShiftClock } from '../../services/attendance/employeeDashboardRules';
+import { formatShiftClock, formatCompanyTime } from '../../services/attendance/employeeDashboardRules';
 import { companyDateStr } from '../../utils/companyDate';
 import RecordsModal from '../../components/common/RecordsModal';
 import { clickableCardProps } from '../../services/common/cardDetails';
@@ -21,7 +21,8 @@ const EmployeeOvertime: React.FC = () => {
   const [notSetUp, setNotSetUp] = useState(false);
   const [toast, setToast] = useState('');
 
-  const [requestDay, setRequestDay] = useState<OvertimeDay | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedAttId, setSelectedAttId] = useState<string>('');
   const [hours, setHours] = useState('');
   const [reason, setReason] = useState('');
   const [formError, setFormError] = useState('');
@@ -59,21 +60,65 @@ const EmployeeOvertime: React.FC = () => {
   const kpi = { pending: myOt.cards.pending.count, approvedHours: myOt.approvedHours, potentialDays: myOt.cards.requestable.count };
   const [openCard, setOpenCard] = useState<MyOvertimeCard | null>(null);
 
+  const selectedDay = useMemo(() => days.find(d => d.attendance.id === selectedAttId) || null, [days, selectedAttId]);
+  const isSelectedDuplicate = useMemo(() => Boolean(selectedDay?.request && ACTIVE_OVERTIME_STATUSES.includes(selectedDay.request.status)), [selectedDay]);
+
+  const openRaiseModal = () => {
+    setFormError('');
+    setIsModalOpen(true);
+    const defaultDay = requestable[0] || days[0];
+    if (defaultDay) {
+      setSelectedAttId(defaultDay.attendance.id);
+      if (defaultDay.estimate.eligible && (!defaultDay.request || ['REJECTED', 'CANCELLED'].includes(defaultDay.request.status))) {
+        setHours(String(defaultDay.estimate.potentialHours));
+      } else {
+        setHours('');
+      }
+    } else {
+      setSelectedAttId('');
+      setHours('');
+    }
+    setReason('');
+  };
+
   const openRequest = (d: OvertimeDay) => {
-    setRequestDay(d); setHours(String(d.estimate.potentialHours)); setReason(''); setFormError('');
+    setFormError('');
+    setSelectedAttId(d.attendance.id);
+    setHours(String(d.estimate.potentialHours));
+    setReason('');
+    setIsModalOpen(true);
+  };
+
+  const handleSelectDay = (attId: string) => {
+    setSelectedAttId(attId);
+    setFormError('');
+    const d = days.find(x => x.attendance.id === attId);
+    if (d?.estimate.eligible && (!d.request || ['REJECTED', 'CANCELLED'].includes(d.request.status))) {
+      setHours(String(d.estimate.potentialHours));
+    } else {
+      setHours('');
+    }
   };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!requestDay || submitting) return;
+    if (!selectedDay || submitting) return;
+    if (!selectedDay.estimate.eligible) {
+      setFormError(selectedDay.estimate.reason ? OT_REASON_TEXT[selectedDay.estimate.reason] : 'This day is not eligible for overtime.');
+      return;
+    }
+    if (selectedDay.request && ACTIVE_OVERTIME_STATUSES.includes(selectedDay.request.status)) {
+      setFormError('An overtime request already exists for this day.');
+      return;
+    }
     const h = Number(hours);
-    const invalid = validateOvertimeRequest(h, requestDay.estimate.potentialHours, reason);
+    const invalid = validateOvertimeRequest(h, selectedDay.estimate.potentialHours, reason);
     if (invalid) { setFormError(invalid); return; }
     setSubmitting(true);
-    const { error: err } = await overtimeService.createRequest(requestDay.attendance.id, h, reason);
+    const { error: err } = await overtimeService.createRequest(selectedDay.attendance.id, h, reason);
     setSubmitting(false);
     if (err) { setFormError(err.message); return; }
-    setRequestDay(null);
+    setIsModalOpen(false);
     setToast('Overtime request submitted for review.');
     setTimeout(() => setToast(''), 3000);
     load();
@@ -98,7 +143,10 @@ const EmployeeOvertime: React.FC = () => {
             Extra time is not overtime until you request it and an administrator approves the hours.
           </p>
         </div>
-        <button className="btn btn-outline" onClick={() => { setLoading(true); load(); }}><RefreshCw size={16} /> Refresh</button>
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-outline" onClick={() => { setLoading(true); load(); }}><RefreshCw size={16} /> Refresh</button>
+          <button className="btn btn-primary" onClick={openRaiseModal} disabled={notSetUp}><Plus size={16} /> Raise Overtime Request</button>
+        </div>
       </div>
 
       {notSetUp && (
@@ -144,7 +192,12 @@ const EmployeeOvertime: React.FC = () => {
       </div>
 
       <div className="card">
-        <h3 className="card-title" style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Clock size={18} /> My requests</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+          <h3 className="card-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Clock size={18} /> My requests</h3>
+          <button className="btn btn-primary" style={{ fontSize: '0.8125rem', padding: '0.375rem 0.75rem' }} disabled={notSetUp} onClick={openRaiseModal}>
+            <Plus size={14} /> Raise Overtime Request
+          </button>
+        </div>
         {loading ? <div style={{ color: 'var(--text-secondary)' }}>Loading…</div> : requests.length === 0 ? (
           <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>You have not requested overtime in the last 31 days.</div>
         ) : (
@@ -180,32 +233,137 @@ const EmployeeOvertime: React.FC = () => {
         )}
       </div>
 
-      {requestDay && (
+      {isModalOpen && (
         <div className="drawer-overlay" style={{ alignItems: 'center', zIndex: 120 }}>
-          <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '460px', animation: 'slideUp 0.3s' }}>
+          <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '520px', animation: 'slideUp 0.3s' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>Request overtime</h3>
-              <button className="icon-button" onClick={() => setRequestDay(null)} aria-label="Close"><X size={20} /></button>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>Raise Overtime Request</h3>
+              <button className="icon-button" onClick={() => setIsModalOpen(false)} aria-label="Close"><X size={20} /></button>
             </div>
-            <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: 1.6 }}>
-              {formatDay(requestDay.attendance.attendance_date)} · {shiftText(requestDay)}<br />
-              Scheduled {formatHours(minutesToHours(requestDay.estimate.scheduledMinutes ?? 0))} · Worked {formatHours(minutesToHours(requestDay.estimate.workedMinutes))} · Possible overtime (not approved) <strong>{formatHours(requestDay.estimate.potentialHours)}</strong>
-            </div>
-            <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {formError && <div role="alert" style={{ padding: '0.75rem', backgroundColor: 'var(--danger-50)', color: 'var(--danger)', borderRadius: 'var(--radius-md)', fontSize: '0.875rem' }}>{formError}</div>}
-              <div>
-                <label className="form-label" htmlFor="ot-hours">Hours to request (max {requestDay.estimate.potentialHours})</label>
-                <input id="ot-hours" type="number" min="0.01" step="0.01" max={requestDay.estimate.potentialHours} className="form-control" value={hours} onChange={e => setHours(e.target.value)} disabled={submitting} />
+
+            {days.length === 0 ? (
+              <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <p>No attendance records found for the past 31 days. Overtime can only be requested for days where you clocked in and completed attendance.</p>
+                <button type="button" className="btn btn-outline" onClick={() => setIsModalOpen(false)}>Close</button>
               </div>
-              <div>
-                <label className="form-label" htmlFor="ot-reason">Reason *</label>
-                <textarea id="ot-reason" className="form-control" rows={3} value={reason} onChange={e => setReason(e.target.value)} disabled={submitting} placeholder="What did you work on?" />
-              </div>
-              <div style={{ display: 'flex', gap: '1rem' }}>
-                <button type="button" className="btn btn-outline" style={{ flex: 1 }} onClick={() => setRequestDay(null)} disabled={submitting}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={submitting}>{submitting ? 'Submitting…' : 'Submit Overtime Request'}</button>
-              </div>
-            </form>
+            ) : (
+              <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {requestable.length === 0 && (
+                  <div role="alert" style={{ padding: '0.75rem', backgroundColor: 'var(--warning-50, #fffbeb)', border: '1px solid var(--warning-200, #fde68a)', borderRadius: 'var(--radius-md)', fontSize: '0.8125rem', color: 'var(--warning-800, #92400e)' }}>
+                    <strong>No eligible overtime days found in the last 31 days.</strong> Overtime requires completing worked time beyond your scheduled shift hours and clocking out without unapproved leaves or half days.
+                  </div>
+                )}
+
+                <div>
+                  <label className="form-label" htmlFor="ot-work-date">Work Date</label>
+                  <select
+                    id="ot-work-date"
+                    className="form-control"
+                    value={selectedAttId}
+                    onChange={e => handleSelectDay(e.target.value)}
+                    disabled={submitting}
+                  >
+                    {days.map(d => {
+                      const isDup = d.request && ACTIVE_OVERTIME_STATUSES.includes(d.request.status);
+                      let label = `${formatDay(d.attendance.attendance_date)} — `;
+                      if (d.estimate.eligible) {
+                        label += `${formatHours(d.estimate.potentialHours)} eligible`;
+                      } else if (isDup) {
+                        label += `Already ${d.request.status}`;
+                      } else if (d.estimate.reason) {
+                        label += OT_REASON_TEXT[d.estimate.reason];
+                      } else {
+                        label += 'Ineligible';
+                      }
+                      return <option key={d.attendance.id} value={d.attendance.id}>{label}</option>;
+                    })}
+                  </select>
+                </div>
+
+                {selectedDay && (
+                  <div style={{ backgroundColor: 'var(--bg-surface, #f9fafb)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '0.875rem', fontSize: '0.8125rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <div>
+                      <span style={{ color: 'var(--text-secondary)' }}>Scheduled Shift:</span>{' '}
+                      <strong>{shiftText(selectedDay)}</strong>{' '}
+                      ({formatHours(minutesToHours(selectedDay.estimate.scheduledMinutes ?? 0))} scheduled)
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-secondary)' }}>Actual Attendance:</span>{' '}
+                      In: <strong>{formatCompanyTime(selectedDay.attendance.clock_in_at)}</strong> · Out: <strong>{formatCompanyTime(selectedDay.attendance.clock_out_at)}</strong> · Worked: <strong>{formatHours(minutesToHours(selectedDay.estimate.workedMinutes))}</strong>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>Overtime Status:</span>{' '}
+                      {selectedDay.estimate.eligible ? (
+                        <span style={{ color: 'var(--success)', fontWeight: 600 }}>{formatHours(selectedDay.estimate.potentialHours)} eligible</span>
+                      ) : (
+                        <span style={{ color: 'var(--danger)' }}>{selectedDay.estimate.reason ? OT_REASON_TEXT[selectedDay.estimate.reason] : 'Not eligible'}</span>
+                      )}
+                      {selectedDay.request && (
+                        <span className={`badge ${STATUS_BADGE[selectedDay.request.status] || 'badge-gray'}`}>
+                          Existing: {selectedDay.request.status} ({selectedDay.request.requested_overtime_hours}h)
+                        </span>
+                      )}
+                    </div>
+                    {isSelectedDuplicate && (
+                      <div style={{ color: 'var(--warning-800, #92400e)', backgroundColor: 'var(--warning-50, #fffbeb)', padding: '0.375rem 0.5rem', borderRadius: 'var(--radius-sm)', fontSize: '0.75rem' }}>
+                        An overtime request for this date already exists ({selectedDay.request.status}). Duplicate requests are not permitted.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {formError && (
+                  <div role="alert" style={{ padding: '0.75rem', backgroundColor: 'var(--danger-50)', color: 'var(--danger)', borderRadius: 'var(--radius-md)', fontSize: '0.875rem' }}>
+                    {formError}
+                  </div>
+                )}
+
+                <div>
+                  <label className="form-label" htmlFor="ot-hours">
+                    Requested Overtime Hours {selectedDay?.estimate.eligible ? `(max ${selectedDay.estimate.potentialHours})` : ''}
+                  </label>
+                  <input
+                    id="ot-hours"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    max={selectedDay?.estimate.eligible ? selectedDay.estimate.potentialHours : undefined}
+                    className="form-control"
+                    value={hours}
+                    onChange={e => setHours(e.target.value)}
+                    disabled={submitting || !selectedDay?.estimate.eligible || isSelectedDuplicate}
+                    placeholder="e.g. 1.50"
+                  />
+                </div>
+
+                <div>
+                  <label className="form-label" htmlFor="ot-reason">Reason *</label>
+                  <textarea
+                    id="ot-reason"
+                    className="form-control"
+                    rows={3}
+                    value={reason}
+                    onChange={e => setReason(e.target.value)}
+                    disabled={submitting || !selectedDay?.estimate.eligible || isSelectedDuplicate}
+                    placeholder="What project or deliverables did you work on?"
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                  <button type="button" className="btn btn-outline" style={{ flex: 1 }} onClick={() => setIsModalOpen(false)} disabled={submitting}>
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    style={{ flex: 1 }}
+                    disabled={submitting || !selectedDay?.estimate.eligible || isSelectedDuplicate}
+                  >
+                    {submitting ? 'Submitting…' : 'Submit Overtime Request'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

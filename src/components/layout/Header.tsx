@@ -18,7 +18,7 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
   const [notifications, setNotifications] = useState<any[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { theme, toggleTheme } = useTheme();
-  const { user, employee, role: actualRole } = useAuth();
+  const { employee, role: actualRole } = useAuth();
 
   // Latest list + unread count (also used when the bell is opened)
   const refreshNotifications = React.useCallback(async () => {
@@ -90,16 +90,8 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
     navigate(role === 'admin' ? '/admin/notifications' : '/employee/notifications');
   };
 
-  const userMetaName = user?.user_metadata?.full_name || user?.user_metadata?.name || user?.user_metadata?.first_name;
-  const displayName = userMetaName
-    ? [user?.user_metadata?.first_name, user?.user_metadata?.last_name].filter(Boolean).join(' ') || userMetaName
-    : employee 
-      ? [employee.first_name, employee.last_name].filter(Boolean).join(' ') || 'Admin' 
-      : (role === 'admin' ? 'System Admin' : 'Employee');
-
-  const firstInitial = (user?.user_metadata?.first_name || user?.user_metadata?.full_name || employee?.first_name || '').trim().charAt(0);
-  const lastInitial = (user?.user_metadata?.last_name || employee?.last_name || '').trim().charAt(0);
-  const initials = `${firstInitial}${lastInitial}`.toUpperCase() || 'P';
+  const displayName = employee ? `${employee.first_name} ${employee.last_name}` : (role === 'admin' ? 'System Admin' : 'Employee');
+  const initials = employee ? `${employee.first_name.charAt(0)}${employee.last_name.charAt(0)}` : (role === 'admin' ? 'SA' : 'EM');
   const displayRole = actualRole || (role === 'admin' ? 'Admin' : 'Employee');
 
   return (
@@ -176,11 +168,12 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
           </button>
           
           {showDropdown && (
-            <div style={{ 
+            <div className="notification-dropdown" style={{ 
               position: 'absolute', top: 'calc(100% + 1rem)', right: 0, 
-              width: '350px', backgroundColor: 'var(--bg-surface-elevated)', 
+              width: 'min(350px, calc(100vw - 24px))', maxWidth: 'calc(100vw - 24px)',
+              backgroundColor: 'var(--bg-surface-elevated)', 
               boxShadow: 'var(--shadow-lg)', borderRadius: 'var(--radius-xl)', 
-              border: '1px solid var(--border-color)', zIndex: 50,
+              border: '1px solid var(--border-color)', zIndex: 100,
               display: 'flex', flexDirection: 'column', overflow: 'hidden',
               animation: 'fadeIn var(--transition-fast)'
             }}>

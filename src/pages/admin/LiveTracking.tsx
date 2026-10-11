@@ -16,18 +16,11 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import LeafletLiveMap from '../../components/tracking/LeafletLiveMap';
 import LiveActivityLogs from '../../components/tracking/LiveActivityLogs';
-import { trackingState } from '../../services/location/trackingStateRules';
 type EmployeeStatus = 'Working' | 'On Break' | 'WFH' | 'Outside Geofence' | 'Location Unavailable' | 'Offline' | 'Clocked Out';
 type WorkMode = 'Office' | 'WFH' | 'Hybrid';
 
 interface LiveEmployee {
   id: string;
-  // Tracking state (device time vs server receive time, see trackingStateRules)
-  trackingState: string;
-  trackingLabel: string;
-  deviceTime: string;
-  serverTime: string;
-  pendingText: string | null;
   empId: string;
   name: string;
   department: string;
@@ -64,9 +57,7 @@ const getStatusColor = (status: string) => {
 /** Adapt shared Live Tracking rows to the fields the existing list, drawer and map read. */
 function toDisplayRows(input: LiveTrackingInput, nowMs: number) {
   return buildLiveTrackingRows(input, nowMs).map((r: any) => {
-    // Device time vs server receive time: only a LIVE reading is shown as the current location
-    const ts = trackingState({ deviceRecordedAt: r.lastSeenAt, serverReceivedAt: r.serverReceivedAt, isTracking: r.isTracking, distanceMeters: r.distanceMeters }, nowMs);
-    const stale = !ts.isCurrent;
+    const stale = !r.lastSeenAt || (nowMs - new Date(r.lastSeenAt).getTime()) / 60000 > 15;
     const locationStatus = !r.lastSeenAt ? 'No location'
       : stale ? 'STALE / LAST KNOWN'
       : r.geofence === 'INSIDE' ? 'Inside Geofence' : r.geofence === 'OUTSIDE' ? 'Outside Geofence' : (r.geofence || 'Unknown');
@@ -77,12 +68,7 @@ function toDisplayRows(input: LiveTrackingInput, nowMs: number) {
     return {
       ...r,
       locationStatus,
-      trackingState: ts.state,
-      trackingLabel: ts.state === 'LIVE' ? locationStatus : ts.label,
-      deviceTime: ts.deviceTime,
-      serverTime: ts.serverTime,
-      pendingText: ts.pendingText,
-      distance: stale && r.distanceMeters != null ? ts.distanceText : dist,
+      distance: stale && r.distanceMeters != null ? `Last known: ${dist}` : dist,
       lastUpdated: r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) : '-',
       workingSince: r.clockInAt ? new Date(r.clockInAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '-',
       officeLat, officeLng,
@@ -562,7 +548,7 @@ const AdminLiveTracking: React.FC = () => {
                               <td>
                                 <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
                                   <MapPin size={14} color="var(--gray-400)" />
-                                  <span style={{ fontSize: "0.875rem", color: emp.locationStatus === 'STALE / LAST KNOWN' ? "var(--text-secondary)" : "inherit" }}>{emp.trackingLabel}</span>
+                                  <span style={{ fontSize: "0.875rem", color: emp.locationStatus === 'STALE / LAST KNOWN' ? "var(--text-secondary)" : "inherit" }}>{emp.locationStatus}</span>
                                 </div>
                                 {emp.distance !== "N/A" && emp.distance !== "Unknown" && (
                                   <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", marginLeft: "1.25rem" }}>{emp.distance}</div>
@@ -637,50 +623,52 @@ const AdminLiveTracking: React.FC = () => {
                 No tracking history found for the selected criteria.
               </div>
             ) : (
-              <table className="table" style={{ width: "100%" }}>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Employee</th>
-                    <th>Status</th>
-                    <th>Context</th>
-                    <th>Distance</th>
-                    <th>Location (Lat/Lng)</th>
-                    <th>Source</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredHistory.map((rec: any) => (
-                    <tr key={rec.id}>
-                      <td style={{ whiteSpace: "nowrap", fontWeight: 500 }}>
-                        {new Date(rec.recorded_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                      </td>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>{rec.employees ? `${rec.employees.first_name} ${rec.employees.last_name}` : 'Unknown'}</div>
-                        <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>{rec.employees?.employee_code}</div>
-                      </td>
-                      <td>
-                        <span className="badge" style={{ 
-                          backgroundColor: rec.location_status === 'INSIDE_GEOFENCE' ? 'var(--success-50)' : 'var(--danger-50)',
-                          color: rec.location_status === 'INSIDE_GEOFENCE' ? 'var(--success-700)' : 'var(--danger-700)'
-                        }}>
-                          {rec.location_status}
-                        </span>
-                      </td>
-                      <td>{rec.location_context}</td>
-                      <td>{rec.distance_from_office_meters != null ? `${Math.round(rec.distance_from_office_meters)}m` : '-'}</td>
-                      <td>
-                        {rec.latitude && rec.longitude ? (
-                          <div style={{ fontSize: "0.75rem" }}>
-                            {rec.latitude.toFixed(5)}, {rec.longitude.toFixed(5)}
-                          </div>
-                        ) : '-'}
-                      </td>
-                      <td style={{ color: "var(--text-secondary)", fontSize: "0.875rem" }}>{rec.source || '-'}</td>
+              <div className="table-container">
+                <table className="table" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Employee</th>
+                      <th>Status</th>
+                      <th>Context</th>
+                      <th>Distance</th>
+                      <th>Location (Lat/Lng)</th>
+                      <th>Source</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {filteredHistory.map((rec: any) => (
+                      <tr key={rec.id}>
+                        <td style={{ whiteSpace: "nowrap", fontWeight: 500 }}>
+                          {new Date(rec.recorded_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{rec.employees ? `${rec.employees.first_name} ${rec.employees.last_name}` : 'Unknown'}</div>
+                          <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>{rec.employees?.employee_code}</div>
+                        </td>
+                        <td>
+                          <span className="badge" style={{ 
+                            backgroundColor: rec.location_status === 'INSIDE_GEOFENCE' ? 'var(--success-50)' : 'var(--danger-50)',
+                            color: rec.location_status === 'INSIDE_GEOFENCE' ? 'var(--success-700)' : 'var(--danger-700)'
+                          }}>
+                            {rec.location_status}
+                          </span>
+                        </td>
+                        <td>{rec.location_context}</td>
+                        <td>{rec.distance_from_office_meters != null ? `${Math.round(rec.distance_from_office_meters)}m` : '-'}</td>
+                        <td>
+                          {rec.latitude && rec.longitude ? (
+                            <div style={{ fontSize: "0.75rem" }}>
+                              {rec.latitude.toFixed(5)}, {rec.longitude.toFixed(5)}
+                            </div>
+                          ) : '-'}
+                        </td>
+                        <td style={{ color: "var(--text-secondary)", fontSize: "0.875rem" }}>{rec.source || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
@@ -721,14 +709,12 @@ const AdminLiveTracking: React.FC = () => {
                   <div className="detail-item" style={{ gridColumn: "1 / -1" }}><span className="detail-label">Assigned Office</span><span className="detail-value">{selectedEmp.office}</span></div>
                   <div className="detail-item" style={{ gridColumn: "1 / -1" }}><span className="detail-label">Location Status</span>
                     <span className="detail-value" style={{ fontWeight: 600, color: selectedEmp.status === "Outside Geofence" ? "var(--danger-600)" : "inherit" }}>
-                      {selectedEmp.trackingLabel}
+                      {selectedEmp.locationStatus}
                     </span>
                   </div>
                   <div className="detail-item"><span className="detail-label">Distance</span><span className="detail-value">{selectedEmp.distance}</span></div>
                   <div className="detail-item"><span className="detail-label">Geofence Radius</span><span className="detail-value">{selectedEmp.officeRadius != null ? `${selectedEmp.officeRadius}m` : '-'}</span></div>
-                  <div className="detail-item"><span className="detail-label">Recorded by Device</span><span className="detail-value">{selectedEmp.deviceTime}</span></div>
-                  <div className="detail-item"><span className="detail-label">Received by Server</span><span className="detail-value">{selectedEmp.serverTime}</span></div>
-                  {selectedEmp.pendingText && <div className="detail-item" style={{ gridColumn: "1 / -1" }}><span className="detail-label">Waiting to Sync</span><span className="detail-value">{selectedEmp.pendingText}</span></div>}
+                  <div className="detail-item" style={{ gridColumn: "1 / -1" }}><span className="detail-label">Last Location Update</span><span className="detail-value">{selectedEmp.lastUpdated}</span></div>
                 </div>
               </div>
             </div>
