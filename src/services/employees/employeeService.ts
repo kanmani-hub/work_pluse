@@ -218,7 +218,8 @@ export const employeeService = {
    * Deactivate an employee (soft delete).
    */
   async deactivateEmployee(id: string): Promise<{ data: EmployeeRow | null; error: Error | null }> {
-    return this.updateEmployee(id, { status: 'Inactive' });
+    // Same value the rest of the app checks ('ACTIVE' / 'INACTIVE')
+    return this.updateEmployee(id, { status: 'INACTIVE' });
   },
 
   /**

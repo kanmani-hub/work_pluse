@@ -128,6 +128,9 @@ export function buildLiveTrackingRows(input: LiveTrackingInput, nowMs: number) {
       activeBreak,
       workSeconds: timer?.workSeconds ?? null,
       lastSeenAt,
+      // Server receive time (employee_live_locations.updated_at) and whether the device reports tracking
+      serverReceivedAt: live?.updated_at ?? null,
+      isTracking: live?.is_tracking ?? null,
       accuracy: live?.accuracy_meters ?? null,
       distanceMeters: live?.distance_from_office_meters ?? null,
       geofence,

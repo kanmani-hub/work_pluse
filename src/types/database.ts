@@ -291,8 +291,10 @@ export interface Database {
           start_date: string
           end_date: string
           description: string | null
-          status: string
+          status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
           created_by: string | null
+          published_at: string | null
+          published_by: string | null
           created_at: string
           updated_at: string
         }
@@ -302,8 +304,10 @@ export interface Database {
           start_date: string
           end_date: string
           description?: string | null
-          status?: string
+          status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
           created_by?: string | null
+          published_at?: string | null
+          published_by?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -313,8 +317,10 @@ export interface Database {
           start_date?: string
           end_date?: string
           description?: string | null
-          status?: string
+          status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
           created_by?: string | null
+          published_at?: string | null
+          published_by?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -324,8 +330,10 @@ export interface Database {
           id: string
           roster_id: string
           employee_id: string
-          shift_template_id: string
+          shift_template_id: string | null
           assignment_date: string
+          day_type: 'WORK' | 'WEEK_OFF'
+          work_mode: 'OFFICE' | 'WFH'
           notes: string | null
           created_at: string
           updated_at: string
@@ -334,8 +342,10 @@ export interface Database {
           id?: string
           roster_id: string
           employee_id: string
-          shift_template_id: string
+          shift_template_id?: string | null
           assignment_date: string
+          day_type?: 'WORK' | 'WEEK_OFF'
+          work_mode?: 'OFFICE' | 'WFH'
           notes?: string | null
           created_at?: string
           updated_at?: string
@@ -344,8 +354,10 @@ export interface Database {
           id?: string
           roster_id?: string
           employee_id?: string
-          shift_template_id?: string
+          shift_template_id?: string | null
           assignment_date?: string
+          day_type?: 'WORK' | 'WEEK_OFF'
+          work_mode?: 'OFFICE' | 'WFH'
           notes?: string | null
           created_at?: string
           updated_at?: string

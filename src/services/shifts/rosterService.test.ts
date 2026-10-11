@@ -80,6 +80,26 @@ describe('saving roster cells', () => {
     expect(entries()[0]).toMatchObject({ assignment_date: '2026-10-14', day_type: 'WEEK_OFF', shift_template_id: null });
   });
 
+  it('saves Office, WFH, and Week Off cells with exact schema columns (day_type, work_mode, nullable shift)', async () => {
+    // 1. Office WORK cell
+    const rOffice = await rosterService.saveCell(WEEK[0], WEEK[1], 'e1', '2026-10-12', work('s1', 'OFFICE'));
+    expect(rOffice.error).toBeNull();
+    // 2. WFH WORK cell
+    const rWfh = await rosterService.saveCell(WEEK[0], WEEK[1], 'e1', '2026-10-13', work('s2', 'WFH'));
+    expect(rWfh.error).toBeNull();
+    // 3. Week Off cell (no shift)
+    const rWeekOff = await rosterService.saveCell(WEEK[0], WEEK[1], 'e1', '2026-10-14', weekOff);
+    expect(rWeekOff.error).toBeNull();
+
+    const officeRow = entries().find((x: any) => x.assignment_date === '2026-10-12');
+    const wfhRow = entries().find((x: any) => x.assignment_date === '2026-10-13');
+    const weekOffRow = entries().find((x: any) => x.assignment_date === '2026-10-14');
+
+    expect(officeRow).toMatchObject({ day_type: 'WORK', work_mode: 'OFFICE', shift_template_id: 's1' });
+    expect(wfhRow).toMatchObject({ day_type: 'WORK', work_mode: 'WFH', shift_template_id: 's2' });
+    expect(weekOffRow).toMatchObject({ day_type: 'WEEK_OFF', work_mode: 'OFFICE', shift_template_id: null });
+  });
+
   it('a date outside the week is refused', async () => {
     const r = await rosterService.saveCell(WEEK[0], WEEK[1], 'e1', '2026-10-19', work());
     expect(r.error?.message).toBe('The date 2026-10-19 is outside this roster (2026-10-12 to 2026-10-18).');

@@ -76,3 +76,41 @@ describe('roster periods (2026-10-10 date fix)', () => {
     expect(overlapError([], '2026-10-05', '2026-10-11')).toBeNull();
   });
 });
+
+describe('payload matches the database constraints in PROPOSED_roster_persistence.sql (revision 3)', () => {
+  // day_type IN ('WORK','WEEK_OFF'); work_mode IN ('OFFICE','WFH');
+  // (day_type = 'WORK' AND shift_template_id IS NOT NULL) OR (day_type = 'WEEK_OFF' AND shift_template_id IS NULL)
+  const satisfies = (row: any) =>
+    ['WORK', 'WEEK_OFF'].includes(row.day_type) && ['OFFICE', 'WFH'].includes(row.work_mode)
+    && ((row.day_type === 'WORK' && !!row.shift_template_id) || (row.day_type === 'WEEK_OFF' && row.shift_template_id === null));
+  it('Office, WFH and Week Off rows all satisfy the constraints and carry the upsert key', () => {
+    for (const mode of ['Office', 'WFH', 'Week Off']) {
+      const cell: any = cellFromForm(mode, mode === 'Week Off' ? null : 's1');
+      expect('error' in cell).toBe(false);
+      const row = assignmentRow('r1', 'e1', '2026-10-10', cell);
+      expect(satisfies(row)).toBe(true);
+      expect(row).toMatchObject({ roster_id: 'r1', employee_id: 'e1', assignment_date: '2026-10-10' });
+    }
+  });
+
+  it('Week Off saves without a shift; WORK entries strictly require a shift', () => {
+    // Week Off ignores shift and always yields shiftTemplateId: null
+    expect(cellFromForm('Week Off', null)).toEqual({ dayType: 'WEEK_OFF', shiftTemplateId: null, workMode: 'OFFICE' });
+    expect(cellFromForm('Week Off', undefined)).toEqual({ dayType: 'WEEK_OFF', shiftTemplateId: null, workMode: 'OFFICE' });
+    expect(cellFromForm('Week Off', '')).toEqual({ dayType: 'WEEK_OFF', shiftTemplateId: null, workMode: 'OFFICE' });
+    expect(cellFromForm('Week Off', 'ignored_shift')).toEqual({ dayType: 'WEEK_OFF', shiftTemplateId: null, workMode: 'OFFICE' });
+
+    // WORK entries (Office and WFH) fail without a shift
+    expect(cellFromForm('Office', null)).toEqual({ error: 'Choose a shift for a working day.' });
+    expect(cellFromForm('Office', undefined)).toEqual({ error: 'Choose a shift for a working day.' });
+    expect(cellFromForm('Office', '')).toEqual({ error: 'Choose a shift for a working day.' });
+    expect(cellFromForm('WFH', null)).toEqual({ error: 'Choose a shift for a working day.' });
+    expect(cellFromForm('WFH', undefined)).toEqual({ error: 'Choose a shift for a working day.' });
+    expect(cellFromForm('WFH', '')).toEqual({ error: 'Choose a shift for a working day.' });
+
+    // WORK entries succeed with a valid shift
+    expect(cellFromForm('Office', 'shift-123')).toEqual({ dayType: 'WORK', shiftTemplateId: 'shift-123', workMode: 'OFFICE' });
+    expect(cellFromForm('WFH', 'shift-456')).toEqual({ dayType: 'WORK', shiftTemplateId: 'shift-456', workMode: 'WFH' });
+  });
+});
+
