@@ -48,13 +48,22 @@ export const attendanceService = {
       return { data: null, error };
     }
   },
+  _cachedEmpId: null as string | null,
+  _cachedAuthUserId: null as string | null,
   /**
    * Helper to get the current authenticated employee ID.
    * Do not trust arbitrary employee_ids from the UI for employee self-service.
    */
   async getCurrentEmployeeId(): Promise<string | null> {
     const { data: authData, error: authErr } = await supabase.auth.getUser();
-    if (authErr || !authData.user) return null;
+    if (authErr || !authData.user) {
+      this._cachedEmpId = null;
+      this._cachedAuthUserId = null;
+      return null;
+    }
+    if (this._cachedAuthUserId === authData.user.id && this._cachedEmpId) {
+      return this._cachedEmpId;
+    }
     
     const { data: profile, error: profErr } = await supabase
       .from('profiles')
@@ -63,6 +72,8 @@ export const attendanceService = {
       .single() as any;
       
     if (profErr || !profile?.employee_id) return null;
+    this._cachedAuthUserId = authData.user.id;
+    this._cachedEmpId = profile.employee_id;
     return profile.employee_id;
   },
 
@@ -126,26 +137,156 @@ export const attendanceService = {
   },
 
   /**
+   * Resolve shift for an employee on a specific date.
+   * Checks published roster assignment first (highest priority), then falls back to any active roster assignment, then shift_assignments.
+   */
+  async getShiftForDate(employeeId: string, localDateStr: string): Promise<{
+    data: any | null;
+    error: Error | null;
+    isWeekOff?: boolean;
+    source?: 'ROSTER' | 'PERMANENT' | 'NONE';
+    rosterAssignmentId?: string | null;
+  }> {
+    try {
+      // 1. Check roster_assignments for this date
+      const { data: rosterRows, error: rosterErr } = await supabase
+        .from('roster_assignments')
+        .select('id, employee_id, assignment_date, day_type, work_mode, shift_template_id, shift_templates(*), rosters(id, status, start_date, end_date)')
+        .eq('employee_id', employeeId)
+        .eq('assignment_date', localDateStr);
+
+      if (rosterErr) {
+        console.error('[Attendance] error loading roster_assignments:', rosterErr.message);
+        return { data: null, error: new Error(`Roster assignment query failed: ${rosterErr.message}`) };
+      }
+
+      const published: any = ((rosterRows as any[]) || []).find((r: any) =>
+        String(r?.rosters?.status || r?.roster?.status || '').toUpperCase() === 'PUBLISHED'
+      );
+
+      if (published) {
+        const isWeekOff = String(published.day_type || 'WORK').toUpperCase() === 'WEEK_OFF';
+        if (isWeekOff) {
+          return { data: null, isWeekOff: true, source: 'ROSTER', rosterAssignmentId: published.id, error: null };
+        }
+        const shiftTemplate = published.shift_templates || published.shift_template || null;
+        if (shiftTemplate) {
+          return {
+            data: {
+              ...shiftTemplate,
+              work_mode: published.work_mode || 'OFFICE',
+              roster_assignment_id: published.id,
+            },
+            isWeekOff: false,
+            source: 'ROSTER',
+            rosterAssignmentId: published.id,
+            error: null,
+          };
+        }
+      }
+
+      // 2. Fallback to permanent shift_assignments
+      const { data: saRows, error: saErr } = await supabase
+        .from('shift_assignments')
+        .select('id, employee_id, effective_date, end_date, shift_template_id, shift_templates(*)')
+        .eq('employee_id', employeeId)
+        .lte('effective_date', localDateStr)
+        .or(`end_date.is.null,end_date.gte.${localDateStr}`)
+        .order('effective_date', { ascending: false })
+        .limit(1)
+        .maybeSingle() as any;
+
+      if (saErr) {
+        // Fallback relation check if needed
+        const { data: fallbackRows, error: fallbackErr } = await supabase
+          .from('shift_assignments')
+          .select('id, employee_id, effective_date, end_date, shift_template_id, shift_template:shift_template_id(*)')
+          .eq('employee_id', employeeId)
+          .lte('effective_date', localDateStr)
+          .or(`end_date.is.null,end_date.gte.${localDateStr}`)
+          .order('effective_date', { ascending: false })
+          .limit(1)
+          .maybeSingle() as any;
+
+        if (fallbackErr) {
+          console.error('[Attendance] error loading shift_assignments:', fallbackErr.message);
+          return { data: null, error: new Error(`Shift assignment query failed: ${fallbackErr.message}`) };
+        }
+        if (fallbackRows && (!fallbackRows.end_date || fallbackRows.end_date >= localDateStr) && fallbackRows.shift_template) {
+          return { data: { ...fallbackRows.shift_template, work_mode: 'OFFICE' }, isWeekOff: false, source: 'PERMANENT', error: null };
+        }
+      } else if (saRows && (!saRows.end_date || saRows.end_date >= localDateStr) && saRows.shift_templates) {
+        return { data: { ...saRows.shift_templates, work_mode: 'OFFICE' }, isWeekOff: false, source: 'PERMANENT', error: null };
+      }
+
+      return { data: null, isWeekOff: false, source: 'NONE', error: null };
+    } catch (err: any) {
+      console.error('[Attendance] unexpected error in getShiftForDate:', err);
+      return { data: null, error: new Error(`Failed to resolve shift: ${err?.message || err}`) };
+    }
+  },
+
+  /**
    * Get the current assigned shift for the authenticated employee
    */
-  async getCurrentShift(localDateStr: string): Promise<{ data: any | null; error: Error | null }> {
+  async getCurrentShift(localDateStr: string): Promise<{ data: any | null; error: Error | null; isWeekOff?: boolean }> {
     const empId = await this.getCurrentEmployeeId();
     if (!empId) return { data: null, error: new Error('Unauthorized') };
 
-    const { data: shiftAssignments } = await supabase
-      .from('shift_assignments')
-      .select('*, shift_template:shift_templates(*)')
-      .eq('employee_id', empId)
-      .lte('effective_date', localDateStr)
-      .order('effective_date', { ascending: false })
-      .limit(1)
-      .maybeSingle() as any;
+    const res = await this.getShiftForDate(empId, localDateStr);
+    return { data: res.data, error: res.error, isWeekOff: res.isWeekOff };
+  },
 
-    if (shiftAssignments && shiftAssignments.shift_template) {
-      return { data: shiftAssignments.shift_template, error: null };
+  /**
+   * Get the assigned shift for the authenticated employee on a specific date.
+   */
+  async getMyShiftForDate(localDateStr: string): Promise<{ data: any | null; error: Error | null; isWeekOff?: boolean; source?: string }> {
+    const empId = await this.getCurrentEmployeeId();
+    if (!empId) return { data: null, error: new Error('Unauthorized') };
+
+    const res = await this.getShiftForDate(empId, localDateStr);
+    return { data: res.data, error: res.error, isWeekOff: res.isWeekOff, source: res.source };
+  },
+
+  /**
+   * Get the authenticated employee's schedule for a date range (e.g. week or month).
+   * Checks published roster assignments and fallback permanent assignments.
+   */
+  async getMyScheduleForRange(startDate: string, endDate: string): Promise<{ data: Record<string, any>; error: Error | null }> {
+    const empId = await this.getCurrentEmployeeId();
+    if (!empId) return { data: {}, error: new Error('Unauthorized') };
+
+    try {
+      // 1. Published roster assignments for the employee in this range
+      const { data: rosterRows, error: rErr } = await supabase
+        .from('roster_assignments')
+        .select('id, assignment_date, day_type, work_mode, shift_template_id, shift_templates(*), rosters(status)')
+        .eq('employee_id', empId)
+        .gte('assignment_date', startDate)
+        .lte('assignment_date', endDate);
+
+      if (rErr) return { data: {}, error: new Error(rErr.message) };
+
+      const schedule: Record<string, any> = {};
+
+      for (const r of (rosterRows || []) as any[]) {
+        const isPub = String(r?.rosters?.status || '').toUpperCase() === 'PUBLISHED';
+        if (isPub) {
+          const dStr = String(r.assignment_date).slice(0, 10);
+          schedule[dStr] = {
+            id: r.id,
+            isWeekOff: String(r.day_type).toUpperCase() === 'WEEK_OFF',
+            workMode: r.work_mode || 'OFFICE',
+            shift: r.shift_templates,
+            source: 'ROSTER',
+          };
+        }
+      }
+
+      return { data: schedule, error: null };
+    } catch (e: any) {
+      return { data: {}, error: new Error(e?.message || e) };
     }
-    
-    return { data: null, error: null };
   },
 
   /**
@@ -181,28 +322,26 @@ export const attendanceService = {
       .in('attendance_date', [companyToday, previousDateStr(companyToday)]) as any;
     if (existingErr) return { data: null, error: new Error(existingErr.message) };
 
-    // 2. Resolve applicable shift
-    const { data: shiftAssignments } = await supabase
-      .from('shift_assignments')
-      .select('*, shift_template:shift_template_id(*)')
-      .eq('employee_id', empId)
-      .lte('effective_date', input.localDateStr)
-      .order('effective_date', { ascending: false })
-      .limit(1)
-      .maybeSingle() as any;
+    // 2. Resolve applicable shift (checks published roster first, then permanent assignment)
+    const { data: applicableShift, error: shiftErr, isWeekOff } = await this.getShiftForDate(empId, input.localDateStr);
+    if (shiftErr) return { data: null, error: shiftErr };
+    if (isWeekOff) {
+      return { data: null, error: new Error('Today is scheduled as a Week Off in the published roster.') };
+    }
 
     let shiftTemplateId: string | null = null;
+    let rosterAssignmentId: string | null = null;
     let requiredHours = 8;
     let lateMinutes = 0;
     let shiftStartStr = '09:00:00';
     let shiftGracePeriod = globalGracePeriod;
 
-    if (shiftAssignments && shiftAssignments.shift_template) {
-      const st = shiftAssignments.shift_template as any;
-      shiftTemplateId = st.id;
-      requiredHours = st.required_hours ?? 8;
-      if (st.start_time) shiftStartStr = st.start_time;
-      if (st.grace_period_minutes !== undefined) shiftGracePeriod = st.grace_period_minutes; // could override if we want, but user said admin settings
+    if (applicableShift) {
+      shiftTemplateId = applicableShift.id;
+      rosterAssignmentId = applicableShift.roster_assignment_id || null;
+      requiredHours = applicableShift.required_hours ?? 8;
+      if (applicableShift.start_time) shiftStartStr = applicableShift.start_time;
+      if (applicableShift.grace_period_minutes !== undefined) shiftGracePeriod = applicableShift.grace_period_minutes;
     }
     
     // User requested: "The grace-period behavior must come from Admin Settings"
@@ -222,8 +361,8 @@ export const attendanceService = {
       today: companyToday,
       shift: {
         start_time: shiftStartStr,
-        end_time: shiftAssignments?.shift_template?.end_time ?? null,
-        crosses_midnight: !!shiftAssignments?.shift_template?.crosses_midnight,
+        end_time: applicableShift?.end_time ?? null,
+        crosses_midnight: !!applicableShift?.crosses_midnight,
       },
       graceMinutes: finalGracePeriod,
       timeZone: timezone,
@@ -251,6 +390,7 @@ export const attendanceService = {
       .insert({
         employee_id: empId,
         shift_template_id: shiftTemplateId,
+        roster_assignment_id: rosterAssignmentId,
         attendance_date: input.localDateStr,
         clock_in_at: nowIso,
         required_hours: requiredHours,

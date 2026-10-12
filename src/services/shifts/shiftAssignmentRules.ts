@@ -38,3 +38,89 @@ export function countAssignedEmployeesByShift(assignments: any[], employees: any
   }
   return counts;
 }
+
+export interface ResolvedShiftResult {
+  shift: any | null;
+  isWeekOff: boolean;
+  source: 'ROSTER' | 'PERMANENT' | 'NONE';
+  rosterAssignmentId?: string | null;
+  shiftAssignmentId?: string | null;
+  workMode?: 'OFFICE' | 'WFH';
+}
+
+/**
+ * Resolves an employee's assigned shift for a specific date:
+ * 1. A PUBLISHED roster assignment (roster_assignments joined to rosters) takes highest priority.
+ *    - day_type = 'WEEK_OFF' -> isWeekOff: true, shift: null
+ *    - day_type = 'WORK' -> assigned shift template, workMode ('OFFICE' | 'WFH')
+ *    - DRAFT rosters are not published yet and do NOT take effect for employee self-service.
+ * 2. If no published roster entry exists for that date, fall back to permanent assignment
+ *    (shift_assignments with effective_date <= date and end_date null or >= date, latest effective_date).
+ * 3. If neither exists, returns null shift and source: 'NONE'.
+ */
+export function resolveEmployeeShiftForDate(params: {
+  employeeId: string;
+  date: string;
+  rosterAssignments?: any[] | null;
+  defaultAssignments?: any[] | null;
+}): ResolvedShiftResult {
+  const { employeeId, date, rosterAssignments, defaultAssignments } = params;
+
+  if (rosterAssignments && Array.isArray(rosterAssignments)) {
+    const published = rosterAssignments.find(r =>
+      r?.employee_id === employeeId &&
+      String(r.assignment_date || '').slice(0, 10) === date &&
+      String(r.rosters?.status || r.roster?.status || '').toUpperCase() === 'PUBLISHED'
+    );
+
+    if (published) {
+      const isWeekOff = String(published.day_type || 'WORK').toUpperCase() === 'WEEK_OFF';
+      if (isWeekOff) {
+        return {
+          shift: null,
+          isWeekOff: true,
+          source: 'ROSTER',
+          rosterAssignmentId: published.id,
+          workMode: 'OFFICE',
+        };
+      }
+      const shift = published.shift_templates || published.shift_template || null;
+      const workMode = String(published.work_mode || 'OFFICE').toUpperCase() === 'WFH' ? 'WFH' : 'OFFICE';
+      return {
+        shift,
+        isWeekOff: false,
+        source: 'ROSTER',
+        rosterAssignmentId: published.id,
+        workMode,
+      };
+    }
+  }
+
+  if (defaultAssignments && Array.isArray(defaultAssignments)) {
+    const candidates = defaultAssignments
+      .filter(a =>
+        a?.employee_id === employeeId &&
+        a.effective_date <= date &&
+        (!a.end_date || a.end_date >= date)
+      )
+      .sort((a, b) => (a.effective_date < b.effective_date ? 1 : a.effective_date > b.effective_date ? -1 : 0));
+
+    const best = candidates[0];
+    if (best) {
+      const shift = best.shift_templates || best.shift_template || null;
+      return {
+        shift,
+        isWeekOff: false,
+        source: 'PERMANENT',
+        shiftAssignmentId: best.id,
+        workMode: 'OFFICE',
+      };
+    }
+  }
+
+  return {
+    shift: null,
+    isWeekOff: false,
+    source: 'NONE',
+  };
+}

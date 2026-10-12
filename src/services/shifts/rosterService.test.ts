@@ -7,6 +7,11 @@ import { rosterDaysFromAssignments } from '../payroll/payrollDataService';
 
 vi.mock('../payroll/salaryService');
 vi.mock('../audit/auditService');
+vi.mock('../notifications/notificationService', () => ({
+  notificationService: {
+    notifyEmployee: vi.fn().mockResolvedValue({}),
+  },
+}));
 // In-memory tables with the filters the service uses. `denyWrites` emulates the database BEFORE the
 // proposed migration (SELECT-only policies on rosters / roster_assignments).
 vi.mock('../../lib/supabase', () => {

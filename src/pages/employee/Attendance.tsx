@@ -34,6 +34,7 @@ const EmployeeAttendance: React.FC = () => {
   const [todayAttendance, setTodayAttendance] = useState<any>(null);
   const [todayBreaks, setTodayBreaks] = useState<any[]>([]);
   const [currentShift, setCurrentShift] = useState<any>(null);
+  const [monthSchedule, setMonthSchedule] = useState<Record<string, any>>({});
   const [openCard, setOpenCard] = useState<MyAttendanceCard | null>(null);
   const [effectiveTime, setEffectiveTime] = useState(0);
   const [breakSeconds, setBreakSeconds] = useState(0);
@@ -92,7 +93,27 @@ const EmployeeAttendance: React.FC = () => {
           'postgres_changes',
           { event: '*', schema: 'public', table: 'attendance', filter: `employee_id=eq.${empId}` },
           () => {
-            // Background refresh: no skeleton, no extra GPS check
+            fetchData(false);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'roster_assignments', filter: `employee_id=eq.${empId}` },
+          () => {
+            fetchData(false);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'shift_assignments', filter: `employee_id=eq.${empId}` },
+          () => {
+            fetchData(false);
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'rosters' },
+          () => {
             fetchData(false);
           }
         )
@@ -102,11 +123,14 @@ const EmployeeAttendance: React.FC = () => {
     return () => {
       cancelled = true;
       stopCamera();
-      // Live GPS tracking is started/stopped by AppLayout and clock in/out, not by this page:
-      // stopping it here broke automatic breaks after leaving the Attendance page.
       if (channel) supabase.removeChannel(channel);
     };
   }, []);
+
+  // Re-fetch when navigating between months
+  useEffect(() => {
+    fetchData(false);
+  }, [year, month]);
 
   useEffect(() => {
     // Work = elapsed - completed breaks - active break, recomputed from stored timestamps.
@@ -143,32 +167,15 @@ const EmployeeAttendance: React.FC = () => {
       const localDateStr = companyDateStr();
       
       // Shift logic
-      const { data: shiftAssignments } = await supabase
-        .from('shift_assignments')
-        .select('*, shift_template:shift_templates(*)')
-        .eq('employee_id', empId)
-        .lte('effective_date', localDateStr)
-        .order('effective_date', { ascending: false })
-        .limit(1)
-        .maybeSingle() as any;
+      const { data: shiftData } = await attendanceService.getCurrentShift(localDateStr);
+      setCurrentShift(shiftData);
 
-      if (shiftAssignments && shiftAssignments.shift_template) {
-         setCurrentShift(shiftAssignments.shift_template);
-      } else {
-         const { data: shiftAssignmentsFallback } = await supabase
-           .from('shift_assignments')
-           .select('*, shift_template:shift_template_id(*)')
-           .eq('employee_id', empId)
-           .lte('effective_date', localDateStr)
-           .order('effective_date', { ascending: false })
-           .limit(1)
-           .maybeSingle() as any;
-         if (shiftAssignmentsFallback && shiftAssignmentsFallback.shift_template) {
-            setCurrentShift(shiftAssignmentsFallback.shift_template);
-         } else {
-            // No assigned shift: show none (never borrow another shift template)
-            setCurrentShift(null);
-         }
+      // Month schedule for calendar display and date clicks
+      const monthStart = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+      const monthEnd = `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
+      const schedRes = await attendanceService.getMyScheduleForRange(monthStart, monthEnd);
+      if (!schedRes.error && schedRes.data) {
+        setMonthSchedule(schedRes.data);
       }
 
       if (initial) {
@@ -483,6 +490,7 @@ const EmployeeAttendance: React.FC = () => {
       case 'COMPLETED': return 'badge-success';
       case 'LATE': return 'badge-warning';
       case 'WFH': return 'badge-primary';
+      case 'SCHEDULED': return 'badge-primary';
       case 'LEAVE': return 'badge-gray';
       case 'AUTO LOGOUT': return 'badge-danger';
       case 'WEEK OFF': return 'badge-gray';
@@ -500,6 +508,7 @@ const EmployeeAttendance: React.FC = () => {
       case 'HALF DAY': return '#facc15';
       case 'LEAVE': return '#3b82f6';
       case 'WFH': return 'var(--primary-500)';
+      case 'SCHEDULED': return 'var(--primary-600)';
       case 'ABSENT': return 'var(--danger)';
       case 'AUTO LOGOUT': return 'var(--danger)';
       default: return 'var(--gray-300)';
@@ -816,7 +825,7 @@ const EmployeeAttendance: React.FC = () => {
                  <div><span style={{ color: 'var(--text-secondary)' }}>Hours:</span> <strong>{currentShift.required_hours}h Required</strong></div>
                  <div><span style={{ color: 'var(--text-secondary)' }}>Timing:</span> <strong>{currentShift.start_time} - {currentShift.end_time}</strong></div>
                  <div><span style={{ color: 'var(--text-secondary)' }}>Break:</span> <strong>1h Duration</strong></div>
-                 <div><span style={{ color: 'var(--text-secondary)' }}>Mode:</span> <strong>OFFICE</strong></div>
+                 <div><span style={{ color: 'var(--text-secondary)' }}>Mode:</span> <strong>{currentShift.work_mode || 'OFFICE'}</strong></div>
                </div>
             </div>
           )}
@@ -854,23 +863,57 @@ const EmployeeAttendance: React.FC = () => {
                 {monthDays.map(day => {
                   const dStr = `${year}-${(month + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
                   const record = history.find((h: any) => h.rawDate === dStr);
+                  const scheduled = monthSchedule[dStr];
                   const isToday = dStr === companyDateStr();
-                  let status = record ? record.status : (new Date(year, month, day) > new Date() ? 'FUTURE' : 'WEEK OFF');
+                  const isFuture = dStr > companyDateStr();
+                  
+                  let status = record ? record.status : isFuture ? (scheduled?.isWeekOff ? 'WEEK OFF' : scheduled ? 'SCHEDULED' : 'FUTURE') : (scheduled?.isWeekOff ? 'WEEK OFF' : 'ABSENT');
                   
                   const dayOfWeek = new Date(year, month, day).getDay();
-                  if (!record && (dayOfWeek === 0 || dayOfWeek === 6) && status !== 'FUTURE') status = 'WEEKEND';
+                  if (!record && !scheduled && (dayOfWeek === 0 || dayOfWeek === 6)) status = 'WEEKEND';
                   
                   return (
                     <div 
                       key={day} 
                       className={`cal-day ${isToday ? 'today' : ''} ${status === 'FUTURE' ? 'future' : ''}`}
                       onClick={() => {
-                        if (record) setSelectedDateDetail(record);
-                        else if (status !== 'FUTURE') setSelectedDateDetail({ date: new Date(year, month, day).toLocaleDateString('en-US', {day:'numeric', month:'short', year:'numeric'}), status: status, mode: '-', shift: '-', in: '-', out: '-', break: '-', hours: '-', lateMin: 0, earlyMin: 0 });
+                        if (record) {
+                          setSelectedDateDetail(record);
+                        } else if (scheduled) {
+                          setSelectedDateDetail({
+                            date: new Date(year, month, day).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }),
+                            status: scheduled.isWeekOff ? 'WEEK OFF' : 'SCHEDULED',
+                            mode: scheduled.workMode || 'OFFICE',
+                            shift: scheduled.shift?.name || (scheduled.isWeekOff ? 'Week Off' : 'Assigned Shift'),
+                            shift_template: scheduled.shift,
+                            in: '--:--',
+                            out: '--:--',
+                            break: '--',
+                            hours: scheduled.shift?.required_hours ? `${scheduled.shift.required_hours}h 00m` : '--:--',
+                            lateMin: 0,
+                            earlyMin: 0
+                          });
+                        } else {
+                          setSelectedDateDetail({
+                            date: new Date(year, month, day).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }),
+                            status: status,
+                            mode: '-',
+                            shift: '-',
+                            in: '-',
+                            out: '-',
+                            break: '-',
+                            hours: '-',
+                            lateMin: 0,
+                            earlyMin: 0
+                          });
+                        }
                       }}
                     >
                       <span className="cal-date" aria-label={`${currentMonthStr} ${day}, ${status}`}>{day}</span>
-                      {status !== 'FUTURE' && status !== 'WEEK OFF' && status !== 'WEEKEND' && status !== 'WORKING' && status !== 'ON_BREAK' && status !== 'COMPLETED' && status !== 'PRESENT' && (
+                      {scheduled && !record && !scheduled.isWeekOff && (
+                        <div className="cal-dot" style={{ backgroundColor: scheduled.workMode === 'WFH' ? 'var(--primary-500)' : 'var(--primary-600)' }} title={`${scheduled.shift?.name || 'Shift'} (${scheduled.workMode || 'OFFICE'})`}></div>
+                      )}
+                      {status !== 'FUTURE' && status !== 'WEEK OFF' && status !== 'WEEKEND' && status !== 'WORKING' && status !== 'ON_BREAK' && status !== 'COMPLETED' && status !== 'PRESENT' && !scheduled && (
                         <div className="cal-dot" style={{ backgroundColor: getStatusColorCode(status) }}></div>
                       )}
                       {(status === 'WORKING' || status === 'ON_BREAK') && (

@@ -5,6 +5,9 @@ import { employeeService } from '../../services/employees/employeeService';
 import { rosterService } from '../../services/shifts/rosterService';
 import { cellFromForm, cellFromAssignment } from '../../services/shifts/rosterRules';
 import { rosterToday, weekRange, monthRange, navigate as moveAnchor, dayLabel } from '../../services/shifts/rosterDates';
+import { appSettingsService, weeklyOffDaysFrom, type AppSettings } from '../../services/settings/appSettingsService';
+import { leaveService } from '../../services/leave/leaveService';
+import type { AssignmentScope } from '../../services/shifts/monthlyRosterRules';
 import { 
   CalendarDays, Calendar, ChevronLeft, ChevronRight, Search, 
   Filter, MoreVertical, X, CheckCircle2, AlertTriangle, Users, 
@@ -22,11 +25,14 @@ const AdminRoster: React.FC = () => {
   const [employees, setEmployees] = useState<any[]>([]);
   const [shifts, setShifts] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
+  const [approvedLeaves, setApprovedLeaves] = useState<any[]>([]);
   
   const [rosterData, setRosterData] = useState<any>({});
-  const [viewMode, setViewMode] = useState('Week');
+  const [viewMode, setViewMode] = useState<'Week' | 'Month'>('Week');
   // Saved roster for the visible week (rosters / roster_assignments) and every saved entry in view
   const [periodRoster, setPeriodRoster] = useState<any>(null);
+  const [visibleRosters, setVisibleRosters] = useState<any[]>([]);
   const [rosterEntries, setRosterEntries] = useState<Record<string, Record<string, any>>>({});
   const [rosterError, setRosterError] = useState<string | null>(null);
   const [openCard, setOpenCard] = useState<RosterCard | null>(null);
@@ -50,7 +56,17 @@ const AdminRoster: React.FC = () => {
   const [dayDrawer, setDayDrawer] = useState<string | null>(null);
 
   // Form State
-  const [formData, setFormData] = useState<any>({});
+  const [formData, setFormData] = useState<{
+    shift: string;
+    mode: string;
+    scope: AssignmentScope;
+    preserveExceptions: boolean;
+  }>({
+    shift: '',
+    mode: 'Office',
+    scope: 'MONTH',
+    preserveExceptions: true
+  });
 
   // Date State
   // Company date (Asia/Kolkata) the view is anchored on — a plain YYYY-MM-DD string, never a local-clock Date
@@ -58,19 +74,29 @@ const AdminRoster: React.FC = () => {
 
   const fetchData = async () => {
     setLoading(true);
-    const [empRes, shiftRes, assignRes] = await Promise.all([
+    const [empRes, shiftRes, assignRes, settingsData, leaveRes] = await Promise.all([
       employeeService.getEmployees(),
       employeeService.getShifts(),
-      employeeService.getShiftAssignments()
+      employeeService.getShiftAssignments(),
+      appSettingsService.loadSettings(),
+      leaveService.getLeaveRequests(),
     ]);
     
+    if (settingsData) {
+      setAppSettings(settingsData);
+    }
+
+    if (leaveRes.data) {
+      setApprovedLeaves(leaveRes.data.filter((l: any) => l.status === 'APPROVED'));
+    }
+
     if (empRes.data) {
       setEmployees(empRes.data.map((e: any) => ({
         id: e.id,
         empCode: e.employee_code || '-',
         name: `${e.first_name} ${e.last_name}`,
         dept: e.department?.name || 'Unassigned',
-          department_id: e.department_id || null,
+        department_id: e.department_id || null,
         office: e.office?.name || '-'
       })));
     }
@@ -96,17 +122,49 @@ const AdminRoster: React.FC = () => {
   };
 
   const getEffectiveCellData = (empId: string, dateStr: string) => {
-    // A saved roster entry for the date (WORK with shift + mode, or Week Off) wins over the default shift
+    // 1. A saved roster entry for the date (WORK with shift + mode, or Week Off) wins
     if (rosterEntries[empId]?.[dateStr]) {
       const r = rosterEntries[empId][dateStr];
       return r.shift ? { ...r, shiftData: shifts.find(s => s.id === r.shift) } : r;
     }
+
+    // 2. Approved leave for this employee
+    const onLeave = approvedLeaves.some(l =>
+      l.employee_id === empId &&
+      String(l.start_date).slice(0, 10) <= dateStr &&
+      String(l.end_date).slice(0, 10) >= dateStr
+    );
+    if (onLeave) {
+      return { type: 'Leave', mode: 'Leave', shift: null };
+    }
+
+    // 3. Company public holiday
+    const isHoliday = (appSettings?.publicHolidays || []).some(h =>
+      String(h.date).slice(0, 10) === dateStr
+    );
+    if (isHoliday) {
+      return { type: 'Holiday', mode: 'Holiday', shift: null };
+    }
+
+    // 4. Default roster data cache
     if (rosterData[empId]?.[dateStr]) {
       return rosterData[empId][dateStr];
     }
+
+    // 5. Permanent shift assignment
     const empAssignments = assignments.filter(a => a.employee_id === empId && new Date(a.effective_date) <= new Date(dateStr));
     if (empAssignments.length > 0) {
       const mostRecent = empAssignments.sort((a, b) => new Date(b.effective_date).getTime() - new Date(a.effective_date).getTime())[0];
+      const weeklyOffs = weeklyOffDaysFrom(appSettings);
+      const dayName = new Date(`${dateStr}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' }).toLowerCase();
+      const isOff = weeklyOffs
+        ? weeklyOffs.map(w => w.toLowerCase()).includes(dayName)
+        : dayName === 'sunday';
+
+      if (isOff) {
+        return { type: 'Week Off', mode: 'Week Off', shift: null };
+      }
+
       return {
         shift: mostRecent.shift_template_id,
         mode: 'Office',
@@ -147,19 +205,21 @@ const AdminRoster: React.FC = () => {
   const handleCellClick = (empId: string, date: string) => {
     if (isLocked) return showToast('Roster is locked. Unlock to make changes.');
     
-    if (periodRoster?.status === 'PUBLISHED') return showToast('This roster is published. Unpublish it before making changes.');
-    const existing = rosterEntries[empId]?.[date] || rosterData[empId]?.[date];
+    const existing = getEffectiveCellData(empId, date);
+
     if (existing?.type === 'Leave' || existing?.type === 'Holiday') {
-      setConflictModal({ empId, date, type: existing.type });
+      setConflictModal({ empId, date, type: existing.type, existing });
+      return;
+    }
+
+    setAssignModal({ empId, date, existing });
+    const defaultScope: AssignmentScope = 'MONTH';
+    if (existing?.type === 'Week Off') {
+      setFormData({ shift: shifts[0]?.id || '', mode: 'Week Off', scope: defaultScope, preserveExceptions: true });
+    } else if (existing?.shift) {
+      setFormData({ shift: existing.shift, mode: existing.mode || 'Office', scope: defaultScope, preserveExceptions: true });
     } else {
-      setAssignModal({ empId, date, existing });
-      if (existing?.type === 'Week Off') {
-        setFormData({ shift: shifts[0]?.id || '', mode: 'Week Off' });
-      } else if (existing?.shift) {
-        setFormData({ shift: existing.shift, mode: existing.mode || 'Office' });
-      } else {
-        setFormData({ shift: shifts[0]?.id || '', mode: 'Office' });
-      }
+      setFormData({ shift: shifts[0]?.id || '', mode: 'Office', scope: defaultScope, preserveExceptions: true });
     }
   };
 
@@ -170,22 +230,63 @@ const AdminRoster: React.FC = () => {
     const { empId, date } = assignModal;
     const cell = cellFromForm(formData.mode, formData.shift);
     if ('error' in cell) { showToast(cell.error); return; }
-    // Saved to this week's roster (rosters / roster_assignments) — Week Off and WFH are stored too
-    const { error } = await rosterService.saveCell(weekDates[0].date, weekDates[6].date, empId, date, cell);
-    if (error) { showToast('Roster not saved: ' + error.message); return; }
+
+    const holidayDates = (appSettings?.publicHolidays || []).map(h => h.date);
+    const weeklyOffDays = weeklyOffDaysFrom(appSettings);
+    const empApprovedLeaves = approvedLeaves.filter(l => l.employee_id === empId);
+    const existingAssignments = rosterEntries[empId] || {};
+    const baseAssignment = assignments.find(a => a.employee_id === empId);
+
+    const res = await rosterService.saveScopedAssignments({
+      employeeId: empId,
+      targetDate: date,
+      cell,
+      scope: formData.scope || 'MONTH',
+      preserveExceptions: formData.preserveExceptions !== false,
+      weeklyOffDays,
+      holidays: holidayDates,
+      approvedLeaves: empApprovedLeaves,
+      existingAssignments,
+      baseShiftId: baseAssignment?.shift_template_id,
+      autoPublish: true,
+    });
+
+    if (res.error) {
+      showToast('Roster not saved: ' + res.error.message);
+      return;
+    }
+
     await loadRosters();
     setAssignModal(null);
-    showToast(cell.dayType === 'WEEK_OFF' ? 'Week off saved to the draft roster' : 'Shift saved to the draft roster');
+    const count = res.data?.count || 0;
+    const skippedCount = res.data?.skippedDates.length || 0;
+    const scopeLabel = formData.scope === 'MONTH' ? 'month' : formData.scope === 'WEEK' ? 'week' : 'date';
+    if (count > 0) {
+      showToast(`Saved and synced ${count} assignment(s) across ${scopeLabel}.${skippedCount > 0 ? ` (${skippedCount} protected dates preserved)` : ''}`);
+    } else {
+      showToast('No dates updated (selected dates are already protected or weekly offs).');
+    }
   };
 
   const handlePublish = async () => {
-    if (!periodRoster) return showToast('Save at least one roster entry before publishing.');
     setRosterBusy(true);
-    const { error } = await rosterService.publish(periodRoster.id);
-    setRosterBusy(false);
-    if (error) return showToast(error.message);
-    await loadRosters();
-    showToast('Roster published. Payroll now uses it for this week.');
+    if (viewMode === 'Month') {
+      const res = await rosterService.publishRange(rangeStart, rangeEnd);
+      setRosterBusy(false);
+      if (res.error) return showToast(res.error.message);
+      await loadRosters();
+      showToast(`Published ${res.data.publishedCount} roster(s) across ${monthNames[month]} ${year}.`);
+    } else {
+      if (!periodRoster) {
+        setRosterBusy(false);
+        return showToast('Save at least one roster entry before publishing.');
+      }
+      const { error } = await rosterService.publish(periodRoster.id);
+      setRosterBusy(false);
+      if (error) return showToast(error.message);
+      await loadRosters();
+      showToast('Roster published. Payroll and employee dashboard now use it for this week.');
+    }
   };
 
   const handleUnpublish = async () => {
@@ -226,6 +327,7 @@ const AdminRoster: React.FC = () => {
     const err = list.error || period.error;
     setRosterError(err ? err.message : null);
     setPeriodRoster(period.roster);
+    setVisibleRosters(list.rosters || []);
     const map: Record<string, Record<string, any>> = {};
     for (const a of list.assignments) {
       const owner = list.rosters.find((r: any) => r.id === a.roster_id);
@@ -235,6 +337,9 @@ const AdminRoster: React.FC = () => {
   };
 
   useEffect(() => { loadRosters(); }, [rangeStart, rangeEnd]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const draftRostersCount = visibleRosters.filter(r => r.status === 'DRAFT').length;
+  const publishedRostersCount = visibleRosters.filter(r => r.status === 'PUBLISHED').length;
 
   const getDayAssignments = (dateStr: string) => {
     const dayAss: any = {};
@@ -296,21 +401,35 @@ const AdminRoster: React.FC = () => {
             <button onClick={handleToday} className="btn" style={{ backgroundColor: 'var(--bg-surface-elevated)', border: 'none', borderLeft: '1px solid var(--border-color)', padding: '0.5rem 1rem', fontSize: '0.875rem', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}>Today</button>
           </div>
           
-          {status === 'Published' ? (
-            <button onClick={handleUnpublish} className="btn btn-outline" style={{ fontSize: '0.875rem' }} disabled={rosterBusy} title="Return this week's roster to draft">
-              <UploadCloud size={16}/> Published — Unpublish
-            </button>
+          {viewMode === 'Month' ? (
+            draftRostersCount > 0 ? (
+              <button onClick={handlePublish} className="btn btn-primary" style={{ fontSize: '0.875rem' }} disabled={rosterBusy}>
+                <UploadCloud size={16}/> Publish Month ({draftRostersCount} Draft{draftRostersCount > 1 ? 's' : ''})
+              </button>
+            ) : publishedRostersCount > 0 ? (
+              <div className="badge badge-success" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', padding: '0.5rem 0.75rem', fontSize: '0.8125rem' }}>
+                <CheckCircle2 size={15}/> All Month Rosters Published
+              </div>
+            ) : null
           ) : (
-            <button onClick={handlePublish} className="btn btn-primary" style={{ fontSize: '0.875rem' }} disabled={rosterBusy || !periodRoster}>
-              <UploadCloud size={16}/> Publish Roster
-            </button>
+            status === 'Published' ? (
+              <button onClick={handleUnpublish} className="btn btn-outline" style={{ fontSize: '0.875rem' }} disabled={rosterBusy} title="Return this week's roster to draft">
+                <UploadCloud size={16}/> Published — Unpublish
+              </button>
+            ) : (
+              <button onClick={handlePublish} className="btn btn-primary" style={{ fontSize: '0.875rem' }} disabled={rosterBusy || !periodRoster}>
+                <UploadCloud size={16}/> Publish Roster
+              </button>
+            )
           )}
         </div>
       </div>
       <div style={{ fontSize: '0.8125rem', color: rosterError ? 'var(--danger)' : 'var(--text-secondary)' }} role={rosterError ? 'alert' : undefined}>
         {rosterError
           ? `Roster data unavailable: ${rosterError}`
-          : `Week ${weekDates[0].date} to ${weekDates[6].date}: ${periodRoster ? (periodRoster.status === 'PUBLISHED' ? `published${periodRoster.published_at ? ` ${new Date(periodRoster.published_at).toLocaleString('en-IN')}` : ''} — payroll uses this roster` : 'draft (not used by payroll until published)') : 'no roster saved yet — payroll uses the company working days'}.`}
+          : viewMode === 'Month'
+            ? `Month ${monthNames[month]} ${year}: ${publishedRostersCount} published roster(s), ${draftRostersCount} draft roster(s) across calendar weeks.`
+            : `Week ${weekDates[0].date} to ${weekDates[6].date}: ${periodRoster ? (periodRoster.status === 'PUBLISHED' ? `published${periodRoster.published_at ? ` ${new Date(periodRoster.published_at).toLocaleString('en-IN')}` : ''} — payroll and employee module use this roster` : 'draft (not used by employee module or payroll until published)') : 'no roster saved yet — payroll uses the company working days'}.`}
       </div>
 
       {loading ? (
@@ -540,11 +659,11 @@ const AdminRoster: React.FC = () => {
 
       {assignModal && (
         <div className="modal-overlay" onClick={() => setAssignModal(null)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
-            <h2 className="modal-title">{assignModal.existing ? 'Edit Shift' : 'Assign Shift'}</h2>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+            <h2 className="modal-title">{assignModal.existing ? 'Edit Shift Assignment' : 'Assign Shift'}</h2>
             <p className="modal-subtitle">For {employees.find(e => e.id === assignModal.empId)?.name} on {assignModal.date}</p>
             
-            <form onSubmit={handleSaveAssign} style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <form onSubmit={handleSaveAssign} style={{ marginTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="form-label">Shift Template</label>
                 <select className="form-control" value={formData.shift} onChange={e => setFormData({...formData, shift: e.target.value})} disabled={formData.mode === 'Week Off'}>
@@ -562,12 +681,102 @@ const AdminRoster: React.FC = () => {
                   <option>Week Off</option>
                 </select>
               </div>
+
+              <div>
+                <label className="form-label" style={{ marginBottom: '0.5rem', display: 'block' }}>Assignment Scope</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className={`btn ${formData.scope === 'DATE' ? 'btn-primary' : 'btn-outline'}`}
+                    style={{ fontSize: '0.75rem', padding: '0.5rem 0.25rem', justifyContent: 'center' }}
+                    onClick={() => setFormData({ ...formData, scope: 'DATE' })}
+                  >
+                    Date Only
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn ${formData.scope === 'WEEK' ? 'btn-primary' : 'btn-outline'}`}
+                    style={{ fontSize: '0.75rem', padding: '0.5rem 0.25rem', justifyContent: 'center' }}
+                    onClick={() => setFormData({ ...formData, scope: 'WEEK' })}
+                  >
+                    This Week
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn ${formData.scope === 'MONTH' ? 'btn-primary' : 'btn-outline'}`}
+                    style={{ fontSize: '0.75rem', padding: '0.5rem 0.25rem', justifyContent: 'center' }}
+                    onClick={() => setFormData({ ...formData, scope: 'MONTH' })}
+                  >
+                    Entire Month
+                  </button>
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem', lineHeight: '1.4' }}>
+                  {formData.scope === 'DATE' && `Assigns shift to ${assignModal.date} only.`}
+                  {formData.scope === 'WEEK' && 'Assigns shift to scheduled working days in this week (Mon–Sun). Preserves weekly offs and holidays.'}
+                  {formData.scope === 'MONTH' && 'Populates all scheduled working days in this calendar month automatically. Preserves weekly offs, approved leaves, holidays, and exceptions.'}
+                </div>
+              </div>
+
+              {formData.scope !== 'DATE' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
+                  <input
+                    type="checkbox"
+                    id="preserveExceptions"
+                    checked={formData.preserveExceptions !== false}
+                    onChange={e => setFormData({ ...formData, preserveExceptions: e.target.checked })}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <label htmlFor="preserveExceptions" style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                    Preserve weekly offs, holidays, leaves & existing exceptions
+                  </label>
+                </div>
+              )}
               
               <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
                 <button type="button" className="btn btn-outline" onClick={() => setAssignModal(null)} style={{ flex: 1 }}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Save</button>
+                <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Save Shift</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {conflictModal && (
+        <div className="modal-overlay" onClick={() => setConflictModal(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '420px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--warning-600)', marginBottom: '0.5rem' }}>
+              <AlertTriangle size={20} />
+              <h2 className="modal-title" style={{ margin: 0, color: 'var(--text-primary)' }}>Schedule Conflict</h2>
+            </div>
+            <p className="modal-subtitle">
+              {employees.find(e => e.id === conflictModal.empId)?.name} has an existing <strong>{conflictModal.type}</strong> on {conflictModal.date}.
+            </p>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.75rem', lineHeight: '1.4' }}>
+              Assigning a shift to this date will override the existing {conflictModal.type?.toLowerCase()} for the roster. Do you want to proceed?
+            </p>
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
+              <button type="button" className="btn btn-outline" onClick={() => setConflictModal(null)} style={{ flex: 1 }}>
+                Keep {conflictModal.type}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ flex: 1 }}
+                onClick={() => {
+                  const { empId, date, existing } = conflictModal;
+                  setConflictModal(null);
+                  setAssignModal({ empId, date, existing });
+                  setFormData({
+                    shift: existing?.shift || shifts[0]?.id || '',
+                    mode: existing?.mode || 'Office',
+                    scope: 'MONTH',
+                    preserveExceptions: true
+                  });
+                }}
+              >
+                Override & Assign
+              </button>
+            </div>
           </div>
         </div>
       )}

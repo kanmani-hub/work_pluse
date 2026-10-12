@@ -126,6 +126,7 @@ const EmployeeDashboard: React.FC = () => {
   
   const [attendanceRecord, setAttendanceRecord] = useState<any>(null);
   const [currentShift, setCurrentShift] = useState<any>(null);
+  const [isWeekOff, setIsWeekOff] = useState(false);
   const [loadingAttendance, setLoadingAttendance] = useState(true);
   const [attendanceError, setAttendanceError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -183,6 +184,27 @@ const EmployeeDashboard: React.FC = () => {
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'attendance', filter: `employee_id=eq.${empId}` },
+          () => {
+            fetchTodayAttendance();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'roster_assignments', filter: `employee_id=eq.${empId}` },
+          () => {
+            fetchTodayAttendance();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'shift_assignments', filter: `employee_id=eq.${empId}` },
+          () => {
+            fetchTodayAttendance();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'rosters' },
           () => {
             fetchTodayAttendance();
           }
@@ -267,8 +289,11 @@ const EmployeeDashboard: React.FC = () => {
     try {
     const dateStr = getLocalDateStr();
     
-    const { data: shiftData, error: shiftError } = await attendanceService.getCurrentShift(dateStr);
-    if (!shiftError) setCurrentShift(shiftData);
+    const { data: shiftData, error: shiftError, isWeekOff: weekOffStatus } = await attendanceService.getCurrentShift(dateStr);
+    if (!shiftError) {
+      setCurrentShift(shiftData);
+      setIsWeekOff(!!weekOffStatus);
+    }
 
     // Today's attendance (or an overnight session still in progress) — never yesterday's completed record
     const { data, error } = await attendanceService.getCurrentAttendance();
@@ -516,7 +541,7 @@ const EmployeeDashboard: React.FC = () => {
   // ---- Derived display values (no new calculations; see employeeDashboardRules)
   const todayStr = companyDateStr(currentDate);
   const scheduledMins = scheduledWorkMinutes(attendanceRecord?.shift_template ?? currentShift);
-  const workMode = resolveWorkMode(attendanceRecord, wfhRequests, todayStr);
+  const workMode = currentShift?.work_mode === 'WFH' ? 'WFH' : resolveWorkMode(attendanceRecord, wfhRequests, todayStr);
   const locationDisplay = deriveLocationDisplay({ permission: geoPermission, liveRow: liveLocation, nowMs: currentDate.getTime(), workMode });
   const requestSummary = summarizeLeaveAndWfh({ leaveRequests, leaveBalances, wfhRequests, today: todayStr });
   const activeBreak = findActiveBreak(todayBreaks);
@@ -557,7 +582,7 @@ const EmployeeDashboard: React.FC = () => {
                 <Calendar size={18} className="nav-icon" />
                 Today's Shift
               </h3>
-              <span className={`badge ${currentShift ? 'badge-primary' : 'badge-gray'}`}>{currentShift?.name || (loadingAttendance ? 'Loading…' : 'No shift assigned')}</span>
+              <span className={`badge ${currentShift ? 'badge-primary' : isWeekOff ? 'badge-warning' : 'badge-gray'}`}>{currentShift?.name || (loadingAttendance ? 'Loading…' : isWeekOff ? 'Weekly Off' : 'No shift assigned')}</span>
             </div>
             
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '1rem' }}>
@@ -566,7 +591,7 @@ const EmployeeDashboard: React.FC = () => {
                 <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
                   {currentShift
                     ? <>{formatShiftClock(currentShift.start_time)} — {formatShiftClock(currentShift.end_time)}{currentShift.crosses_midnight ? <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)' }}> (next day)</span> : null}</>
-                    : (loadingAttendance ? '—' : 'Not assigned')}
+                    : (loadingAttendance ? '—' : isWeekOff ? 'Weekly Off' : 'Not assigned')}
                 </div>
               </div>
               <div>
@@ -792,7 +817,7 @@ const EmployeeDashboard: React.FC = () => {
                 {infoRow('Employee ID', profileInfo.employee_code)}
                 {infoRow('Department', profileInfo.department?.name || 'Not assigned')}
                 {infoRow('Office', profileInfo.office?.name || 'Not assigned')}
-                {infoRow('Shift', currentShift?.name || 'Not assigned')}
+                {infoRow('Shift', currentShift?.name || (loadingAttendance ? 'Loading…' : isWeekOff ? 'Weekly Off' : 'Not assigned'))}
                 {infoRow('Role', profileInfo.role?.name || authRole || 'Not configured')}
               </div>
             )}
