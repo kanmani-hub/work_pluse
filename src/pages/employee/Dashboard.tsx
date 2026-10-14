@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { attendanceService } from '../../services/attendance/attendanceService';
 import { breakService } from '../../services/attendance/breakService';
+import { runBreakAction } from '../../services/attendance/breakActionFlow';
 import { faceService } from '../../services/face/faceService';
 import { locationService } from '../../services/location/locationService';
 import { supabase } from '../../lib/supabase';
@@ -91,6 +92,7 @@ const EmployeeDashboard: React.FC = () => {
   
   // Modals
   const [showBreakModal, setShowBreakModal] = useState(false);
+  const [breakBusy, setBreakBusy] = useState(false); // a START / END request is running
   const [showSecurityModal, setShowSecurityModal] = useState(false);
   
   // Timers (Mock)
@@ -285,7 +287,8 @@ const EmployeeDashboard: React.FC = () => {
     return companyDateStr();
   };
 
-  const fetchTodayAttendance = async () => {
+  /** Reload today's attendance and breaks. Returns false if anything could not be loaded. */
+  const fetchTodayAttendance = async (): Promise<boolean> => {
     try {
     const dateStr = getLocalDateStr();
     
@@ -301,12 +304,17 @@ const EmployeeDashboard: React.FC = () => {
       // Keep what is on screen; a failed request must not look like "Not Clocked In"
       if (import.meta.env.DEV) console.warn('[Dashboard] attendance load failed:', error.message);
       setAttendanceError("Unable to load today's attendance. Check your connection and try again.");
-      return;
+      return false;
     }
     setAttendanceError(null);
     if (data) {
       setAttendanceRecord(data);
-      const { data: breaks } = await breakService.getAttendanceBreaks(data.id);
+      const { data: breaks, error: breaksError } = await breakService.getAttendanceBreaks(data.id);
+      if (breaksError) {
+        // A failed read is not "no breaks": keep the break state on screen and report it
+        setAttendanceError('Unable to load your breaks. Check your connection and try again.');
+        return false;
+      }
       setTodayBreaks(breaks || []);
       const hasActiveBreak = (breaks || []).some((b: any) => !b.ended_at);
       if (data.clock_in_at && !data.clock_out_at) {
@@ -332,9 +340,11 @@ const EmployeeDashboard: React.FC = () => {
       setTodayBreaks([]);
       setAttendanceState('not_clocked_in');
     }
+    return true;
     } catch (err) {
       console.error('[Dashboard] attendance load failed:', err);
       setAttendanceError("Unable to load today's attendance. Check your connection and try again.");
+      return false;
     } finally {
       setLoadingAttendance(false);
     }
@@ -516,16 +526,21 @@ const EmployeeDashboard: React.FC = () => {
     alert("Override requests are not available yet. Please contact your administrator directly.");
   };
 
+  // START / END a manual break, then always reload: a partly failed action may still have created
+  // or ended the break. The original error is shown; a failed reload is reported separately.
   const confirmBreak = async () => {
-    if (attendanceRecord) {
-      if (attendanceState === 'working') {
-        const { error } = await breakService.startBreak(attendanceRecord.id, 'REGULAR');
-        if (error) alert(error.message);
-        else await fetchTodayAttendance();
-      } else if (attendanceState === 'on_break') {
-        const { error } = await breakService.endBreak(attendanceRecord.id);
-        if (error) alert(error.message);
-        else await fetchTodayAttendance();
+    if (breakBusy) return; // no second request while one is running
+    if (attendanceRecord && (attendanceState === 'working' || attendanceState === 'on_break')) {
+      setBreakBusy(true);
+      try {
+        const id = attendanceRecord.id;
+        const outcome = await runBreakAction(
+          () => (attendanceState === 'working' ? breakService.startBreak(id, 'REGULAR') : breakService.endBreak(id)),
+          fetchTodayAttendance,
+        );
+        if (outcome.message) alert(outcome.message);
+      } finally {
+        setBreakBusy(false);
       }
     }
     setShowBreakModal(false);
@@ -736,7 +751,7 @@ const EmployeeDashboard: React.FC = () => {
                     {(() => { const allowed = resolveAllowedBreakMinutes(attendanceRecord?.shift_template?.break_duration_minutes ?? currentShift?.break_duration_minutes, appSettings?.breakDurationMins); return allowed !== null ? `Allowed: ${allowed} mins` : ''; })()}
                   </div>
                   {activeBreak?.break_type !== 'AUTO_GPS' ? (
-                    <button onClick={confirmBreak} className="btn btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1.125rem', borderRadius: 'var(--radius-full)' }}>
+                    <button onClick={confirmBreak} disabled={breakBusy} className="btn btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1.125rem', borderRadius: 'var(--radius-full)' }}>
                       End Break
                     </button>
                   ) : (
@@ -898,7 +913,7 @@ const EmployeeDashboard: React.FC = () => {
             
             <div style={{ display: 'flex', gap: '1rem' }}>
               <button onClick={() => setShowBreakModal(false)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
-              <button onClick={confirmBreak} className="btn" style={{ flex: 1, backgroundColor: 'var(--warning)', color: 'var(--bg-primary)' }}>Start Break</button>
+              <button onClick={confirmBreak} disabled={breakBusy} className="btn" style={{ flex: 1, backgroundColor: 'var(--warning)', color: 'var(--bg-primary)' }}>Start Break</button>
             </div>
           </div>
         </div>

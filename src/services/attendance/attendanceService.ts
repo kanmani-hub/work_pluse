@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase';
-import { completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes, findActiveBreak, closeActiveBreakAt, statusAfterBreakEnds } from './breakRules';
+import { completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes, findActiveBreak, closeActiveBreakAt, statusAfterBreakEnds, classifyOpenBreaks } from './breakRules';
+import { logBreakAudit } from './breakAudit';
 import { selectCurrentAttendance } from './currentAttendance';
 import { companyDateStr, previousDateStr } from '../../utils/companyDate';
 import type { Database } from '../../types/database';
@@ -477,8 +478,23 @@ export const attendanceService = {
       .from('attendance_breaks')
       .select('*')
       .eq('attendance_id', attendanceId) as any;
-    if (breaksErr) return { data: null, error: new Error(breaksErr.message) };
-    let breaks: any[] = breakRows || [];
+    // A failed read never counts as "no breaks" (the clock-out would otherwise miss an open break)
+    if (breaksErr || !Array.isArray(breakRows)) return { data: null, error: new Error(`Your breaks could not be checked (${breaksErr?.message || 'no data returned'}). You are still clocked in; please try again.`) };
+    let breaks: any[] = breakRows;
+
+    // Two or more open breaks are ambiguous (overlapping time would be counted twice, and which
+    // one is real cannot be decided here): refuse, close nothing, and leave it to an administrator.
+    const openCheck = classifyOpenBreaks(breaks.filter((b: any) => !b.ended_at), null);
+    if (openCheck.kind === 'MULTIPLE') {
+      await logBreakAudit({
+        action: 'CLOCK_OUT_BLOCKED_MULTIPLE_OPEN_BREAKS',
+        module: 'ATTENDANCE',
+        entity_type: 'attendance',
+        entity_id: attendanceId,
+        description: `Clock-out refused: ${openCheck.count} open breaks on this attendance. No break was closed.`,
+      });
+      return { data: null, error: new Error(`${openCheck.count} breaks are open for this attendance, so you cannot be clocked out automatically. Nothing was changed; please contact an administrator to correct your break records.`) };
+    }
 
     // An active MANUAL break must be ended by the employee first (existing rule).
     // An active AUTOMATIC (GPS) break is closed at the clock-out time: the employee does not

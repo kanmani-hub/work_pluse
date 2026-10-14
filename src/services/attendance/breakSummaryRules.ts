@@ -13,10 +13,16 @@
  *   Excess minutes    = max(0, total − allowed)
  *
  * Sessions with a missing/unparseable start, an end before the start, an open break after
- * clock-out, or a second open break are INVALID: they are listed but never counted (and never
- * turned into a "0 min" completed break). A session id seen twice is counted once.
+ * clock-out, an open break on a past attendance day, or a second open break are INVALID: they
+ * are listed but never counted (and never turned into a "0 min" completed break). A session id
+ * seen twice is counted once.
+ *
+ * Past attendance day: attendance_date is before today's company date (Asia/Kolkata). An open
+ * break there was never closed (e.g. no clock-out), so counting it "up to now" would grow without
+ * limit. Exception: an overnight shift (crosses_midnight) that started yesterday is still running.
  */
 import { breakDurationMinutes, resolveAllowedBreakMinutes } from './breakRules';
+import { companyDateStr, previousDateStr } from '../../utils/companyDate';
 
 export type BreakDayStatus = 'ON_BREAK' | 'EXCESS' | 'WITHIN' | 'NO_BREAKS' | 'UNVERIFIED';
 export const BREAK_STATUS_LABEL: Record<BreakDayStatus, string> = {
@@ -50,8 +56,22 @@ export interface BreakDaySummary {
 
 const validTime = (iso: any) => typeof iso === 'string' && iso.length > 0 && Number.isFinite(new Date(iso).getTime());
 
+/**
+ * True when an open break on this attendance day can no longer be in progress: the day is before
+ * today's company date, except yesterday's overnight (crosses_midnight) shift. Unknown date → false
+ * (the clock-out rule still applies).
+ */
+export function isPastAttendanceDay(attendanceDate: string | null | undefined, crossesMidnight: boolean | null | undefined, nowMs: number): boolean {
+  if (typeof attendanceDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate.slice(0, 10))) return false;
+  const day = attendanceDate.slice(0, 10);
+  const today = companyDateStr(nowMs);
+  if (day >= today) return false;
+  if (crossesMidnight && day === previousDateStr(today)) return false;
+  return true;
+}
+
 export function summarizeBreakDay(
-  attendance: { clock_out_at?: string | null; shift_template?: { break_duration_minutes?: number | null } | null; attendance_breaks?: any[] | null },
+  attendance: { attendance_date?: string | null; clock_out_at?: string | null; shift_template?: { break_duration_minutes?: number | null; crosses_midnight?: boolean | null } | null; attendance_breaks?: any[] | null },
   settingBreakMins: number | null | undefined,
   nowMs: number,
 ): BreakDaySummary {
@@ -68,6 +88,7 @@ export function summarizeBreakDay(
   }).sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || '')));
 
   const clockedOut = !!attendance?.clock_out_at;
+  const pastDay = isPastAttendanceDay(attendance?.attendance_date, attendance?.shift_template?.crosses_midnight, nowMs);
   let openSeen = 0;
   const sessions: BreakSession[] = unique.map(b => {
     const base = { id: b.id ?? null, break_type: b.break_type ?? null, started_at: b.started_at ?? null, ended_at: b.ended_at ?? null, storedMinutes: b.duration_minutes ?? null };
@@ -80,6 +101,7 @@ export function summarizeBreakDay(
     }
     // Open session
     if (clockedOut) return invalid('Break still open after clock-out');
+    if (pastDay) return invalid('Break still open on a past attendance day (never closed)');
     openSeen++;
     if (openSeen > 1) return invalid('More than one open break');
     const startMs = new Date(b.started_at).getTime();

@@ -24,6 +24,24 @@ export function findActiveBreak<T extends BreakLike>(breaks: T[] | null | undefi
   return (breaks || []).find(b => !b.ended_at) ?? null;
 }
 
+/**
+ * Result of reading an attendance's open breaks (ended_at IS NULL) before starting or ending one.
+ * A failed read is never treated as "no active break", and more than one open break is reported
+ * as an integrity problem: in both cases the caller must not insert another break.
+ */
+export type OpenBreakCheck<T> =
+  | { kind: 'NONE' }
+  | { kind: 'ONE'; active: T }
+  | { kind: 'MULTIPLE'; count: number }
+  | { kind: 'ERROR'; message: string };
+
+export function classifyOpenBreaks<T>(rows: T[] | null | undefined, error: { message?: string } | null | undefined): OpenBreakCheck<T> {
+  if (error || !Array.isArray(rows)) return { kind: 'ERROR', message: error?.message || 'no data returned' };
+  if (rows.length === 0) return { kind: 'NONE' };
+  if (rows.length === 1) return { kind: 'ONE', active: rows[0] };
+  return { kind: 'MULTIPLE', count: rows.length };
+}
+
 /** Sum of completed break minutes (uses stored duration when present, otherwise the timestamps). */
 export function completedBreakMinutes(breaks: BreakLike[] | null | undefined): number {
   return (breaks || [])

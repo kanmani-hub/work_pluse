@@ -1,30 +1,96 @@
 import { supabase } from '../../lib/supabase';
 import type { Database } from '../../types/database';
 import { attendanceService } from './attendanceService';
-import { auditService } from '../audit/auditService';
+import { logBreakAudit } from './breakAudit';
 import { qaTimeService } from '../qa/qaTimeService';
 import { notificationService } from '../notifications/notificationService';
 import { autoBreakStarted, autoBreakEnded } from '../notifications/notificationRules';
-import { breakDurationMinutes, completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes, statusAfterBreakEnds } from './breakRules';
+import { breakDurationMinutes, classifyOpenBreaks, completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes, statusAfterBreakEnds } from './breakRules';
 
 import { companyDateStr as companyDate } from '../../utils/companyDate';
+
+type BreakTotals =
+  | { ok: true; actual: number; allowed: number | null; overrun: number; statusAfterBreak: 'LATE' | 'WORKING' }
+  | { ok: false; error: Error; statusAfterBreak: 'LATE' | 'WORKING' | null };
 
 /**
  * Recalculate attendance.break_minutes and break_overrun_minutes from the stored breaks.
  * Allowed minutes = shift break_duration_minutes, else Admin setting (no hard-coded default).
+ * If the attendance row, the breaks or the settings cannot be read, nothing is calculated
+ * (ok: false): a failed read must never be written back as 0 break minutes / 0 overrun.
  */
-async function recalculateBreakTotals(attendanceId: string) {
-  const [{ data: att }, { data: breaks }, { globalSettingsService }] = await Promise.all([
-    supabase.from('attendance').select('late_minutes, shift_template:shift_template_id(break_duration_minutes)').eq('id', attendanceId).single() as any,
-    supabase.from('attendance_breaks').select('started_at, ended_at, duration_minutes').eq('attendance_id', attendanceId) as any,
-    import('../settings/globalSettingsService'),
-  ]);
-  const settings = await globalSettingsService.loadSettings();
-  const actual = completedBreakMinutes(breaks || []);
-  const allowed = resolveAllowedBreakMinutes(att?.shift_template?.break_duration_minutes, settings.app.breakDurationMins);
-  const overrun = computeBreakOverrun(actual, allowed, settings.payroll.enableBreakOverrunDetection);
-  // Status to restore when a break ends: keeps LATE for a late arrival (never resets it to WORKING)
-  return { actual, allowed, overrun, statusAfterBreak: statusAfterBreakEnds(att) };
+async function recalculateBreakTotals(attendanceId: string): Promise<BreakTotals> {
+  // Status to restore when a break ends, from the attendance row actually read (kept even if a
+  // later step fails, e.g. the settings cannot be loaded): LATE stays LATE, otherwise WORKING.
+  let statusAfterBreak: 'LATE' | 'WORKING' | null = null;
+  try {
+    const [attRes, breaksRes, { globalSettingsService }] = await Promise.all([
+      supabase.from('attendance').select('late_minutes, shift_template:shift_template_id(break_duration_minutes)').eq('id', attendanceId).single() as any,
+      supabase.from('attendance_breaks').select('started_at, ended_at, duration_minutes').eq('attendance_id', attendanceId) as any,
+      import('../settings/globalSettingsService'),
+    ]);
+    const att = attRes?.data;
+    statusAfterBreak = att && !attRes?.error ? statusAfterBreakEnds(att) : null;
+    if (attRes?.error || !att) return { ok: false, statusAfterBreak, error: new Error(`attendance could not be read (${attRes?.error?.message || 'no data returned'})`) };
+    if (breaksRes?.error || !Array.isArray(breaksRes?.data)) return { ok: false, statusAfterBreak, error: new Error(`breaks could not be read (${breaksRes?.error?.message || 'no data returned'})`) };
+    const settings = await globalSettingsService.loadSettings();
+    const actual = completedBreakMinutes(breaksRes.data);
+    const allowed = resolveAllowedBreakMinutes(att.shift_template?.break_duration_minutes, settings.app.breakDurationMins);
+    const overrun = computeBreakOverrun(actual, allowed, settings.payroll.enableBreakOverrunDetection);
+    return { ok: true, actual, allowed, overrun, statusAfterBreak: statusAfterBreakEnds(att) };
+  } catch (e: any) {
+    return { ok: false, statusAfterBreak, error: new Error(`break totals could not be calculated (${e?.message || e})`) };
+  }
+}
+
+/**
+ * Outcome of writing the break totals after a break ended (the break itself is already closed).
+ * totalsSaved: break_minutes / break_overrun_minutes were written. statusSaved: the attendance
+ * left ON_BREAK. error: why something was not saved (null only when both were saved).
+ * Re-running the calculation is always safe: the totals are derived from the stored breaks,
+ * so a later break end or the clock-out writes the correct values again (never double counts).
+ */
+interface BreakTotalsWrite { totalsSaved: boolean; statusSaved: boolean; error: Error | null }
+
+/** Write the recalculated totals, or (if they could not be calculated) only the status. */
+async function applyBreakTotals(attendanceId: string, totals: BreakTotals): Promise<BreakTotalsWrite> {
+  if (totals.ok) {
+    // @ts-ignore
+    const res: any = await supabase.from('attendance').update({
+      status: totals.statusAfterBreak, // LATE stays LATE after the break
+      break_minutes: totals.actual,
+      break_overrun_minutes: totals.overrun,
+    } as any).eq('id', attendanceId);
+    if (res?.error) {
+      console.error('[BREAK TOTALS] write failed for attendance', attendanceId, res.error.message);
+      return { totalsSaved: false, statusSaved: false, error: new Error(`attendance totals could not be saved (${res.error.message})`) };
+    }
+    return { totalsSaved: true, statusSaved: true, error: null };
+  }
+  console.error('[BREAK TOTALS] not updated for attendance', attendanceId, totals.error.message);
+  // break_minutes / break_overrun_minutes are left as they are; only leave the ON_BREAK status
+  if (!totals.statusAfterBreak) return { totalsSaved: false, statusSaved: false, error: totals.error };
+  // @ts-ignore
+  const res: any = await supabase.from('attendance').update({ status: totals.statusAfterBreak } as any).eq('id', attendanceId);
+  if (res?.error) return { totalsSaved: false, statusSaved: false, error: new Error(`${totals.error.message}; attendance status could not be saved either (${res.error.message})`) };
+  return { totalsSaved: false, statusSaved: true, error: totals.error };
+}
+
+/** Recalculate and write the totals/status from the stored breaks (used when no break is open). */
+/**
+ * No break is open: bring the attendance back in line with the stored breaks if it is stale
+ * (still ON_BREAK, or break_minutes / break_overrun_minutes differ from the recalculation, e.g.
+ * after an earlier failed write or settings read). Writes nothing when everything already matches,
+ * and is idempotent because the totals are derived from the breaks (never counted twice).
+ */
+async function reconcileIfStale(attendanceId: string, current: { status?: string | null; break_minutes?: number | null; break_overrun_minutes?: number | null }): Promise<{ reconciled: boolean; changed: boolean }> {
+  const totals = await recalculateBreakTotals(attendanceId);
+  const stale = current.status === 'ON_BREAK'
+    || (totals.ok && ((current.break_minutes ?? 0) !== totals.actual || (current.break_overrun_minutes ?? 0) !== totals.overrun));
+  if (!stale) return { reconciled: true, changed: false };
+  if (!totals.ok && current.status !== 'ON_BREAK') return { reconciled: false, changed: false };
+  const saved = await applyBreakTotals(attendanceId, totals);
+  return { reconciled: saved.totalsSaved && saved.statusSaved, changed: saved.totalsSaved || saved.statusSaved };
 }
 
 /** Unique-violation from the database (e.g. a second active break once the one-active-break index exists). */
@@ -38,7 +104,7 @@ export const breakService = {
   /**
    * Start a new break
    */
-  async startBreak(attendanceId: string, breakType: string = 'REGULAR'): Promise<{ data: AttendanceBreakRow | null; error: Error | null }> {
+  async startBreak(attendanceId: string, breakType: string = 'REGULAR'): Promise<{ data: AttendanceBreakRow | null; error: Error | null; auditLogged?: boolean }> {
     const empId = await attendanceService.getCurrentEmployeeId();
     if (!empId) return { data: null, error: new Error('Unauthorized') };
 
@@ -58,35 +124,54 @@ export const breakService = {
       return { data: null, error: new Error('Cannot start break for completed attendance.') };
     }
 
-    // 2. Check if a break is already active
-    const { data: activeBreak } = await supabase
+    // 2. Check if a break is already active (a failed check never counts as "no break")
+    const openRes = await supabase
       .from('attendance_breaks')
       .select('id')
       .eq('attendance_id', attendanceId)
-      .is('ended_at', null)
-      .maybeSingle() as any;
-
-    if (activeBreak) {
+      .is('ended_at', null) as any;
+    const open = classifyOpenBreaks(openRes?.data, openRes?.error);
+    if (open.kind === 'ERROR') {
+      return { data: null, error: new Error(`Could not check for an active break (${open.message}). No break was started; please try again.`) };
+    }
+    if (open.kind === 'MULTIPLE') {
+      return { data: null, error: new Error(`${open.count} breaks are open for this attendance. No new break was started; an administrator must correct the break records.`) };
+    }
+    if (open.kind === 'ONE') {
+      // Safe retry after an earlier partial start: the break exists, make sure the status says so
+      if (attendance.status !== 'ON_BREAK') {
+        // @ts-ignore
+        const fix: any = await supabase.from('attendance').update({ status: 'ON_BREAK' } as any).eq('id', attendanceId);
+        if (fix?.error) console.error('[BREAK] status repair failed for attendance', attendanceId, fix.error.message);
+      }
       return { data: null, error: new Error('A break is already active.') };
     }
 
-    // 2.5 Check break limit exhaustion
-    const { data: attendanceData } = await supabase
+    // 2.5 Check break limit exhaustion. Every read must succeed: if the allowance cannot be
+    // verified, no break is started (a failed read is never treated as "nothing used").
+    const allowanceError = (what: string, e: any) => ({ data: null, error: new Error(`Your break allowance could not be checked (${what}: ${e?.message || e || 'no data returned'}). No break was started; please try again.`) });
+    const attRes = await supabase
       .from('attendance')
       .select('*, shift_template:shift_template_id(break_duration_minutes)')
       .eq('id', attendanceId)
       .single() as any;
+    if (attRes?.error || !attRes?.data) return allowanceError('attendance', attRes?.error);
+    const attendanceData = attRes.data;
 
-    const { globalSettingsService } = await import('../settings/globalSettingsService');
-    const globalSettings = await globalSettingsService.loadSettings();
-    const allowedBreakMins = resolveAllowedBreakMinutes(attendanceData?.shift_template?.break_duration_minutes, globalSettings.app.breakDurationMins);
-
-    const { data: pastBreaks } = await supabase.from('attendance_breaks').select('duration_minutes').eq('attendance_id', attendanceId);
-    let usedMins = 0;
-    if (pastBreaks) {
-      pastBreaks.forEach((b: any) => usedMins += (b.duration_minutes || 0));
+    let globalSettings: any;
+    try {
+      const { globalSettingsService } = await import('../settings/globalSettingsService');
+      globalSettings = await globalSettingsService.loadSettings();
+    } catch (e: any) {
+      return allowanceError('settings', e);
     }
-    
+    const allowedBreakMins = resolveAllowedBreakMinutes(attendanceData?.shift_template?.break_duration_minutes, globalSettings?.app?.breakDurationMins);
+
+    const pastRes = await supabase.from('attendance_breaks').select('duration_minutes').eq('attendance_id', attendanceId) as any;
+    if (pastRes?.error || !Array.isArray(pastRes?.data)) return allowanceError('earlier breaks', pastRes?.error);
+    let usedMins = 0;
+    pastRes.data.forEach((b: any) => usedMins += (b.duration_minutes || 0));
+
     if (allowedBreakMins !== null && usedMins >= allowedBreakMins) {
       return { data: null, error: new Error('You have already exhausted your allowed break duration for today.') };
     }
@@ -112,50 +197,72 @@ export const breakService = {
     }
 
     // Audit: BREAK_STARTED
-    auditService.recordAuditLog({
+    const auditLogged = await logBreakAudit({
       action: 'BREAK_STARTED',
       module: 'ATTENDANCE',
       entity_type: 'attendance_breaks',
       entity_id: (newBreak as any).id,
       description: `Employee started a ${breakType} break.`,
       new_values: { attendance_id: attendanceId, break_type: breakType, started_at: nowIso }
-    }).catch(e => console.error('[AUDIT] BREAK_STARTED failed:', e));
+    });
 
-    // Update Attendance status
+    // Update Attendance status and add the event. The break already exists and is never removed
+    // because a follow-up write failed; the failure is reported instead (and starting again
+    // repairs the status, see "already active" above).
+    const followUp: string[] = [];
     // @ts-ignore
-    await supabase.from('attendance').update({ status: 'ON_BREAK' }).eq('id', attendanceId);
+    const statusRes: any = await supabase.from('attendance').update({ status: 'ON_BREAK' }).eq('id', attendanceId);
+    if (statusRes?.error) followUp.push(`attendance status not set to On Break (${statusRes.error.message})`);
 
-    // Add Event
-    await supabase.from('attendance_events').insert({
+    const eventRes: any = await supabase.from('attendance_events').insert({
       attendance_id: attendanceId,
       employee_id: empId,
       event_type: 'BREAK_START',
       event_at: nowIso,
       source: 'WEB'
     } as any);
+    if (eventRes?.error) followUp.push(`break start event not logged (${eventRes.error.message})`);
 
-    return { data: newBreak, error: null };
+    if (followUp.length) {
+      console.error('[BREAK] started with follow-up failures', (newBreak as any).id, followUp.join('; '));
+      return { data: newBreak, error: new Error(`Your break has started, but ${followUp.join(' and ')}. Please refresh the page; if it does not show you on break, contact an administrator.`), auditLogged };
+    }
+    // An audit failure is a diagnostic only (auditLogged: false); it never fails the break itself
+    return { data: newBreak, error: null, auditLogged };
   },
 
   /**
    * End the current active break
    */
-  async endBreak(attendanceId: string): Promise<{ data: AttendanceBreakRow | null; error: Error | null }> {
+  async endBreak(attendanceId: string): Promise<{ data: AttendanceBreakRow | null; error: Error | null; auditLogged?: boolean }> {
     const empId = await attendanceService.getCurrentEmployeeId();
     if (!empId) return { data: null, error: new Error('Unauthorized') };
 
-    // 1. Find active break
-    const { data: activeBreak } = await supabase
+    // 1. Find the active break: a failed or ambiguous lookup changes nothing
+    const openRes = await supabase
       .from('attendance_breaks')
       .select('*')
       .eq('attendance_id', attendanceId)
       .eq('employee_id', empId)
-      .is('ended_at', null)
-      .maybeSingle() as any;
-
-    if (!activeBreak) {
+      .is('ended_at', null) as any;
+    const open = classifyOpenBreaks<any>(openRes?.data, openRes?.error);
+    if (open.kind === 'ERROR') {
+      return { data: null, error: new Error(`Could not check for an active break (${open.message}). Nothing was changed; please try again.`) };
+    }
+    if (open.kind === 'MULTIPLE') {
+      return { data: null, error: new Error(`${open.count} breaks are open for this attendance. No break was ended; an administrator must correct the break records.`) };
+    }
+    if (open.kind === 'NONE') {
+      // Safe retry after an earlier partial end (break closed, attendance write failed): no break
+      // is open but the attendance still says On Break → rewrite totals and status from the
+      // stored breaks. Idempotent: derived from the breaks, never counted twice.
+      const cur = await supabase.from('attendance').select('status, clock_out_at, break_minutes, break_overrun_minutes').eq('id', attendanceId).eq('employee_id', empId).maybeSingle() as any;
+      if (!cur?.error && cur?.data && !cur.data.clock_out_at) {
+        await reconcileIfStale(attendanceId, cur.data);
+      }
       return { data: null, error: new Error('No active break found.') };
     }
+    const activeBreak = open.active;
 
     const nowIso = qaTimeService.getIsoString();
     const durationMinutes = breakDurationMinutes(activeBreak.started_at, nowIso);
@@ -176,27 +283,22 @@ export const breakService = {
     if (!updatedBreak) return { data: null, error: new Error('No active break found.') };
 
     // Audit: BREAK_ENDED
-    auditService.recordAuditLog({
+    const auditLogged = await logBreakAudit({
       action: 'BREAK_ENDED',
       module: 'ATTENDANCE',
       entity_type: 'attendance_breaks',
       entity_id: (updatedBreak as any)?.id || activeBreak.id,
       description: `Employee ended break. Duration: ${durationMinutes} minutes.`,
       new_values: { attendance_id: attendanceId, duration_minutes: durationMinutes, ended_at: nowIso }
-    }).catch(e => console.error('[AUDIT] BREAK_ENDED failed:', e));
+    });
 
-    // 3. Update attendance totals from the stored breaks (sum of actual durations) and status
+    // 3. Update attendance totals from the stored breaks (sum of actual durations) and status.
+    // If they cannot be recalculated, the stored totals are left untouched (never overwritten with 0).
     const totals = await recalculateBreakTotals(attendanceId);
-
-    // @ts-ignore
-    await supabase.from('attendance').update({ 
-      status: totals.statusAfterBreak,
-      break_minutes: totals.actual,
-      break_overrun_minutes: totals.overrun
-    }).eq('id', attendanceId);
+    const saved = await applyBreakTotals(attendanceId, totals);
 
     // Add Event
-    await supabase.from('attendance_events').insert({
+    const eventRes: any = await supabase.from('attendance_events').insert({
       attendance_id: attendanceId,
       employee_id: empId,
       event_type: 'BREAK_END',
@@ -204,7 +306,16 @@ export const breakService = {
       source: 'WEB'
     } as any);
 
-    return { data: updatedBreak, error: null };
+    // The break is ended either way (it is never reopened). Anything not saved is reported, and
+    // the totals are rewritten from the stored breaks at the next break end or at clock-out.
+    const problems: string[] = [];
+    if (!saved.totalsSaved) problems.push(`the attendance break totals could not be updated (${saved.error?.message || 'unknown error'})`);
+    if (!saved.statusSaved) problems.push('your attendance still shows On Break');
+    if (eventRes?.error) problems.push(`the break end event was not logged (${eventRes.error.message})`);
+    if (problems.length) {
+      return { data: updatedBreak, error: new Error(`Your break was ended, but ${problems.join('; ')}. Please refresh the page; if the totals look wrong, contact an administrator.`), auditLogged };
+    }
+    return { data: updatedBreak, error: null, auditLogged };
   },
 
   /**
@@ -260,7 +371,7 @@ export const breakService = {
         clock_out_at,
         status,
         shift_template_id,
-        shift_template:shift_template_id(name, break_duration_minutes),
+        shift_template:shift_template_id(name, break_duration_minutes, crosses_midnight),
         employee_id,
         employees:employee_id(first_name, last_name, employee_code, departments(name)),
         attendance_breaks(*)
@@ -310,7 +421,7 @@ export const breakService = {
     // 1. Open attendance for today (or an overnight shift that started yesterday)
     const { data: attendance } = await supabase
       .from('attendance')
-      .select('id, status, late_minutes, attendance_date, clock_in_at, clock_out_at, shift_template:shift_template_id(crosses_midnight)')
+      .select('id, status, late_minutes, break_minutes, break_overrun_minutes, attendance_date, clock_in_at, clock_out_at, shift_template:shift_template_id(crosses_midnight)')
       .eq('employee_id', empId)
       .is('clock_out_at', null)
       .in('attendance_date', [today, yesterday])
@@ -324,24 +435,49 @@ export const breakService = {
     // A transition before clock-in belongs to no attendance
     const atIso = new Date(Math.max(new Date(timestamp).getTime(), new Date(attendance.clock_in_at).getTime())).toISOString();
 
-    const { data: activeBreak } = await supabase
+    // A failed check never counts as "no active break", and two or more open breaks are an
+    // integrity problem: in both cases no break is inserted (and none is closed).
+    const openRes = await supabase
       .from('attendance_breaks')
       .select('id, started_at, break_type')
       .eq('attendance_id', attendance.id)
-      .is('ended_at', null)
-      .maybeSingle() as any;
+      .is('ended_at', null) as any;
+    const open = classifyOpenBreaks<any>(openRes?.data, openRes?.error);
+    if (open.kind === 'ERROR') return { action: 'ERROR', reason: `ACTIVE_BREAK_CHECK_FAILED: ${open.message}` };
+    if (open.kind === 'MULTIPLE') {
+      const auditLogged = await logBreakAudit({
+        action: 'MULTIPLE_ACTIVE_BREAKS_DETECTED',
+        module: 'ATTENDANCE',
+        entity_type: 'attendance',
+        entity_id: attendance.id,
+        description: `${open.count} open breaks found for one attendance; automatic break ${transition} was not applied.`,
+      });
+      return { action: 'ERROR', reason: 'MULTIPLE_ACTIVE_BREAKS', count: open.count, auditLogged };
+    }
+    const activeBreak = open.kind === 'ONE' ? open.active : null;
 
     if (transition === 'START') {
-      if (activeBreak) return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' }; // no duplicate active breaks
+      if (activeBreak) {
+        // no duplicate active breaks; a retry after a partial start repairs the status
+        if (attendance.status !== 'ON_BREAK') {
+          // @ts-ignore
+          const fix: any = await supabase.from('attendance').update({ status: 'ON_BREAK' } as any).eq('id', attendance.id);
+          if (fix?.error) return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE', statusRepaired: false, statusError: fix.error.message };
+          return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE', statusRepaired: true };
+        }
+        return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' };
+      }
       if (opts.isWfhContext) return { action: 'NONE', reason: 'WFH' };
 
-      const { data: wfhData } = await supabase
+      // A failed WFH check is not "no WFH": without knowing, no automatic break is started
+      const { data: wfhData, error: wfhError } = await supabase
         .from('wfh_requests')
         .select('id')
         .eq('employee_id', empId)
         .eq('request_date', attendance.attendance_date)
         .eq('status', 'APPROVED')
         .maybeSingle();
+      if (wfhError) return { action: 'ERROR', reason: `WFH_CHECK_FAILED: ${wfhError.message}` };
       if (wfhData) return { action: 'NONE', reason: 'WFH' };
 
       const { data: newBreak, error } = await supabase
@@ -354,26 +490,37 @@ export const breakService = {
       if (isUniqueViolation(error)) return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' };
       if (error || !newBreak) return { action: 'ERROR', reason: error?.message };
 
+      // Follow-up writes are checked; the break is kept even if one fails (the next exit repairs the status)
+      const followUp: string[] = [];
       // @ts-ignore
-      await supabase.from('attendance').update({ status: 'ON_BREAK' } as any).eq('id', attendance.id);
-      await supabase.from('attendance_events').insert({
+      const statusRes: any = await supabase.from('attendance').update({ status: 'ON_BREAK' } as any).eq('id', attendance.id);
+      if (statusRes?.error) followUp.push(`STATUS_NOT_UPDATED: ${statusRes.error.message}`);
+      const eventRes: any = await supabase.from('attendance_events').insert({
         attendance_id: attendance.id, employee_id: empId, event_type: 'BREAK_START', event_at: atIso, source: 'SYSTEM',
         metadata: { trigger: 'GPS_GEOFENCE', break_type: 'AUTO_GPS', break_id: (newBreak as any).id },
       } as any);
+      if (eventRes?.error) followUp.push(`EVENT_NOT_LOGGED: ${eventRes.error.message}`);
+      if (followUp.length) console.error('[AUTO BREAK] started with follow-up failures', (newBreak as any).id, followUp.join('; '));
 
-      auditService.recordAuditLog({
+      const auditLogged = await logBreakAudit({
         action: 'AUTOMATIC_BREAK_STARTED',
         module: 'ATTENDANCE',
         entity_type: 'attendance_breaks',
         entity_id: (newBreak as any).id,
         description: `Automatic GPS break started at ${new Date(atIso).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}.`,
-      }).catch(() => {});
+      });
       // Only the request that actually created the break notifies (jitter / second tab never reach here)
       await notificationService.notifyEmployee(empId, autoBreakStarted({ breakId: (newBreak as any).id }));
-      return { action: 'STARTED', breakId: (newBreak as any).id };
+      if (followUp.length) return { action: 'STARTED', breakId: (newBreak as any).id, complete: false, reason: followUp.join('; '), auditLogged };
+      return { action: 'STARTED', breakId: (newBreak as any).id, complete: true, auditLogged };
     }
 
     // END: only an automatic break is closed by returning inside (manual breaks are ended by the employee)
+    if (!activeBreak) {
+      // Nothing is open: repair a stale attendance left by an earlier partial end (writes only if stale)
+      const rec = await reconcileIfStale(attendance.id, attendance);
+      return { action: 'NONE', reason: 'NO_ACTIVE_AUTO_BREAK', reconciled: rec.reconciled, ...(rec.changed ? { repaired: true } : {}) };
+    }
     if (!activeBreak || activeBreak.break_type !== 'AUTO_GPS') return { action: 'NONE', reason: 'NO_ACTIVE_AUTO_BREAK' };
 
     const endIso = new Date(Math.max(new Date(atIso).getTime(), new Date(activeBreak.started_at).getTime())).toISOString();
@@ -390,34 +537,35 @@ export const breakService = {
     if (error || !updatedBreak) return { action: 'ERROR', reason: error?.message };
 
     const totals = await recalculateBreakTotals(attendance.id);
-    // @ts-ignore
-    await supabase.from('attendance').update({
-      status: totals.statusAfterBreak, // LATE stays LATE after the break
-      break_minutes: totals.actual,
-      break_overrun_minutes: totals.overrun,
-    } as any).eq('id', attendance.id);
-    await supabase.from('attendance_events').insert({
+    const saved = await applyBreakTotals(attendance.id, totals);
+    const endEventRes: any = await supabase.from('attendance_events').insert({
       attendance_id: attendance.id, employee_id: empId, event_type: 'BREAK_END', event_at: endIso, source: 'SYSTEM',
       metadata: { trigger: 'GPS_GEOFENCE', break_type: 'AUTO_GPS', break_id: activeBreak.id, duration_minutes: durationMinutes },
     } as any);
 
-    auditService.recordAuditLog({
+    const auditLogged = await logBreakAudit({
       action: 'AUTOMATIC_BREAK_ENDED',
       module: 'ATTENDANCE',
       entity_type: 'attendance_breaks',
       entity_id: activeBreak.id,
       description: `Automatic GPS break ended. Duration: ${durationMinutes}m.`,
-    }).catch(() => {});
-    if (totals.overrun > 0) {
-      auditService.recordAuditLog({
+    });
+    let overrunAuditLogged = true;
+    if (totals.ok && saved.totalsSaved && totals.overrun > 0) {
+      overrunAuditLogged = await logBreakAudit({
         action: 'BREAK_OVERRUN_DETECTED',
         module: 'ATTENDANCE',
         entity_type: 'attendance',
         entity_id: attendance.id,
         description: `Break overrun detected: ${totals.overrun} minutes (allowed ${totals.allowed}, actual ${totals.actual}).`,
-      }).catch(() => {});
+      });
     }
     await notificationService.notifyEmployee(empId, autoBreakEnded({ breakId: activeBreak.id, minutes: durationMinutes }));
-    return { action: 'ENDED', breakId: activeBreak.id, durationMinutes, ...totals };
+    // totalsUpdated is true only when the write itself succeeded
+    const eventLogged = !endEventRes?.error;
+    const allAudited = auditLogged && overrunAuditLogged;
+    if (!saved.totalsSaved || !totals.ok) return { action: 'ENDED', breakId: activeBreak.id, durationMinutes, totalsUpdated: false, statusUpdated: saved.statusSaved, eventLogged, auditLogged: allAudited, reason: `BREAK_TOTALS_NOT_UPDATED: ${saved.error?.message || 'unknown error'}` };
+    if (!eventLogged) console.error('[AUTO BREAK] end event not logged', activeBreak.id, endEventRes.error.message);
+    return { action: 'ENDED', breakId: activeBreak.id, durationMinutes, totalsUpdated: true, statusUpdated: true, eventLogged, auditLogged: allAudited, actual: totals.actual, allowed: totals.allowed, overrun: totals.overrun, statusAfterBreak: totals.statusAfterBreak };
   }
 };
