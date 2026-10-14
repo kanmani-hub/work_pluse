@@ -135,8 +135,10 @@ describe('confirmed return → Auto Break ends', () => {
     expect(brk('m1').ended_at).toBeNull();
   });
 
-  it('no open break → nothing written', async () => {
-    setup({ breaks: [] });
+  it('no open break and the attendance already matches its breaks → nothing written', async () => {
+    // (a stale ON_BREAK / totals with no open break is repaired instead: see breakIntegrity.test.ts)
+    setup({ breaks: [], storedBreakMinutes: 0 });
+    att().status = 'WORKING';
     const r: any = await breakService.handleAutoBreakTransition('empA', 'END', ago(MIN));
     expect(r).toMatchObject({ action: 'NONE', reason: 'NO_ACTIVE_AUTO_BREAK' });
     expect(db.writes).toEqual({});
@@ -198,7 +200,7 @@ describe('manual and admin break end keep their rules but never write totals fro
     const r = await breakService.endBreak('attA');
     expect(brk('m1').ended_at).not.toBeNull();
     expect(att().break_minutes).toBe(30);
-    expect(r.error?.message).toMatch(/break total could not be updated/i);
+    expect(r.error?.message).toMatch(/break totals? could not be updated/i);
   });
 
   it('manual end (normal path) is unchanged: break closed, totals written, BREAK_END event', async () => {
@@ -289,7 +291,7 @@ describe('manual breaks: one open break, verified reads, automatic breaks not en
   it('two open breaks already exist → manual end refuses instead of guessing which one', async () => {
     setup({ breaks: [manual(), manual({ id: 'm2' })] });
     const r = await breakService.endBreak('attA');
-    expect(r.error?.message).toMatch(/more than one open break/i);
+    expect(r.error?.message).toMatch(/2 breaks are open.*No break was ended/i);
     expect(brk('m1').ended_at).toBeNull();
   });
 
@@ -297,7 +299,7 @@ describe('manual breaks: one open break, verified reads, automatic breaks not en
     setup({ breaks: [manual(), manual({ id: 'm2' })] });
     att().status = 'WORKING';
     const r = await breakService.startBreak('attA');
-    expect(r.error?.message).toMatch(/already active/i);
+    expect(r.error?.message).toMatch(/2 breaks are open.*No new break was started/i);
     expect(db.tables.attendance_breaks).toHaveLength(2);
   });
 
@@ -306,7 +308,7 @@ describe('manual breaks: one open break, verified reads, automatic breaks not en
     // reads of attendance_breaks: 1st = open-break check
     db.failSelect = [{ table: 'attendance_breaks', nth: 1 }];
     const r = await breakService.startBreak('attA');
-    expect(r.error?.message).toMatch(/could not be checked/i);
+    expect(r.error?.message).toMatch(/could not check for an active break.*No break was started/i);
     expect(db.tables.attendance_breaks).toHaveLength(0);
   });
 
@@ -314,7 +316,7 @@ describe('manual breaks: one open break, verified reads, automatic breaks not en
     setup({ breaks: [] });
     db.failSelect = [{ table: 'attendance_breaks', nth: 2 }];
     const r = await breakService.startBreak('attA');
-    expect(r.error?.message).toMatch(/break time could not be checked/i);
+    expect(r.error?.message).toMatch(/break allowance could not be checked.*No break was started/i);
     expect(db.tables.attendance_breaks).toHaveLength(0);
   });
 

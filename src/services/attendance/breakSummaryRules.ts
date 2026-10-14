@@ -16,8 +16,13 @@
  * its breaks: the day is UNVERIFIED with breaksUnavailable = true, never "No Breaks Recorded".
  *
  * Sessions with a missing/unparseable start, an end before the start, an open break after
- * clock-out, or a second open break are INVALID: they are listed but never counted (and never
- * turned into a "0 min" completed break). A session id seen twice is counted once.
+ * clock-out, an open break on a past attendance day, or a second open break are INVALID: they
+ * are listed but never counted (and never turned into a "0 min" completed break). A session id
+ * seen twice is counted once.
+ *
+ * Past attendance day: attendance_date is before today's company date (Asia/Kolkata). An open
+ * break there was never closed (e.g. no clock-out), so counting it "up to now" would grow without
+ * limit. Exception: an overnight shift (crosses_midnight) that started yesterday is still running.
  */
 import { breakDurationMinutes, resolveAllowedBreakMinutes } from './breakRules';
 import { companyDateStr, previousDateStr } from '../../utils/companyDate';
@@ -54,6 +59,23 @@ export interface BreakDaySummary {
 }
 
 const validTime = (iso: any) => typeof iso === 'string' && iso.length > 0 && Number.isFinite(new Date(iso).getTime());
+
+/** Reason shown for an open break on a past attendance day (listed, never counted). */
+export const PAST_DAY_OPEN_BREAK = 'Break still open on a past attendance day (never closed)';
+
+/**
+ * True when an open break on this attendance day can no longer be in progress: the day is before
+ * today's company date, except yesterday's overnight (crosses_midnight) shift. Unknown date → false
+ * (the clock-out rule still applies).
+ */
+export function isPastAttendanceDay(attendanceDate: string | null | undefined, crossesMidnight: boolean | null | undefined, nowMs: number): boolean {
+  if (typeof attendanceDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(attendanceDate.slice(0, 10))) return false;
+  const day = attendanceDate.slice(0, 10);
+  const today = companyDateStr(nowMs);
+  if (day >= today) return false;
+  if (crossesMidnight && day === previousDateStr(today)) return false;
+  return true;
+}
 
 export function summarizeBreakDay(
   attendance: {
@@ -108,41 +130,27 @@ export function summarizeBreakDay(
     }
     // Open session
     if (clockedOut) return invalid('Break still open after clock-out');
-    openSeen++;
-    if (openSeen > 1) return invalid('More than one open break');
+    // Bound open breaks: a break on a past attendance day must not accumulate days of minutes.
+    // Day rule (isPastAttendanceDay, from the attendance date, else the clock-in / break-start date),
+    // plus: yesterday's overnight shift is past once its shift end has passed, or (no end time
+    // configured: none is invented) once the break has been open for more than 24 hours.
     const startMs = new Date(b.started_at).getTime();
-    if (startMs > nowMs) return invalid('Start time is in the future');
-
-    // Bound open breaks: a break on a past attendance date must not accumulate days of minutes
     const sessionDate = attDate || companyDateStr(b.started_at);
-    const isOvernightShift = !!attendance?.shift_template?.crosses_midnight;
-    const isYesterdayOvernight = isOvernightShift && sessionDate === previousDateStr(todayDate);
-
-    let isPast = false;
-    if (sessionDate < todayDate) {
-      if (isYesterdayOvernight) {
-        // Overnight shift starting yesterday: check if shift end has passed
-        if (attendance?.shift_template?.end_time) {
-          const end = attendance.shift_template.end_time;
-          const timeStr = end.length === 5 ? `${end}:00` : end;
-          const shiftEndMs = new Date(`${sessionDate}T${timeStr}+05:30`).getTime() + 86400000;
-          if (nowMs > shiftEndMs) {
-            isPast = true;
-          }
-        } else {
-          // No end_time configured: do not invent one. If >24h elapsed since break started, it is past.
-          if (nowMs - startMs > 86400000) {
-            isPast = true;
-          }
-        }
+    const overnight = !!attendance?.shift_template?.crosses_midnight;
+    let pastDay = isPastAttendanceDay(sessionDate, overnight, nowMs);
+    if (!pastDay && overnight && sessionDate === previousDateStr(todayDate)) {
+      const end = attendance?.shift_template?.end_time;
+      if (end) {
+        const timeStr = end.length === 5 ? `${end}:00` : end;
+        pastDay = nowMs > new Date(`${sessionDate}T${timeStr}+05:30`).getTime() + 86400000;
       } else {
-        isPast = true;
+        pastDay = nowMs - startMs > 86400000;
       }
     }
-
-    if (isPast) {
-      return invalid('Unclosed break on past attendance date');
-    }
+    if (pastDay) return invalid(PAST_DAY_OPEN_BREAK);
+    openSeen++;
+    if (openSeen > 1) return invalid('More than one open break');
+    if (startMs > nowMs) return invalid('Start time is in the future');
 
     return { ...base, state: 'ACTIVE', minutes: Math.floor((nowMs - startMs) / 60000) };
   });

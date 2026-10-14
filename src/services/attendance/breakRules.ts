@@ -25,6 +25,26 @@ export function findActiveBreak<T extends BreakLike>(breaks: T[] | null | undefi
   return (breaks || []).find(b => !b.ended_at && b.break_type !== 'CANCELLED') ?? null;
 }
 
+/**
+ * Result of reading an attendance's open breaks (ended_at IS NULL) before starting or ending one.
+ * A failed read is never treated as "no active break", and more than one open break is reported
+ * as an integrity problem: in both cases the caller must not insert another break.
+ * CANCELLED rows are not breaks and are ignored (same rule as findActiveBreak).
+ */
+export type OpenBreakCheck<T> =
+  | { kind: 'NONE' }
+  | { kind: 'ONE'; active: T }
+  | { kind: 'MULTIPLE'; count: number }
+  | { kind: 'ERROR'; message: string };
+
+export function classifyOpenBreaks<T>(rows: T[] | null | undefined, error: { message?: string } | null | undefined): OpenBreakCheck<T> {
+  if (error || !Array.isArray(rows)) return { kind: 'ERROR', message: error?.message || 'no data returned' };
+  const open = rows.filter(r => (r as any)?.break_type !== 'CANCELLED');
+  if (open.length === 0) return { kind: 'NONE' };
+  if (open.length === 1) return { kind: 'ONE', active: open[0] };
+  return { kind: 'MULTIPLE', count: open.length };
+}
+
 /** Sum of completed break minutes (uses stored duration when present, otherwise the timestamps). Excludes CANCELLED breaks. */
 export function completedBreakMinutes(breaks: BreakLike[] | null | undefined): number {
   return (breaks || [])

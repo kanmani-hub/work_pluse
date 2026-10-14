@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { summarizeBreakDay, matchesBreakFilter } from './breakSummaryRules';
+import { summarizeBreakDay, matchesBreakFilter, isPastAttendanceDay, PAST_DAY_OPEN_BREAK } from './breakSummaryRules';
 
 // 9 Oct 2026, IST = UTC+05:30. 13:00 IST = 07:30Z.
 const T = (hhmmZ: string, day = '2026-10-09') => `${day}T${hhmmZ}:00Z`;
@@ -136,7 +136,7 @@ describe('Break Management day summary', () => {
 
     expect(s.sessions.length).toBe(1);
     expect(s.sessions[0].state).toBe('INVALID');
-    expect(s.sessions[0].invalidReason).toBe('Unclosed break on past attendance date');
+    expect(s.sessions[0].invalidReason).toBe(PAST_DAY_OPEN_BREAK);
     expect(s.sessions[0].minutes).toBeNull();
     expect(s.activeMins).toBe(0);
     expect(s.totalMins).toBe(0);
@@ -177,5 +177,52 @@ describe('Break Management day summary', () => {
     expect(s.invalidCount).toBe(1);
     expect(s.sessions.find(x => x.id === 'u1')?.state).toBe('INVALID');
     expect(s.status).toBe('UNVERIFIED');
+  });
+});
+
+describe('D3: open breaks on a past attendance day (never closed)', () => {
+  const day1 = '2026-10-01';
+  it('a historical open break is INVALID, not counted from its old start time', () => {
+    const s = summarizeBreakDay(day([brk('old', '2026-10-01T06:00:00Z', null, { break_type: 'AUTO_GPS' })], { attendance_date: day1 }), 60, NOW);
+    expect(s.sessions[0].state).toBe('INVALID');
+    expect(s.sessions[0].invalidReason).toMatch(/past attendance day/);
+    expect(s).toMatchObject({ totalMins: 0, activeMins: 0, activeCount: 0, excessMins: 0, status: 'UNVERIFIED' });
+  });
+  it('completed breaks of that past day are still counted', () => {
+    const s = summarizeBreakDay(day([brk('a', '2026-10-01T06:00:00Z', '2026-10-01T06:40:00Z'), brk('old', '2026-10-01T09:00:00Z', null)], { attendance_date: day1 }), 60, NOW);
+    expect(s).toMatchObject({ completedMins: 40, totalMins: 40, invalidCount: 1 });
+  });
+  it("today's open break is still ACTIVE", () => {
+    const s = summarizeBreakDay(day([brk('a', T('09:30'), null)], { attendance_date: '2026-10-09' }), 60, NOW);
+    expect(s.sessions[0].state).toBe('ACTIVE');
+    expect(s).toMatchObject({ activeMins: 30, status: 'ON_BREAK' });
+  });
+  it("yesterday's overnight shift (crosses midnight) keeps its open break ACTIVE", () => {
+    const now = new Date('2026-10-09T00:30:00Z').getTime(); // 06:00 IST, 9 Oct
+    const s = summarizeBreakDay(day([brk('n', '2026-10-08T23:50:00Z', null)], { attendance_date: '2026-10-08', shift_template: { break_duration_minutes: 60, crosses_midnight: true } }), 60, now);
+    expect(s.sessions[0].state).toBe('ACTIVE');
+    expect(s.activeMins).toBe(40);
+  });
+  it("an overnight shift two days old, or yesterday's day shift, is past", () => {
+    const night = { break_duration_minutes: 60, crosses_midnight: true };
+    expect(summarizeBreakDay(day([brk('n', '2026-10-07T20:00:00Z', null)], { attendance_date: '2026-10-07', shift_template: night }), 60, NOW).sessions[0].state).toBe('INVALID');
+    expect(summarizeBreakDay(day([brk('d', '2026-10-08T06:00:00Z', null)], { attendance_date: '2026-10-08' }), 60, NOW).sessions[0].state).toBe('INVALID');
+  });
+  it('without attendance_date the previous rules apply unchanged', () => {
+    expect(summarizeBreakDay(day([brk('a', T('09:30'), null)]), 60, NOW).sessions[0].state).toBe('ACTIVE');
+  });
+  it('company-date boundaries: IST midnight, month start and year end', () => {
+    // 23:45 IST on 9 Oct (18:15Z) → still today; 00:15 IST on 10 Oct (18:45Z) → 9 Oct is past
+    expect(isPastAttendanceDay('2026-10-09', false, Date.parse('2026-10-09T18:15:00Z'))).toBe(false);
+    expect(isPastAttendanceDay('2026-10-09', false, Date.parse('2026-10-09T18:45:00Z'))).toBe(true);
+    // 1 Nov, 06:00 IST: 31 Oct overnight shift still running, 31 Oct day shift is past
+    expect(isPastAttendanceDay('2026-10-31', true, Date.parse('2026-11-01T00:30:00Z'))).toBe(false);
+    expect(isPastAttendanceDay('2026-10-31', false, Date.parse('2026-11-01T00:30:00Z'))).toBe(true);
+    // year boundary
+    expect(isPastAttendanceDay('2026-12-31', true, Date.parse('2027-01-01T00:30:00Z'))).toBe(false);
+    expect(isPastAttendanceDay('2026-12-30', true, Date.parse('2027-01-01T00:30:00Z'))).toBe(true);
+    // unknown / malformed dates are never "past"
+    expect(isPastAttendanceDay(null, false, NOW)).toBe(false);
+    expect(isPastAttendanceDay('9 Oct', false, NOW)).toBe(false);
   });
 });
