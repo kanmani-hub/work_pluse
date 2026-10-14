@@ -147,6 +147,9 @@ const EmployeeDashboard: React.FC = () => {
   // Location state written by locationService (read-only here; no extra GPS watcher)
   const [liveLocation, setLiveLocation] = useState<any>(null);
   const [geoPermission, setGeoPermission] = useState<GeoPermission>('unknown');
+  // This device's GPS watcher state (permission denied / no fix), from locationService
+  const [trackingStatus, setTrackingStatus] = useState<string>(() => locationService.getTrackingState().status);
+  useEffect(() => locationService.onTrackingStateChange(st => setTrackingStatus(st.status)), []);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentDate(new Date()), 1000);
@@ -542,7 +545,7 @@ const EmployeeDashboard: React.FC = () => {
   const todayStr = companyDateStr(currentDate);
   const scheduledMins = scheduledWorkMinutes(attendanceRecord?.shift_template ?? currentShift);
   const workMode = currentShift?.work_mode === 'WFH' ? 'WFH' : resolveWorkMode(attendanceRecord, wfhRequests, todayStr);
-  const locationDisplay = deriveLocationDisplay({ permission: geoPermission, liveRow: liveLocation, nowMs: currentDate.getTime(), workMode });
+  const locationDisplay = deriveLocationDisplay({ permission: geoPermission, liveRow: liveLocation, nowMs: currentDate.getTime(), workMode, trackingStatus });
   const requestSummary = summarizeLeaveAndWfh({ leaveRequests, leaveBalances, wfhRequests, today: todayStr });
   const activeBreak = findActiveBreak(todayBreaks);
   const completedBreakMins = completedBreakMinutes(todayBreaks);
@@ -744,6 +747,11 @@ const EmployeeDashboard: React.FC = () => {
                       <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '1rem' }}>
                         Break will automatically end when you return to the office. If you are leaving for the day, you can clock out now.
                       </div>
+                      {locationDisplay.geofence === 'LOCATION UNKNOWN' && (
+                        <div role="alert" style={{ fontSize: '0.8125rem', color: 'var(--warning)', textAlign: 'center', marginBottom: '1rem' }}>
+                          Your location is not updating ({locationDisplay.gps}). Keep WorkPulse open with location on: your return can only be detected while the app can read your location. Until then this break stays open.
+                        </div>
+                      )}
                       <button onClick={() => handleClockAction('out')} className="btn" style={{ width: '100%', padding: '0.75rem', borderRadius: 'var(--radius-full)', backgroundColor: 'var(--danger)', color: 'var(--bg-primary)' }}>
                         <ShieldCheck size={18} />
                         Secure Clock Out

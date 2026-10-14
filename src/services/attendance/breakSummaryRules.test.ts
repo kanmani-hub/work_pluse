@@ -70,4 +70,112 @@ describe('Break Management day summary', () => {
     const s = summarizeBreakDay(day([brk('a', T('07:00'), T('07:40'), { duration_minutes: 0 })]), 60, NOW);
     expect(s.totalMins).toBe(40); expect(s.sessions[0].storedMinutes).toBe(0);
   });
+  it('13. cancelled breaks are completely omitted from the day summary and totals', () => {
+    const cancelled = brk('c1', T('07:00'), T('07:30'), { break_type: 'CANCELLED' });
+    const s = summarizeBreakDay(day([cancelled]), 60, NOW);
+    expect(s.totalMins).toBe(0);
+    expect(s.sessions.length).toBe(0);
+    expect(s.status).toBe('NO_BREAKS');
+  });
+  it('14. multi-employee roster summary correctly handles no break, active break, completed break, cancelled break, and auto GPS break', () => {
+    const employees = [
+      // Emp 1: Ragupathi - No break recorded
+      { id: 'emp-1', name: 'Ragupathi K', att: day([]) },
+      // Emp 2: Anish - Auto GPS break in progress (started 45m ago)
+      { id: 'emp-2', name: 'Anish K', att: day([brk('b-anish', T('09:15'), null, { break_type: 'AUTO_GPS' })]) },
+      // Emp 3: Elcon - Completed manual break (30m)
+      { id: 'emp-3', name: 'Elcon R', att: day([brk('b-elcon', T('07:00'), T('07:30'), { break_type: 'REGULAR' })]) },
+      // Emp 4: Yuvaraj - Cancelled break (should not count)
+      { id: 'emp-4', name: 'Yuvaraj K', att: day([brk('b-yuvaraj', T('06:00'), T('06:45'), { break_type: 'CANCELLED' })]) },
+      // Emp 5: Vignesh - Completed Auto GPS break with overrun (100m, allowed 80m)
+      { id: 'emp-5', name: 'Vigneshmoorthy R', att: day([brk('b-vignesh', T('06:00'), T('07:40'), { break_type: 'AUTO_GPS' })]) }
+    ];
+
+    const summaries = employees.map(e => ({
+      name: e.name,
+      ...summarizeBreakDay(e.att, 80, NOW)
+    }));
+
+    // Verify Emp 1: Ragupathi
+    expect(summaries[0].totalMins).toBe(0);
+    expect(summaries[0].status).toBe('NO_BREAKS');
+    expect(summaries[0].sessions.length).toBe(0);
+
+    // Verify Emp 2: Anish (active auto GPS break)
+    expect(summaries[1].activeCount).toBe(1);
+    expect(summaries[1].activeMins).toBe(45);
+    expect(summaries[1].status).toBe('ON_BREAK');
+    expect(summaries[1].sessions[0].break_type).toBe('AUTO_GPS');
+    expect(summaries[1].sessions[0].state).toBe('ACTIVE');
+
+    // Verify Emp 3: Elcon (completed manual break)
+    expect(summaries[2].completedMins).toBe(30);
+    expect(summaries[2].totalMins).toBe(30);
+    expect(summaries[2].status).toBe('WITHIN');
+    expect(summaries[2].excessMins).toBe(0);
+
+    // Verify Emp 4: Yuvaraj (cancelled break ignored)
+    expect(summaries[3].totalMins).toBe(0);
+    expect(summaries[3].status).toBe('NO_BREAKS');
+    expect(summaries[3].sessions.length).toBe(0);
+
+    // Verify Emp 5: Vignesh (auto GPS with excess)
+    expect(summaries[4].completedMins).toBe(100);
+    expect(summaries[4].totalMins).toBe(100);
+    expect(summaries[4].excessMins).toBe(20);
+    expect(summaries[4].status).toBe('EXCESS');
+    expect(summaries[4].sessions[0].break_type).toBe('AUTO_GPS');
+  });
+
+  it('15. an open break on a past attendance date does NOT accumulate days of minutes', () => {
+    // Break started on 2026-10-07 at 16:00 IST (10:30 UTC), now is 2026-10-09 at 15:30 IST (NOW)
+    // Elapsed raw time would be ~2,850 minutes without the fix!
+    const pastBreak = brk('past-1', '2026-10-07T10:30:00Z', null, { break_type: 'AUTO_GPS' });
+    const pastAttendance = day([pastBreak], { attendance_date: '2026-10-07' });
+    const s = summarizeBreakDay(pastAttendance, 60, NOW);
+
+    expect(s.sessions.length).toBe(1);
+    expect(s.sessions[0].state).toBe('INVALID');
+    expect(s.sessions[0].invalidReason).toBe('Unclosed break on past attendance date');
+    expect(s.sessions[0].minutes).toBeNull();
+    expect(s.activeMins).toBe(0);
+    expect(s.totalMins).toBe(0);
+    expect(s.excessMins).toBe(0); // Protected: zero excess break calculated!
+    expect(s.invalidCount).toBe(1);
+    expect(s.status).toBe('UNVERIFIED');
+  });
+
+  it('16. a current-day active break accumulates correctly without being marked invalid', () => {
+    // Current date is 2026-10-09 (NOW is 10:00 UTC = 15:30 IST)
+    // Break started 30 mins ago at 09:30 UTC (15:00 IST)
+    const activeBreak = brk('cur-1', T('09:30'), null, { break_type: 'AUTO_GPS' });
+    const todayAttendance = day([activeBreak], { attendance_date: '2026-10-09' });
+    const s = summarizeBreakDay(todayAttendance, 60, NOW);
+
+    expect(s.sessions.length).toBe(1);
+    expect(s.sessions[0].state).toBe('ACTIVE');
+    expect(s.sessions[0].minutes).toBe(30);
+    expect(s.activeMins).toBe(30);
+    expect(s.totalMins).toBe(30);
+    expect(s.status).toBe('ON_BREAK');
+  });
+
+  it('17. invalid break sessions cannot inflate excess-break calculations', () => {
+    // Attendance on past date with an unclosed open break, plus a valid completed 20-min break
+    const completed = brk('c1', '2026-10-08T05:00:00Z', '2026-10-08T05:20:00Z', { duration_minutes: 20 });
+    const unclosed = brk('u1', '2026-10-08T08:00:00Z', null, { break_type: 'AUTO_GPS' });
+    const pastDay = day([completed, unclosed], { attendance_date: '2026-10-08' });
+
+    // Allowed is 60 minutes. Completed is 20 mins.
+    // If the unclosed break were naively counted, total would be >1,400 mins with massive excess!
+    const s = summarizeBreakDay(pastDay, 60, NOW);
+
+    expect(s.completedMins).toBe(20);
+    expect(s.activeMins).toBe(0);
+    expect(s.totalMins).toBe(20);
+    expect(s.excessMins).toBe(0); // 20 <= 60, zero excess!
+    expect(s.invalidCount).toBe(1);
+    expect(s.sessions.find(x => x.id === 'u1')?.state).toBe('INVALID');
+    expect(s.status).toBe('UNVERIFIED');
+  });
 });

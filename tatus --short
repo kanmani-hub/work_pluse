@@ -1,0 +1,18 @@
+warning: in the working copy of 'src/pages/admin/Breaks.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/pages/admin/LiveTracking.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/attendance/autoBreakRules.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/attendance/breakRules.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/attendance/breakRules.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/attendance/breakService.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/attendance/breakSummaryRules.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/attendance/breakSummaryRules.ts', LF will be replaced by CRLF the next time Git touches it
+ README.md                                         | 1387 [32m+++++++[m[31m--------------[m
+ src/pages/admin/Breaks.tsx                        |  145 [32m++[m[31m-[m
+ src/pages/admin/LiveTracking.tsx                  |   32 [32m+[m[31m-[m
+ src/services/attendance/autoBreakRules.test.ts    |   37 [32m+[m
+ src/services/attendance/breakRules.test.ts        |   32 [32m+[m
+ src/services/attendance/breakRules.ts             |    7 [32m+[m[31m-[m
+ src/services/attendance/breakService.ts           |  159 [32m++[m[31m-[m
+ src/services/attendance/breakSummaryRules.test.ts |  108 [32m++[m
+ src/services/attendance/breakSummaryRules.ts      |   51 [32m+[m[31m-[m
+ 9 files changed, 983 insertions(+), 975 deletions(-)

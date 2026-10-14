@@ -2,10 +2,11 @@ import { supabase } from '../../lib/supabase';
 import { calculateHaversineDistance } from '../../utils/geofence';
 import { notificationService } from '../notifications/notificationService';
 import { qaTimeService } from '../qa/qaTimeService';
-import { initialStability, nextStability, type GeofenceSide, type StabilityState } from './geofenceStability';
-import { classifyLocation, isUsableReading, shouldPersistCheck, isExplicitCheck, liveStatusFor } from './locationRules';
+import { initialStability, nextStability, isReadingTimeAcceptable, type GeofenceSide, type StabilityState } from './geofenceStability';
+import { classifyLocation, isUsableReading, shouldPersistCheck, isExplicitCheck, liveStatusFor, isPlausibleFix, shouldRecordTrackingProblem, hasTrackingGap, type TrackingProblem } from './locationRules';
 import { selectCurrentAttendance } from '../attendance/currentAttendance';
 import { companyDateStr, previousDateStr } from '../../utils/companyDate';
+import { loadNativeBackgroundPlugin, nativeErrorToProblem, nativeToGeo, NATIVE_WATCHER_OPTIONS, type NativeBackgroundPlugin } from './nativeBackgroundLocation';
 
 export interface GeolocationResult {
   latitude: number | null;
@@ -17,6 +18,14 @@ export interface GeolocationResult {
 }
 
 export type VerificationResult = 'INSIDE' | 'OUTSIDE' | 'UNKNOWN' | 'LOCATION_DENIED' | 'LOCATION_UNAVAILABLE' | 'LOW_ACCURACY' | 'ERROR' | 'WFH';
+
+/**
+ * What this device's GPS watcher is currently able to do, for the employee screens.
+ * ACTIVE = the last reading was a usable fix. The other states are GPS problems: they are
+ * shown and recorded as diagnostics but never treated as being outside the office.
+ */
+export type TrackingStatus = 'IDLE' | 'ACTIVE' | TrackingProblem;
+export interface TrackingState { status: TrackingStatus; since: number | null; message: string | null }
 
 export interface LocationVerificationResponse {
   eventId: string | null;
@@ -198,7 +207,7 @@ export const locationService = {
 
     // 2. Check if there's an approved WFH request today (company date)
     const localDateStr = companyDateStr();
-    const { data: wfhData } = await supabase
+    const { data: wfhData, error: wfhErr } = await supabase
       .from('wfh_requests')
       .select('id, status')
       .eq('employee_id', empId)
@@ -206,11 +215,19 @@ export const locationService = {
       .eq('status', 'APPROVED')
       .maybeSingle() as any;
 
+    // A failed WFH lookup is not "no WFH": without knowing, no geofence decision (and no auto break) is made
+    if (wfhErr) return { eventId: null, result: 'ERROR', error: new Error(`Your WFH status could not be checked (${wfhErr.message}). Please try again.`) };
+
     const isWfh = !!wfhData;
 
     // 3. Obtain location: the live-tracking watcher passes the position it just received,
     //    explicit checks (clock in/out) request a fresh one.
-    const geo = opts.geo ?? await this.getCurrentLocation();
+    //    A "successful" fix that cannot be a real position is handled as a GPS error.
+    const rawGeo = opts.geo ?? await this.getCurrentLocation();
+    const geo: GeolocationResult = rawGeo.status === 'SUCCESS' && !isPlausibleFix(rawGeo.latitude, rawGeo.longitude, rawGeo.accuracy)
+      ? { latitude: null, longitude: null, accuracy: null, timestamp: rawGeo.timestamp, status: 'UNKNOWN_ERROR', error: 'Implausible GPS reading (invalid coordinates or accuracy)' }
+      : rawGeo;
+    this._setTrackingState(geo.status === 'SUCCESS' ? 'ACTIVE' : geo.status, geo.status === 'SUCCESS' ? null : (geo.error ?? null));
 
     // 4/5. Accuracy + geofence via the shared rules (GPS failure never means OUTSIDE; WFH bypasses the office geofence)
     const office = employeeData?.offices;
@@ -312,11 +329,17 @@ export const locationService = {
       const readingStatus = liveStatusFor(result);
       const readingAtMs = geo.timestamp ?? Date.now();
 
-      const { data: existingLiveLoc } = await supabase
+      const { data: existingLiveLoc, error: liveLocErr } = await supabase
         .from('employee_live_locations')
-        .select('id, location_status')
+        .select('id, location_status, last_seen_at')
         .eq('employee_id', empId)
         .maybeSingle() as any;
+
+      // A failed read is not "no live row": no geofence transition (and no auto break) from this reading
+      if (liveLocErr) {
+        console.error('[GEOFENCE] live location could not be read; reading not used for geofence decisions', liveLocErr.message);
+        return buildResponse(eventResult?.id || null);
+      }
 
       const historyRow = {
         employee_id: empId,
@@ -337,8 +360,24 @@ export const locationService = {
         let newStatus = readingStatus;
         let transition: { from: GeofenceSide | null; to: GeofenceSide; atMs: number } | null = null;
 
+        // Delayed or future-dated readings (device clock / offline backlog) never move the geofence
+        // state: they cannot start or end a break. They are still stored in the location history.
+        const readingTimeOk = isReadingTimeAcceptable(readingAtMs, qaTimeService.now());
+        if (!readingTimeOk) {
+          console.warn('[GEOFENCE] reading time outside the accepted window; not used for geofence decisions', { readingAtMs });
+        }
+
         if (result === 'WFH') {
           this._stability.delete(empId);
+        } else if (!readingTimeOk) {
+          newStatus = existingLiveLoc.location_status;
+        } else if (type === 'CLOCK_IN' && !openAttendance && result === 'INSIDE') {
+          // A clock-in verified inside the office is today's baseline. Without this, a status left
+          // OUTSIDE from yesterday (e.g. clocked out during an automatic break) stays OUTSIDE if the
+          // app is closed right after clock-in, and the first real exit of the day is never detected.
+          // Baseline only: no ENTERED event and no break change (there is no open attendance yet).
+          this._stability.set(empId, initialStability('INSIDE'));
+          newStatus = 'INSIDE_GEOFENCE';
         } else {
           let state = this._stability.get(empId);
           if (!state || state.confirmed !== storedSide) state = initialStability(storedSide);
@@ -350,6 +389,14 @@ export const locationService = {
             atMs: readingAtMs,
           });
           this._stability.set(empId, step.state);
+          // Remember when this device last reported BEFORE a possible side change started, so a return
+          // detected only after a tracking gap (app closed / GPS off) can be flagged instead of trusted.
+          if (step.state.pendingSide && step.state.pendingCount === 1) {
+            const prevSeenMs = existingLiveLoc.last_seen_at ? new Date(existingLiveLoc.last_seen_at).getTime() : NaN;
+            this._lastSeenBeforePending.set(empId, Number.isFinite(prevSeenMs) ? prevSeenMs : null);
+          } else if (!step.state.pendingSide && !step.transition) {
+            this._lastSeenBeforePending.delete(empId);
+          }
           transition = step.transition;
           newStatus = step.state.confirmed === 'OUTSIDE' ? 'OUTSIDE_GEOFENCE' : step.state.confirmed === 'INSIDE' ? 'INSIDE_GEOFENCE' : existingLiveLoc.location_status;
         }
@@ -410,9 +457,15 @@ export const locationService = {
             });
           }
 
-          // Automatic break uses the confirmed transition time (first reading on the new side)
+          // Automatic break uses the confirmed transition time (first reading on the new side).
+          // A return seen only after a tracking gap ends the break at the first inside reading (the only
+          // time we know), and is flagged so the admin can see the real return may have been earlier.
+          const prevSeenMs = this._lastSeenBeforePending.get(empId);
+          this._lastSeenBeforePending.delete(empId);
+          const trackingGap = transition.to === 'INSIDE' && hasTrackingGap(prevSeenMs ?? null, transition.atMs)
+            ? { lastSeenAt: new Date(prevSeenMs as number).toISOString() } : undefined;
           const { breakService } = await import('../attendance/breakService');
-          const breakResult: any = await breakService.handleAutoBreakTransition(empId, transition.to === 'OUTSIDE' ? 'START' : 'END', transitionIso, { isWfhContext: isWfh })
+          const breakResult: any = await breakService.handleAutoBreakTransition(empId, transition.to === 'OUTSIDE' ? 'START' : 'END', transitionIso, { isWfhContext: isWfh, ...(trackingGap ? { trackingGap } : {}) })
             .catch(e => { console.error('[AUTO BREAK]', e); return null; });
           // The employee already got "Automatic Break Started/Ended"; otherwise (e.g. manual break
           // active) tell them about the confirmed geofence change itself. Confirmed transitions only:
@@ -484,9 +537,48 @@ export const locationService = {
     return buildResponse(eventResult?.id || null);
   },
 
+  // GPS watcher state for the employee screens (this device only; nothing here is a location)
+  _trackingState: undefined as TrackingState | undefined,
+  _trackingProblem: null as { status: TrackingProblem; recordedAtMs: number } | null,
+  _trackingListeners: new Set<(s: TrackingState) => void>(),
+
+  getTrackingState(): TrackingState {
+    return this._trackingState ?? { status: 'IDLE', since: null, message: null };
+  },
+
+  onTrackingStateChange(listener: (s: TrackingState) => void): () => void {
+    this._trackingListeners.add(listener);
+    return () => { this._trackingListeners.delete(listener); };
+  },
+
+  _setTrackingState(status: TrackingStatus, message: string | null) {
+    if (this._trackingState?.status === status) return;
+    this._trackingState = { status, since: Date.now(), message };
+    this._trackingListeners.forEach(l => { try { l(this._trackingState!); } catch { /* listener errors never stop tracking */ } });
+  },
+
+  /**
+   * A GPS watcher error (permission denied, location off / no fix, timeout). Shown to the employee
+   * at once; recorded as a diagnostic verification event (only while clocked in) when the problem
+   * changes or persists past the stale window. It never changes the geofence side, never starts
+   * or ends a break and never refreshes last_seen_at.
+   */
+  async reportTrackingProblem(status: TrackingProblem, message: string) {
+    this._setTrackingState(status, message);
+    const nowMs = Date.now();
+    if (!shouldRecordTrackingProblem(this._trackingProblem, status, nowMs)) return;
+    this._trackingProblem = { status, recordedAtMs: nowMs };
+    console.warn(`[GPS] tracking problem recorded: ${status}`);
+    await this.verifyCurrentLocation('LOCATION_CHECK', {
+      geo: { latitude: null, longitude: null, accuracy: null, timestamp: nowMs, status, error: message },
+    }).catch(() => {});
+  },
+
   _watchId: null as number | null,
   // Per-employee geofence stability (debounce) state for this browser session
   _stability: new Map<string, StabilityState>(),
+  // Per employee: last_seen_at before the current pending side change began (tracking-gap detection)
+  _lastSeenBeforePending: new Map<string, number | null>(),
   _lastUpdate: 0,
   _lastLat: null as number | null,
   _lastLon: null as number | null,
@@ -494,50 +586,137 @@ export const locationService = {
   // Configuration per user request
   LOCATION_TRACKING_INTERVAL_MS: 10000, // 10 seconds default
 
-  startLiveTracking() {
-    if (this._watchId !== null) return;
-    
-    if (qaTimeService.isEnabled) {
-       // In QA mode, we just run an interval because mock location handles the data.
-       this._watchId = window.setInterval(async () => {
-         await this.verifyCurrentLocation('LOCATION_CHECK').catch(() => {});
-       }, qaTimeService.getRealToSimulatedInterval(this.LOCATION_TRACKING_INTERVAL_MS)) as unknown as number;
-       return;
+  // ---- reading intake (browser watcher, native plugin, resume refresh, offline replay) ----
+  _nativePlugin: null as NativeBackgroundPlugin | null,
+  _nativeWatcherId: null as string | null,
+  _trackingGeneration: 0,
+  _starting: false,
+  _lastReadingMs: null as number | null,
+  _pendingReadings: [] as GeolocationResult[],
+  _detachResume: null as null | (() => void),
+  _lastResumeRefresh: 0,
+  MAX_PENDING_READINGS: 30,
+
+  /**
+   * One entry point for every position, whatever produced it. Drops duplicates and out-of-order
+   * deliveries (same or older device timestamp), throttles to the tracking interval, and keeps
+   * readings taken while offline to replay in order once the network is back.
+   */
+  async ingestReading(geo: GeolocationResult, opts: { force?: boolean } = {}) {
+    if (geo.status !== 'SUCCESS') return;
+    const ts = typeof geo.timestamp === 'number' && Number.isFinite(geo.timestamp) ? geo.timestamp : null;
+    if (ts !== null && this._lastReadingMs !== null && ts <= this._lastReadingMs) return; // duplicate / out of order
+    const now = Date.now();
+    if (!opts.force && now - this._lastUpdate < this.LOCATION_TRACKING_INTERVAL_MS) return;
+    this._lastUpdate = now;
+    if (ts !== null) this._lastReadingMs = ts;
+    this._lastLat = geo.latitude;
+    this._lastLon = geo.longitude;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      // Offline: keep the reading (bounded) instead of failing every request; replayed on reconnect.
+      this._pendingReadings.push(geo);
+      if (this._pendingReadings.length > this.MAX_PENDING_READINGS) this._pendingReadings.shift();
+      return;
     }
+    await this.verifyCurrentLocation('LOCATION_CHECK', { geo }).catch(() => {});
+  },
 
-    if (!navigator.geolocation) return;
-    
+  /**
+   * Back online: replay queued readings oldest first. Each still passes the reading-time window, so a
+   * reading older than that is only stored as history and never moves the geofence.
+   */
+  async flushPendingReadings() {
+    const queued = this._pendingReadings.splice(0).sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    for (const geo of queued) await this.verifyCurrentLocation('LOCATION_CHECK', { geo }).catch(() => {});
+  },
+
+  /**
+   * App back in the foreground / network back: replay the offline queue, then take one fresh reading
+   * at once instead of waiting for the next watcher callback (an exit or return that happened while
+   * the app was in the background is picked up as soon as the employee opens it). Also restarts the
+   * browser watcher if it stopped (e.g. permission was denied and has since been granted).
+   */
+  async handleResume() {
+    const now = Date.now();
+    if (now - this._lastResumeRefresh < this.LOCATION_TRACKING_INTERVAL_MS) return;
+    this._lastResumeRefresh = now;
+    await this.flushPendingReadings();
+    if (this._watchId === null && this._nativeWatcherId === null && !this._starting && this._detachResume) this._startBrowserWatch();
+    const geo = await this.getCurrentLocation();
+    if (geo.status === 'SUCCESS') await this.ingestReading(geo, { force: true });
+    else await this.reportTrackingProblem(geo.status as TrackingProblem, geo.error || geo.status);
+  },
+
+  _attachResumeHandlers() {
+    if (this._detachResume || typeof document === 'undefined' || typeof window === 'undefined') return;
+    const onVisible = () => { if (document.visibilityState === 'visible') this.handleResume().catch(() => {}); };
+    const onOnline = () => { this.handleResume().catch(() => {}); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onOnline);
+    this._detachResume = () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
+    };
+  },
+
+  /**
+   * Native background source (Android foreground service). Only used when the plugin is installed;
+   * see nativeBackgroundLocation.ts. Plugin errors are tracking problems, never exits.
+   */
+  async startNativeTracking(plugin: NativeBackgroundPlugin): Promise<boolean> {
+    const generation = this._trackingGeneration;
+    try {
+      const id = await plugin.addWatcher(NATIVE_WATCHER_OPTIONS, (location, error) => {
+        if (error) {
+          const problem = nativeErrorToProblem(error);
+          console.warn(`[GPS] native tracking error: ${problem}`);
+          this.reportTrackingProblem(problem, error.message || problem).catch(() => {});
+          return;
+        }
+        if (!location) return;
+        const geo = nativeToGeo(location);
+        if (geo.status !== 'SUCCESS') {
+          this.reportTrackingProblem('UNKNOWN_ERROR', geo.error || 'Invalid native location').catch(() => {});
+          return;
+        }
+        this.ingestReading(geo).catch(() => {});
+      });
+      if (generation !== this._trackingGeneration) {
+        // stopLiveTracking() ran while the watcher was being added: do not leave it running
+        await plugin.removeWatcher({ id }).catch(() => {});
+        return false;
+      }
+      this._nativePlugin = plugin;
+      this._nativeWatcherId = id;
+      console.log('[GPS] native background tracking started');
+      return true;
+    } catch (e: any) {
+      console.warn('[GPS] native background tracking could not start; using browser geolocation', e?.message);
+      return false;
+    }
+  },
+
+  _startBrowserWatch() {
+    if (this._watchId !== null || typeof navigator === 'undefined' || !navigator.geolocation) return;
     this._watchId = navigator.geolocation.watchPosition(
-      async (position) => {
-        const now = Date.now();
-        const lat = position.coords.latitude;
-        const lon = position.coords.longitude;
-        
-        let shouldUpdate = false;
-        if (now - this._lastUpdate >= this.LOCATION_TRACKING_INTERVAL_MS) {
-          shouldUpdate = true;
-        }
-
-        if (shouldUpdate) {
-          this._lastUpdate = now;
-          this._lastLat = lat;
-          this._lastLon = lon;
-          // Verify + persist using THIS position (no second GPS request per update)
-          await this.verifyCurrentLocation('LOCATION_CHECK', {
-            geo: {
-              latitude: lat,
-              longitude: lon,
-              accuracy: position.coords.accuracy,
-              timestamp: position.timestamp,
-              status: 'SUCCESS',
-            },
-          }).catch(() => {});
-        }
+      (position) => {
+        // Verify + persist using THIS position (no second GPS request per update)
+        this.ingestReading({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          timestamp: position.timestamp,
+          status: 'SUCCESS',
+        }).catch(() => {});
       },
       (error) => {
-        console.warn('Live tracking error:', error);
-        // Permission denied ends this watch; clear it so the next startLiveTracking()
-        // (clock in, opening Attendance/Dashboard) can start a new one after access is granted.
+        const problem: TrackingProblem = error.code === error.PERMISSION_DENIED ? 'LOCATION_DENIED'
+          : error.code === error.POSITION_UNAVAILABLE ? 'LOCATION_UNAVAILABLE'
+          : error.code === error.TIMEOUT ? 'TIMEOUT' : 'UNKNOWN_ERROR';
+        console.warn(`[GPS] live tracking error: ${problem}`);
+        this.reportTrackingProblem(problem, error.message || problem).catch(() => {});
+        // Permission denied ends this watch; clear it so the next startLiveTracking() or a resume
+        // (clock in, opening Attendance/Dashboard, returning to the app) can start a new one.
         if (error.code === error.PERMISSION_DENIED && this._watchId !== null) {
           navigator.geolocation.clearWatch(this._watchId);
           this._watchId = null;
@@ -547,14 +726,53 @@ export const locationService = {
     );
   },
 
+  /**
+   * Start tracking for the signed-in employee: the native background source when the plugin is
+   * installed, otherwise the browser watcher (foreground only — it does NOT run when the app is
+   * closed or the screen is off).
+   */
+  startLiveTracking(opts: { loadNative?: () => Promise<NativeBackgroundPlugin | null> } = {}) {
+    if (this._watchId !== null || this._nativeWatcherId !== null || this._starting) return;
+
+    if (qaTimeService.isEnabled) {
+       // In QA mode, we just run an interval because mock location handles the data.
+       this._watchId = window.setInterval(async () => {
+         await this.verifyCurrentLocation('LOCATION_CHECK').catch(() => {});
+       }, qaTimeService.getRealToSimulatedInterval(this.LOCATION_TRACKING_INTERVAL_MS)) as unknown as number;
+       return;
+    }
+
+    this._attachResumeHandlers();
+    this._starting = true;
+    const generation = this._trackingGeneration;
+    (opts.loadNative ?? loadNativeBackgroundPlugin)()
+      .catch(() => null)
+      .then(async plugin => {
+        const started = plugin ? await this.startNativeTracking(plugin) : false;
+        this._starting = false;
+        if (generation !== this._trackingGeneration) return; // stopped meanwhile
+        if (!started) this._startBrowserWatch();
+      });
+  },
+
   stopLiveTracking() {
+    this._trackingGeneration++;
+    this._starting = false;
     if (this._watchId !== null) {
       if (qaTimeService.isEnabled) {
           window.clearInterval(this._watchId);
-      } else {
+      } else if (typeof navigator !== 'undefined' && navigator.geolocation) {
           navigator.geolocation.clearWatch(this._watchId);
       }
       this._watchId = null;
     }
+    if (this._nativeWatcherId !== null && this._nativePlugin) {
+      this._nativePlugin.removeWatcher({ id: this._nativeWatcherId }).catch(() => {});
+    }
+    this._nativeWatcherId = null;
+    this._nativePlugin = null;
+    if (this._detachResume) { this._detachResume(); this._detachResume = null; }
+    this._pendingReadings = [];
+    this._setTrackingState('IDLE', null);
   }
 };

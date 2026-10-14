@@ -11,6 +11,7 @@ export interface BreakLike {
   started_at: string;
   ended_at: string | null;
   duration_minutes?: number | null;
+  break_type?: string | null;
 }
 
 const ms = (iso: string) => new Date(iso).getTime();
@@ -21,13 +22,13 @@ export function breakDurationMinutes(startedAt: string, endedAt: string): number
 }
 
 export function findActiveBreak<T extends BreakLike>(breaks: T[] | null | undefined): T | null {
-  return (breaks || []).find(b => !b.ended_at) ?? null;
+  return (breaks || []).find(b => !b.ended_at && b.break_type !== 'CANCELLED') ?? null;
 }
 
-/** Sum of completed break minutes (uses stored duration when present, otherwise the timestamps). */
+/** Sum of completed break minutes (uses stored duration when present, otherwise the timestamps). Excludes CANCELLED breaks. */
 export function completedBreakMinutes(breaks: BreakLike[] | null | undefined): number {
   return (breaks || [])
-    .filter(b => b.ended_at)
+    .filter(b => b.ended_at && b.break_type !== 'CANCELLED')
     .reduce((sum, b) => sum + (b.duration_minutes ?? breakDurationMinutes(b.started_at, b.ended_at as string)), 0);
 }
 

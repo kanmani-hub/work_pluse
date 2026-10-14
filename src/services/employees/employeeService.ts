@@ -26,6 +26,24 @@ export interface EmployeeWithRelations extends EmployeeRow {
   salary_structures?: any[];
 }
 
+/**
+ * Best human-readable message from a supabase.functions.invoke error. For a non-2xx response the
+ * Response is on error.context and its JSON body holds { error }.
+ */
+export async function readFunctionErrorMessage(error: any): Promise<string> {
+  const fallback = error?.message || 'Failed to communicate with the server';
+  const ctx = error?.context;
+  if (ctx && typeof ctx.json === 'function') {
+    try {
+      const body = await (typeof ctx.clone === 'function' ? ctx.clone() : ctx).json();
+      if (body && typeof body.error === 'string' && body.error) return body.error;
+    } catch {
+      /* body was not JSON */
+    }
+  }
+  return fallback;
+}
+
 export const employeeService = {
   /**
    * Get all employees with their related department, office, and role.
@@ -49,11 +67,10 @@ export const employeeService = {
         return { data: null, error: new Error('Failed to load employees') };
       }
 
-      const filtered = data ? data.filter((e: any) => e.email !== 'admin@gmail.com' && e.role?.name !== 'System Admin') : [];
-      
-      // Supabase's generated types don't inherently know the joined structure well, 
+      // No account is special-cased by email (bug report C1); access is decided by roles and RLS.
+      // Supabase's generated types don't inherently know the joined structure well,
       // but at runtime, this maps perfectly to EmployeeWithRelations.
-      return { data: filtered as unknown as EmployeeWithRelations[], error: null };
+      return { data: (data ?? []) as unknown as EmployeeWithRelations[], error: null };
     } catch (err) {
       console.error('Unexpected error fetching employees:', err);
       return { data: null, error: new Error('Unexpected network error') };
@@ -219,7 +236,8 @@ export const employeeService = {
    * Deactivate an employee (soft delete).
    */
   async deactivateEmployee(id: string): Promise<{ data: EmployeeRow | null; error: Error | null }> {
-    return this.updateEmployee(id, { status: 'Inactive' });
+    // 'INACTIVE' is the value every screen and the login check use (was 'Inactive', which the UI never matched).
+    return this.updateEmployee(id, { status: 'INACTIVE' });
   },
 
   /**
@@ -241,8 +259,10 @@ export const employeeService = {
       });
 
       if (error) {
-        console.error('Error invoking delete-employee edge function:', error);
-        return { success: false, error: new Error(error.message || 'Failed to communicate with deletion service') };
+        // Non-2xx responses (403 / 409 HAS_HISTORY / ...) carry the reason in the JSON body.
+        const message = await readFunctionErrorMessage(error);
+        console.error('delete-employee refused or failed:', message);
+        return { success: false, error: new Error(message) };
       }
 
       if (data?.error || data?.success === false) {
@@ -254,9 +274,10 @@ export const employeeService = {
         module: 'EMPLOYEE',
         entity_type: 'employees',
         entity_id: id,
-        description: `Employee permanently deleted.`
+        description: `Employee with no history permanently deleted.`
       }).catch(e => console.error('[AUDIT] EMPLOYEE_DELETED failed:', e));
 
+      if (data?.warning) console.warn('[delete-employee]', data.warning);
       return { success: true, error: null };
     } catch (err) {
       console.error('Unexpected error deleting employee via edge function:', err);

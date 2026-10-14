@@ -792,7 +792,7 @@ const AdminEmployees: React.FC = () => {
             <div className="modal-body">
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', padding: '1rem', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)', color: 'var(--danger)' }}>
                 <AlertTriangle size={24} />
-                <p style={{ fontSize: '0.875rem', fontWeight: 500 }}>Are you sure you want to delete this employee? This action cannot be undone.</p>
+                <p style={{ fontSize: '0.875rem', fontWeight: 500 }}>Only an employee with no attendance, leave, payroll or other records can be deleted, and it cannot be undone. For anyone with history, use Deactivate instead so their records are kept.</p>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem', fontSize: '0.875rem' }}>
                 <p><strong>Employee:</strong> {deleteModal.first_name} {deleteModal.last_name}</p>

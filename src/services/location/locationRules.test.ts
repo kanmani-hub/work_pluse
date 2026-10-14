@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyLocation, isUsableReading, shouldPersistCheck, isExplicitCheck, liveStatusFor } from './locationRules';
+import { classifyLocation, isUsableReading, shouldPersistCheck, isExplicitCheck, liveStatusFor, isPlausibleFix, shouldRecordTrackingProblem, TRACKING_PROBLEM_REPEAT_MS } from './locationRules';
 import { calculateHaversineDistance } from '../../utils/geofence';
 import { initialStability, nextStability, classifyReading, BOUNDARY_BUFFER_METERS, type GeofenceReading } from './geofenceStability';
 import { isLocationStale, LIVE_STALE_MINUTES } from './liveTrackingRules';
@@ -141,5 +141,34 @@ describe('write rules', () => {
   it('audit/notifications only for explicit clock checks', () => {
     expect(isExplicitCheck('LOCATION_CHECK')).toBe(false);
     expect(isExplicitCheck('CLOCK_IN')).toBe(true);
+  });
+});
+
+
+describe('implausible GPS fixes are treated as GPS errors', () => {
+  it.each([
+    [13.0827, 80.2707, 12, true],
+    [13.0827, 80.2707, null, true],          // missing accuracy is allowed here (exit rule rejects it)
+    [0, 0, 5, false],                        // no fix
+    [91, 80, 5, false], [-91, 80, 5, false],
+    [13, 181, 5, false], [13, -181, 5, false],
+    [Number.NaN, 80, 5, false], [13, Number.POSITIVE_INFINITY, 5, false],
+    ['13', 80, 5, false],
+    [13, 80, -1, false], [13, 80, Number.NaN, false],
+  ])('lat %s, lng %s, accuracy %s → %s', (lat, lng, acc, ok) => {
+    expect(isPlausibleFix(lat as any, lng as any, acc as any)).toBe(ok);
+  });
+});
+
+describe('GPS watcher problems are recorded on change, not every 10 seconds', () => {
+  const T = 1_000_000;
+  it('first problem, a different problem, or the same one after the stale window → record', () => {
+    expect(shouldRecordTrackingProblem(null, 'LOCATION_UNAVAILABLE', T)).toBe(true);
+    expect(shouldRecordTrackingProblem({ status: 'LOCATION_UNAVAILABLE', recordedAtMs: T }, 'LOCATION_DENIED', T + 1)).toBe(true);
+    expect(shouldRecordTrackingProblem({ status: 'TIMEOUT', recordedAtMs: T }, 'TIMEOUT', T + TRACKING_PROBLEM_REPEAT_MS)).toBe(true);
+  });
+  it('the same problem again inside the window → not recorded again', () => {
+    expect(shouldRecordTrackingProblem({ status: 'TIMEOUT', recordedAtMs: T }, 'TIMEOUT', T + 10_000)).toBe(false);
+    expect(TRACKING_PROBLEM_REPEAT_MS).toBe(LIVE_STALE_MINUTES * 60_000);
   });
 });

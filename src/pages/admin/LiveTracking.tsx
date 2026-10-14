@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   MapPin, Clock, Search, Filter, 
   RefreshCw, AlertCircle, X, 
-  AlertTriangle, ShieldAlert, Calendar, Download
+  AlertTriangle, ShieldAlert, Calendar, Download, Coffee
 } from 'lucide-react';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { loadLiveTrackingInput } from '../../services/location/liveTrackingService';
@@ -702,6 +702,40 @@ const AdminLiveTracking: React.FC = () => {
                   <div style={{ fontSize: "1.125rem", fontWeight: 600, color: selectedEmp.locationStatus === 'STALE / LAST KNOWN' ? 'var(--gray-500)' : getStatusColor(selectedEmp.status) }}>{selectedEmp.status}</div>
                 </div>
               </div>
+
+              {selectedEmp.status === "On Break" && (
+                <div style={{ backgroundColor: "rgba(245, 158, 11, 0.1)", border: "1px solid var(--warning)", borderRadius: "var(--radius-md)", padding: "1rem", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem" }}>
+                  <div>
+                    <div style={{ fontSize: "0.875rem", fontWeight: 600, color: "var(--warning)" }}>Break In Progress</div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>Employee is recorded on break.</div>
+                  </div>
+                  <button
+                    className="btn btn-warning"
+                    style={{ padding: "0.35rem 0.75rem", fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}
+                    onClick={async () => {
+                      if (!window.confirm(`Force end break for ${selectedEmp.name}?`)) return;
+                      const input = inputRef.current;
+                      const att = input?.attendance.find((a: any) => a.employee_id === (selectedEmp as any).employeeId);
+                      const brk = input?.breaks.find((b: any) => b.attendance_id === att?.id && !b.ended_at);
+                      if (brk?.id && att?.id) {
+                        const { breakService } = await import('../../services/attendance/breakService');
+                        const { error } = await breakService.adminEndBreak(brk.id, att.id);
+                        if (error) window.alert(error.message); // failed, or ended with a follow-up problem
+                        fetchLocations();
+                      } else if (att?.id) {
+                        // No open break row: only the stale ON_BREAK status is corrected, and the result is checked
+                        const { supabase } = await import('../../lib/supabase');
+                        const { data: changed, error } = await (supabase.from('attendance') as any)
+                          .update({ status: 'WORKING' }).eq('id', att.id).eq('status', 'ON_BREAK').is('clock_out_at', null).select('id');
+                        if (error || !changed || changed.length === 0) window.alert(`Status was not changed${error ? `: ${error.message}` : ' (already updated or not permitted).'}`);
+                        fetchLocations();
+                      }
+                    }}
+                  >
+                    <Coffee size={14} /> End Break Now
+                  </button>
+                </div>
+              )}
 
               <div className="detail-section">
                 <h4 className="ds-title"><MapPin size={16}/> Location Info</h4>

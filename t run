@@ -1,0 +1,14 @@
+warning: in the working copy of 'src/pages/admin/Breaks.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/pages/admin/LiveTracking.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/attendance/autoBreakRules.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/attendance/breakRules.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/attendance/breakRules.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/attendance/breakService.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/attendance/breakSummaryRules.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/services/attendance/breakSummaryRules.ts', LF will be replaced by CRLF the next time Git touches it
+src/pages/admin/Breaks.tsx:235: trailing whitespace.
+[32m+[m[32m                          <button[m[41m [m
+src/pages/admin/Breaks.tsx:236: trailing whitespace.
+[32m+[m[32m                            className="btn btn-outline"[m[41m [m
+src/services/attendance/autoBreakRules.test.ts:93: new blank line at EOF.
+src/services/attendance/breakSummaryRules.test.ts:182: new blank line at EOF.

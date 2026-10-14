@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3'
+import { resolveCallerRole } from '../_shared/employeeAdminRules.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -64,36 +65,21 @@ serve(async (req: Request) => {
     console.log('Authenticated user ID:', user.id);
     console.log('Auth error:', authError?.message || null);
 
-    // Verify role mapping based on actual schema: 
-    // Auth user -> profiles.auth_user_id -> roles.name
-    // (public.employees does not store auth UUID)
-    const { data: callerProfile } = await supabaseClient
+    // Caller's role comes ONLY from their own active profile (bug report C1 / N4: no email fallback).
+    const { data: callerProfile, error: callerError } = await supabaseClient
       .from('profiles')
-      .select('role_id, roles(name)')
+      .select('auth_user_id, employee_id, is_active, roles(name), employees(status)')
       .eq('auth_user_id', user.id)
-      .single();
+      .maybeSingle();
 
-    // Fallback if profile trigger missed but employee email matches
-    let roleName = callerProfile?.roles?.name;
-    let found = !!callerProfile;
-
-    if (!callerProfile) {
-      const { data: callerEmployee } = await supabaseClient
-        .from('employees')
-        .select('role_id, roles(name)')
-        .eq('email', user.email)
-        .single();
-      
-      roleName = callerEmployee?.roles?.name;
-      found = !!callerEmployee;
-    }
-
-    console.log('Caller employee found:', found);
+    const roleName = callerError ? null : resolveCallerRole(callerProfile as any);
+    const found = !!callerProfile;
+    console.log('Caller profile found:', found);
     console.log('Caller role name:', roleName || 'none');
 
     if (!found || roleName !== 'ADMIN') {
       return new Response(JSON.stringify({ success: false, error: 'Forbidden: Admin access required.' }), {
-        status: 200,
+        status: 200, // the web client reads { success:false } from a 200 response
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }

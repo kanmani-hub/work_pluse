@@ -12,11 +12,15 @@
  *                       (null = not configured: excess is not calculated)
  *   Excess minutes    = max(0, total − allowed)
  *
+ * If the attendance row came back WITHOUT its break list (not an array), nothing is known about
+ * its breaks: the day is UNVERIFIED with breaksUnavailable = true, never "No Breaks Recorded".
+ *
  * Sessions with a missing/unparseable start, an end before the start, an open break after
  * clock-out, or a second open break are INVALID: they are listed but never counted (and never
  * turned into a "0 min" completed break). A session id seen twice is counted once.
  */
 import { breakDurationMinutes, resolveAllowedBreakMinutes } from './breakRules';
+import { companyDateStr, previousDateStr } from '../../utils/companyDate';
 
 export type BreakDayStatus = 'ON_BREAK' | 'EXCESS' | 'WITHIN' | 'NO_BREAKS' | 'UNVERIFIED';
 export const BREAK_STATUS_LABEL: Record<BreakDayStatus, string> = {
@@ -44,6 +48,7 @@ export interface BreakDaySummary {
   activeCount: number;
   invalidCount: number;
   duplicateCount: number;
+  breaksUnavailable: boolean;      // the break list was not returned: totals are not verified
   status: BreakDayStatus;
   notes: string[];
 }
@@ -51,15 +56,34 @@ export interface BreakDaySummary {
 const validTime = (iso: any) => typeof iso === 'string' && iso.length > 0 && Number.isFinite(new Date(iso).getTime());
 
 export function summarizeBreakDay(
-  attendance: { clock_out_at?: string | null; shift_template?: { break_duration_minutes?: number | null } | null; attendance_breaks?: any[] | null },
+  attendance: {
+    attendance_date?: string | null;
+    clock_in_at?: string | null;
+    clock_out_at?: string | null;
+    shift_template?: {
+      break_duration_minutes?: number | null;
+      end_time?: string | null;
+      start_time?: string | null;
+      crosses_midnight?: boolean | null;
+    } | null;
+    attendance_breaks?: any[] | null;
+  },
   settingBreakMins: number | null | undefined,
   nowMs: number,
 ): BreakDaySummary {
   const allowedMins = resolveAllowedBreakMinutes(attendance?.shift_template?.break_duration_minutes, settingBreakMins);
+  if (!Array.isArray(attendance?.attendance_breaks)) {
+    return {
+      allowedMins, completedMins: 0, activeMins: 0, totalMins: 0, excessMins: null, sessions: [],
+      activeCount: 0, invalidCount: 0, duplicateCount: 0, breaksUnavailable: true, status: 'UNVERIFIED',
+      notes: ['Break records were not returned for this attendance day, so its break time is not verified. Refresh the page; if it persists, check the database access for attendance_breaks.'],
+    };
+  }
   const seen = new Set<string>();
   let duplicateCount = 0;
   const unique = (attendance?.attendance_breaks || []).filter(b => {
     if (!b) return false;
+    if (b.break_type === 'CANCELLED') return false;
     if (b.id) {
       if (seen.has(b.id)) { duplicateCount++; return false; }
       seen.add(b.id);
@@ -68,6 +92,10 @@ export function summarizeBreakDay(
   }).sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || '')));
 
   const clockedOut = !!attendance?.clock_out_at;
+  const todayDate = companyDateStr(nowMs);
+  const attDate = attendance?.attendance_date
+    || (attendance?.clock_in_at ? companyDateStr(attendance.clock_in_at) : null);
+
   let openSeen = 0;
   const sessions: BreakSession[] = unique.map(b => {
     const base = { id: b.id ?? null, break_type: b.break_type ?? null, started_at: b.started_at ?? null, ended_at: b.ended_at ?? null, storedMinutes: b.duration_minutes ?? null };
@@ -84,6 +112,38 @@ export function summarizeBreakDay(
     if (openSeen > 1) return invalid('More than one open break');
     const startMs = new Date(b.started_at).getTime();
     if (startMs > nowMs) return invalid('Start time is in the future');
+
+    // Bound open breaks: a break on a past attendance date must not accumulate days of minutes
+    const sessionDate = attDate || companyDateStr(b.started_at);
+    const isOvernightShift = !!attendance?.shift_template?.crosses_midnight;
+    const isYesterdayOvernight = isOvernightShift && sessionDate === previousDateStr(todayDate);
+
+    let isPast = false;
+    if (sessionDate < todayDate) {
+      if (isYesterdayOvernight) {
+        // Overnight shift starting yesterday: check if shift end has passed
+        if (attendance?.shift_template?.end_time) {
+          const end = attendance.shift_template.end_time;
+          const timeStr = end.length === 5 ? `${end}:00` : end;
+          const shiftEndMs = new Date(`${sessionDate}T${timeStr}+05:30`).getTime() + 86400000;
+          if (nowMs > shiftEndMs) {
+            isPast = true;
+          }
+        } else {
+          // No end_time configured: do not invent one. If >24h elapsed since break started, it is past.
+          if (nowMs - startMs > 86400000) {
+            isPast = true;
+          }
+        }
+      } else {
+        isPast = true;
+      }
+    }
+
+    if (isPast) {
+      return invalid('Unclosed break on past attendance date');
+    }
+
     return { ...base, state: 'ACTIVE', minutes: Math.floor((nowMs - startMs) / 60000) };
   });
 
@@ -108,7 +168,7 @@ export function summarizeBreakDay(
   else if ((excessMins || 0) > 0) status = 'EXCESS';
   else status = 'WITHIN';
 
-  return { allowedMins, completedMins, activeMins, totalMins, excessMins, sessions, activeCount, invalidCount, duplicateCount, status, notes };
+  return { allowedMins, completedMins, activeMins, totalMins, excessMins, sessions, activeCount, invalidCount, duplicateCount, breaksUnavailable: false, status, notes };
 }
 
 /** Status filter used by the page: WITHIN also covers days with no breaks (0 ≤ allowance). */

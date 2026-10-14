@@ -140,3 +140,35 @@ describe('admin live tracking status', () => {
     expect(deriveLiveWorkStatus({ location_status: 'WFH', location_context: 'WFH' }, { status: 'WORKING', clock_in_at: T('10:00') }, false)).toBe('WFH');
   });
 });
+
+describe('cancelled break exclusion in core break rules', () => {
+  it('completedBreakMinutes excludes CANCELLED breaks even if they have ended_at and duration', () => {
+    const list = [
+      { started_at: T('12:00'), ended_at: T('12:30'), duration_minutes: 30, break_type: 'REGULAR' },
+      { started_at: T('13:00'), ended_at: T('13:45'), duration_minutes: 45, break_type: 'CANCELLED' },
+      { started_at: T('15:00'), ended_at: T('15:20'), duration_minutes: 20, break_type: 'AUTO_GPS' },
+    ];
+    // Only 30 + 20 = 50 minutes should be counted. The 45m CANCELLED break is ignored!
+    expect(completedBreakMinutes(list)).toBe(50);
+  });
+
+  it('findActiveBreak ignores CANCELLED open breaks', () => {
+    const list = [
+      { started_at: T('12:00'), ended_at: null, break_type: 'CANCELLED' },
+    ];
+    expect(findActiveBreak(list)).toBeNull();
+
+    const listWithActive = [
+      { started_at: T('12:00'), ended_at: null, break_type: 'CANCELLED' },
+      { id: 'b2', started_at: T('13:00'), ended_at: null, break_type: 'AUTO_GPS' },
+    ];
+    expect(findActiveBreak(listWithActive)?.id).toBe('b2');
+  });
+
+  it('a normal AUTO_GPS START/END cycle calculates the exact floor duration', () => {
+    const startIso = T('14:05');
+    const endIso = T('14:38'); // 33 minutes
+    const duration = breakDurationMinutes(startIso, endIso);
+    expect(duration).toBe(33);
+  });
+});

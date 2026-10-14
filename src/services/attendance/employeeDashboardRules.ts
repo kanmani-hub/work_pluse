@@ -112,16 +112,21 @@ export function deriveLocationDisplay(input: {
   liveRow: LiveLocationLike | null | undefined;
   nowMs: number;
   workMode: WorkMode;
+  /** This device's GPS watcher state (locationService.getTrackingState().status), when known. */
+  trackingStatus?: string | null;
 }): LocationDisplay {
-  const { permission, liveRow, nowMs, workMode } = input;
+  const { permission, liveRow, nowMs, workMode, trackingStatus } = input;
   const lastSeenAt = liveRow?.last_seen_at ?? null;
   const fresh = !!liveRow && !isLocationStale({ lastSeenAt }, nowMs);
 
   let gps: LocationDisplay['gps'];
   if (permission === 'unsupported') gps = 'GPS Unavailable';
-  else if (permission === 'denied') gps = 'Location Permission Denied';
+  else if (permission === 'denied' || trackingStatus === 'LOCATION_DENIED') gps = 'Location Permission Denied';
   else if (permission === 'prompt') gps = 'Location Permission Required';
-  else gps = fresh ? 'GPS Active' : 'Location Updating';
+  else if (fresh) gps = 'GPS Active';
+  // The watcher reports no fix (device location switched off / no signal): say so instead of "updating"
+  else if (trackingStatus === 'LOCATION_UNAVAILABLE' || trackingStatus === 'TIMEOUT' || trackingStatus === 'UNKNOWN_ERROR') gps = 'GPS Unavailable';
+  else gps = 'Location Updating';
 
   let geofence: LocationDisplay['geofence'];
   if (workMode === 'WFH') geofence = 'WFH';

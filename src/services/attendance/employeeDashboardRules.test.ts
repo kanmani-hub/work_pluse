@@ -113,3 +113,23 @@ describe('attendanceActionMessage', () => {
     expect(attendanceActionMessage({ message: 'Unauthorized' }, 'out')).toBe('Your session has expired. Please sign in again.');
   });
 });
+
+describe('GPS card uses this device\'s tracking state when the location is not fresh', () => {
+  const stale = { location_status: 'OUTSIDE_GEOFENCE', last_seen_at: new Date(NOW - 40 * 60_000).toISOString() };
+  const fresh = { location_status: 'OUTSIDE_GEOFENCE', last_seen_at: new Date(NOW - 60_000).toISOString() };
+  it('location switched off / no fix → "GPS Unavailable", geofence unknown (never "outside")', () => {
+    for (const t of ['LOCATION_UNAVAILABLE', 'TIMEOUT', 'UNKNOWN_ERROR']) {
+      const d = deriveLocationDisplay({ permission: 'granted', liveRow: stale, nowMs: NOW, workMode: 'OFFICE', trackingStatus: t });
+      expect(d).toMatchObject({ gps: 'GPS Unavailable', geofence: 'LOCATION UNKNOWN', tone: 'danger' });
+    }
+  });
+  it('permission denied reported by the watcher → "Location Permission Denied" even if the browser API is silent', () => {
+    expect(deriveLocationDisplay({ permission: 'unknown', liveRow: stale, nowMs: NOW, workMode: 'OFFICE', trackingStatus: 'LOCATION_DENIED' }).gps).toBe('Location Permission Denied');
+  });
+  it('a fresh reading wins over a passing timeout', () => {
+    expect(deriveLocationDisplay({ permission: 'granted', liveRow: fresh, nowMs: NOW, workMode: 'OFFICE', trackingStatus: 'TIMEOUT' })).toMatchObject({ gps: 'GPS Active', geofence: 'OUTSIDE GEOFENCE' });
+  });
+  it('no tracking state (old behaviour) is unchanged', () => {
+    expect(deriveLocationDisplay({ permission: 'granted', liveRow: stale, nowMs: NOW, workMode: 'OFFICE' }).gps).toBe('Location Updating');
+  });
+});
