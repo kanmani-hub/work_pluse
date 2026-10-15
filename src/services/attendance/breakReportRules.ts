@@ -20,7 +20,7 @@
  * location unavailable, ...). A GPS problem is never shown as "outside".
  */
 import { summarizeBreakDay, matchesBreakFilter, type BreakDaySummary, type BreakDayStatus } from './breakSummaryRules';
-import { isLocationStale } from '../location/liveTrackingRules';
+import { isLocationStale, LIVE_STALE_MINUTES } from '../location/liveTrackingRules';
 import { normalizeRole } from '../../lib/roles';
 
 export type BreakReportStatus = BreakDayStatus | 'NO_ATTENDANCE';
@@ -87,7 +87,9 @@ export function trackingFor(
   live: any | null,
   problem: { result: string; at: string } | null,
 ): BreakReportTracking {
-  const lastSeenAt: string | null = live?.last_seen_at ?? null;
+  // An unreadable last_seen_at is treated as missing (never as a fresh fix)
+  const rawSeen: string | null = live?.last_seen_at ?? null;
+  const lastSeenAt: string | null = Number.isFinite(time(rawSeen)) ? rawSeen : null;
   const locationStatus: string | null = live?.location_status ?? null;
   // Freshness only matters for the current, still-open working day
   const applicable = input.date === input.today && !!attendance?.clock_in_at && !attendance?.clock_out_at;
@@ -96,6 +98,9 @@ export function trackingFor(
   const problemIsNewer = !!problem && (!lastSeenAt || time(problem.at) > time(lastSeenAt));
   if (problemIsNewer) return { state: 'LOCATION_PROBLEM', lastSeenAt, locationStatus, problem };
   if (!live) return { state: 'NO_DATA', lastSeenAt: null, locationStatus: null, problem: null };
+  // A location row without a readable last_seen_at cannot prove the phone is reporting: it is
+  // "not updating" with no time, never live (isLocationStale would treat an unparseable time as fresh).
+  if (!lastSeenAt) return { state: 'STALE', lastSeenAt: null, locationStatus, problem: null };
   if (isLocationStale({ lastSeenAt }, input.nowMs)) return { state: 'STALE', lastSeenAt, locationStatus, problem: null };
   return { state: 'LIVE', lastSeenAt, locationStatus, problem: null };
 }
@@ -195,5 +200,94 @@ export function trackingLabel(t: BreakReportTracking, fmt: (iso: string | null) 
     case 'NO_DATA': return 'No location received today';
     case 'UNKNOWN': return 'Tracking status could not be loaded';
     case 'NOT_APPLICABLE': return '—';
+  }
+}
+
+// ------------------------------------------------------------------ compact tracking status (UI)
+
+/**
+ * Staleness threshold used by the tracking status on this page: a location is "current" while its
+ * last_seen_at is at most this many minutes before now. It is the same threshold Live Tracking
+ * uses (LIVE_STALE_MINUTES), so the two pages never disagree about one employee.
+ */
+export const TRACKING_STALE_MINUTES = LIVE_STALE_MINUTES;
+
+/**
+ * Visual/semantic group of a tracking state. LOCATION_PROBLEM is split by its cause so that a
+ * phone whose location PERMISSION is off is not presented like a GPS signal problem.
+ */
+export type TrackingTone = 'current' | 'stale' | 'permission' | 'unavailable' | 'no-data' | 'unknown' | 'not-applicable';
+
+export interface TrackingSummary {
+  tone: TrackingTone;
+  /** Short state name for the compact chip, e.g. "Live", "Not updating", "Location off". */
+  label: string;
+  /** Time of the event the chip refers to (last fix, or the failed check), or null. */
+  at: string | null;
+  /** Whole minutes between `at` and now (never negative), or null when there is no readable time. */
+  ageMins: number | null;
+  /** Last known side from the last usable reading, in words ("Outside office", "Unknown"). */
+  location: string;
+  /** Full sentence for the expanded view and for screen readers. */
+  detail: string;
+}
+
+const SIDE_TEXT: Record<string, string> = { INSIDE_GEOFENCE: 'Inside office', OUTSIDE_GEOFENCE: 'Outside office', WFH: 'Working from home' };
+
+/** Minutes since an ISO time; null when missing/unparseable; a time ahead of `nowMs` counts as 0. */
+export function minutesAgo(iso: string | null | undefined, nowMs: number): number | null {
+  const t = time(iso);
+  if (!Number.isFinite(t) || !Number.isFinite(nowMs)) return null;
+  return Math.max(0, Math.floor((nowMs - t) / 60000));
+}
+
+/** "just now", "12 min ago", "2 h 5 min ago"; "time not recorded" when there is no readable time. */
+export function formatAge(mins: number | null): string {
+  if (mins === null) return 'time not recorded';
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return m ? `${h} h ${m} min ago` : `${h} h ago`;
+}
+
+/**
+ * Compact status for one row. Pure: the state comes from trackingFor(); this only words it.
+ * `fmt` formats an ISO time for display (company time zone); it receives null for a missing time.
+ */
+export function trackingSummary(t: BreakReportTracking, nowMs: number, fmt: (iso: string | null) => string): TrackingSummary {
+  const location = (t.locationStatus && SIDE_TEXT[t.locationStatus]) || 'Unknown';
+  const seen = t.lastSeenAt && Number.isFinite(time(t.lastSeenAt)) ? t.lastSeenAt : null;
+  const seenText = seen ? `${fmt(seen)} (${formatAge(minutesAgo(seen, nowMs))})` : 'no time recorded';
+  switch (t.state) {
+    case 'LIVE':
+      return { tone: 'current', label: 'Live', at: seen, ageMins: minutesAgo(seen, nowMs), location,
+        detail: `Location is updating. Last update ${seenText}. Last known location: ${location.toLowerCase()}.` };
+    case 'STALE':
+      return { tone: 'stale', label: 'Not updating', at: seen, ageMins: minutesAgo(seen, nowMs), location,
+        detail: seen
+          ? `No location update for more than ${TRACKING_STALE_MINUTES} minutes. Last update ${seenText}. Last known location: ${location.toLowerCase()}. The app may be closed, offline or without GPS; the cause is not known.`
+          : `A location record exists but it has no readable update time, so it cannot be shown as current. Last known location: ${location.toLowerCase()}.` };
+    case 'LOCATION_PROBLEM': {
+      const result = t.problem?.result ?? '';
+      const problemAt = t.problem?.at && Number.isFinite(time(t.problem.at)) ? t.problem.at : null;
+      const when = problemAt ? `${fmt(problemAt)} (${formatAge(minutesAgo(problemAt, nowMs))})` : 'an unrecorded time';
+      const lastFix = seen ? `Last valid location ${seenText}` : 'No valid location before that';
+      if (result === 'LOCATION_DENIED') {
+        return { tone: 'permission', label: 'Location off', at: problemAt, ageMins: minutesAgo(problemAt, nowMs), location,
+          detail: `Location permission was denied on the employee's device at ${when}. ${lastFix}. Last known location: ${location.toLowerCase()}.` };
+      }
+      return { tone: 'unavailable', label: result === 'LOW_ACCURACY' ? 'Low accuracy' : 'Unavailable', at: problemAt, ageMins: minutesAgo(problemAt, nowMs), location,
+        detail: `${PROBLEM_LABEL[result] ?? 'Location could not be checked'} at ${when}. ${lastFix}. Last known location: ${location.toLowerCase()}.` };
+    }
+    case 'NO_DATA':
+      return { tone: 'no-data', label: 'No location', at: null, ageMins: null, location: 'Unknown',
+        detail: 'No location has been received from this employee today.' };
+    case 'UNKNOWN':
+      return { tone: 'unknown', label: 'Not loaded', at: null, ageMins: null, location: 'Unknown',
+        detail: 'Tracking status could not be loaded. Reload the page to try again.' };
+    case 'NOT_APPLICABLE':
+    default:
+      return { tone: 'not-applicable', label: 'Not tracked', at: null, ageMins: null, location: 'Unknown',
+        detail: 'Tracking only applies to today while the employee is clocked in.' };
   }
 }

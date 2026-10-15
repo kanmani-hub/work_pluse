@@ -1,0 +1,236 @@
+/* =====================================================================================
+   Admin → Break Management
+   - Laptop/desktop: the same table, with tighter, predictable column widths.
+   - 768–1024px: the table scrolls sideways inside its card (keyboard-reachable region).
+   - ≤767px: each table row is shown as a card. The SAME cells are used, each labelled with its
+     column name (data-label), so no column is hidden or dropped.
+   Colours come from the theme variables, so light and dark themes both apply.
+   ===================================================================================== */
+
+/* ------------------------------------------------------------------ table (all widths)
+   At 1366px the 10 columns needed ~1460px inside a ~975px card (Status, Stored and Tracking
+   cells could not wrap). Cells now wrap their notes, padding is slightly tighter and the two
+   actions stack, so the table fits a laptop card without hiding any column. */
+.break-table th,
+.break-table td { padding-left: 0.75rem; padding-right: 0.75rem; }
+.break-table .bt-num div { white-space: normal; }
+.break-table .bt-status .badge,
+.break-table .bt-shift .badge { white-space: nowrap; }
+.break-table .bt-employee { min-width: 10rem; max-width: 18rem; }
+.break-table .bt-name { font-weight: 500; overflow-wrap: break-word; }
+.break-table .bt-sub { font-size: 0.75rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+.break-table .bt-num { white-space: nowrap; }
+.break-table .bt-note { font-size: 0.75rem; color: var(--text-secondary); white-space: normal; line-height: 1.35; }
+.break-table .bt-tracking { min-width: 9.5rem; max-width: 12rem; }
+.break-table th { vertical-align: bottom; }
+.break-table td { vertical-align: top; }
+@media (max-width: 1599px) {
+  /* narrower laptops: long badges and names wrap instead of widening the table */
+  .break-table .bt-status .badge,
+  .break-table .bt-shift .badge { white-space: normal; text-align: left; line-height: 1.25; }
+  .break-table .bt-name { overflow-wrap: anywhere; }
+}
+
+.bt-action-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.break-table .bt-action-group { flex-direction: column; align-items: stretch; min-width: 6.5rem; }
+.btn.bt-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  white-space: nowrap !important;
+  min-height: 32px;            /* ≥ 24px (WCAG 2.2 AA); 44px on touch screens below */
+  padding: 0.25rem 0.75rem !important;
+  font-size: 0.75rem !important;
+}
+.btn.bt-action[disabled] { cursor: not-allowed; opacity: 0.65; }
+.break-notice-close { min-width: 32px; min-height: 32px; }
+
+/* Where the table is still wider than its card (tablets, 1025–1599px laptops) it scrolls inside the
+   card; the Actions column stays pinned at the right edge so End Break / View Details are always
+   reachable without scrolling. The shadow on its left edge shows that more columns scroll beneath. */
+@media (min-width: 768px) {
+  /* The card clips its content (overflow: hidden) and .table-responsive only scrolled below
+     640px, so on tablets and laptops the Status, Tracking and Actions columns were cut off with
+     no way to reach them. The wrapper now scrolls sideways (a no-op when the table fits). */
+  .break-table-card .table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .break-table th:last-child,
+  .break-table td.bt-actions {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    box-shadow: -10px 0 10px -10px rgba(0, 0, 0, 0.45);
+  }
+  .break-table th:last-child { z-index: 2; }
+  .break-table td.bt-actions { background: var(--bg-surface-solid); }
+  /* the generic edge fade would cover the pinned actions */
+  .break-table-card .table-responsive[data-scroll-more] { -webkit-mask-image: none !important; mask-image: none !important; }
+}
+
+/* ------------------------------------------------------------------ tracking status */
+.tracking-status { display: block; font-size: 0.8125rem; line-height: 1.35; }
+.tracking-status--na { color: var(--text-secondary); }
+.tracking-status > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  cursor: pointer;
+  list-style: none;
+  border-radius: var(--radius-md);
+  padding: 2px;
+  min-height: 24px;
+}
+.tracking-status > summary::-webkit-details-marker { display: none; }
+.tracking-status > summary:focus-visible { outline: 2px solid var(--primary-500); outline-offset: 2px; }
+.tracking-toggle { color: var(--text-secondary); transition: transform 0.15s ease; margin-left: auto; flex: 0 0 auto; }
+.tracking-status[open] .tracking-toggle { transform: rotate(180deg); }
+
+.tracking-chip {
+  --tone: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--tone);
+  border: 1px solid color-mix(in srgb, var(--tone) 45%, transparent);
+  background: color-mix(in srgb, var(--tone) 12%, transparent);
+}
+.tracking-chip--current { --tone: var(--success); }
+.tracking-chip--stale { --tone: var(--warning); }
+.tracking-chip--permission { --tone: var(--danger); }
+.tracking-chip--unavailable { --tone: var(--info); border-style: dashed; }
+.tracking-chip--no-data,
+.tracking-chip--unknown,
+.tracking-chip--not-applicable { --tone: var(--text-secondary); border-style: dashed; }
+
+.tracking-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 100%;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.tracking-when { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.tracking-detail {
+  margin: 0.375rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.tracking-status.is-expanded { display: flex; flex-direction: column; align-items: flex-start; gap: 0.25rem; }
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0);
+  white-space: nowrap; border: 0;
+}
+
+/* ------------------------------------------------------------------ details dialog (≤1024px) */
+.break-details-overlay > .break-details-pane {
+  position: relative !important;
+  top: auto !important;
+  width: min(560px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  margin: auto;
+  overscroll-behavior: contain;
+}
+.break-details-pane h3[tabindex="-1"]:focus { outline: none; }
+.break-details-pane h3[tabindex="-1"]:focus-visible { outline: 2px solid var(--primary-500); outline-offset: 2px; }
+
+/* ------------------------------------------------------------------ phones: one card per row */
+@media (max-width: 767px) {
+  .card.break-table-card { padding: 0 !important; background: transparent !important; border: 0 !important; box-shadow: none !important; }
+  .break-table-card .table-responsive { overflow: visible !important; }
+
+  .table.break-table,
+  .table.break-table tbody,
+  .table.break-table tr,
+  .table.break-table td {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+    max-width: none;
+  }
+  .table.break-table { min-width: 0 !important; border-collapse: separate; }
+
+  /* column headers stay available to assistive tech but are not drawn */
+  .table.break-table thead {
+    position: absolute;
+    width: 1px; height: 1px;
+    overflow: hidden; clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .table.break-table tr.bt-row {
+    height: auto !important;
+    display: grid;
+    align-items: start;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 14px;
+    padding: 14px;
+    margin: 0 0 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    background: var(--bg-surface);
+  }
+  .table.break-table tr.bt-row:hover { background: var(--bg-surface); }
+  .table.break-table tr.bt-message-row { border: 1px solid var(--border-color); border-radius: var(--radius-lg); background: var(--bg-surface); }
+
+  .table.break-table td {
+    height: auto !important;     /* the global 64px cell height made card fields overlap */
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    white-space: normal;
+  }
+  .table.break-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-secondary);
+  }
+  /* employee heads the card; tracking and actions take the full width */
+  .table.break-table td.bt-employee { grid-column: 1 / -1; order: -2; padding-bottom: 8px !important; border-bottom: 1px solid var(--border-color) !important; }
+  .table.break-table td.bt-employee::before { display: none; }
+  .table.break-table td.bt-status { order: -1; }
+  .table.break-table td.bt-shift { order: -1; }
+  .table.break-table td.bt-tracking,
+  .table.break-table td.bt-actions { grid-column: 1 / -1; }
+  .table.break-table .bt-name { font-size: 1rem; font-weight: 600; }
+  .table.break-table .bt-num { white-space: normal; font-variant-numeric: tabular-nums; }
+
+  .break-table .bt-action-group { min-width: 0; }
+  .break-table .bt-action-group > .bt-action { flex: 1 1 0; }
+  .btn.bt-action { min-height: 44px; font-size: 0.875rem !important; }
+  .bt-no-action { display: none; }
+  .tracking-status > summary { min-height: 44px; }
+}
+
+/* touch screens of any width: comfortable targets */
+@media (pointer: coarse) {
+  .btn.bt-action { min-height: 44px; }
+  .tracking-status > summary { min-height: 44px; }
+}
+
+@media (max-width: 767px) {
+  /* rows with no attendance carry only "—" placeholders: the card shows who and why */
+  .table.break-table tr.bt-row--no_attendance td:not(.bt-employee):not(.bt-status) { display: none; }
+  .table.break-table td.bt-actions:not(:has(.bt-action)) { display: none; }
+}

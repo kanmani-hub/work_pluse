@@ -97,7 +97,39 @@ export function buildFixtures(size: 'empty' | 'populated' = 'populated'): Db {
   for (const t of ['employee_location_history', 'geofence_events', 'location_verification_events', 'face_verification_events', 'payroll_adjustments', 'notification_devices']) db[t] = [];
   db.face_registrations = db.employees.slice(0, 3).map(e => ({ id: uid(), employee_id: e.id, status: 'ACTIVE', registered_at: daysAgo(30).toISOString() }));
   db.app_settings = [{ id: '00000000-0000-0000-0000-000000000001', settings: {}, updated_at: daysAgo(1).toISOString() }];
+  if (populated) addBreakTrackingScenario(db);
   return db;
+}
+
+/**
+ * Today's Break Management cases, all relative to the real clock so staleness is computed from
+ * actual timestamps (threshold: 15 minutes, LIVE_STALE_MINUTES):
+ *   live (fix 2 min ago, on break) · stale (fix 40 min ago, on break, over the allowance)
+ *   permission denied (newer than the last fix) · location unavailable (no fix today)
+ *   no location row at all · location row without a timestamp · clocked out with excess
+ */
+export const BREAK_SCENARIO = ['LIVE', 'STALE', 'PERMISSION', 'UNAVAILABLE', 'NO_DATA', 'NO_TIMESTAMP', 'CLOCKED_OUT_EXCESS'] as const;
+function addBreakTrackingScenario(db: Db) {
+  const now = Date.now();
+  const ago = (m: number) => new Date(now - m * 60000).toISOString();
+  const istToday = new Date(now + 330 * 60000).toISOString().slice(0, 10);
+  const people = db.employees.slice(3, 3 + BREAK_SCENARIO.length);
+  const ids = new Set(people.map(e => e.id));
+  db.employee_live_locations = db.employee_live_locations.filter(l => !ids.has(l.employee_id));
+  people.forEach((e, i) => {
+    const kind = BREAK_SCENARIO[i];
+    const attId = uid();
+    const clockedOut = kind === 'CLOCKED_OUT_EXCESS';
+    db.attendance.push({ id: attId, employee_id: e.id, attendance_date: istToday, clock_in_at: ago(170), clock_out_at: clockedOut ? ago(5) : null, status: clockedOut ? 'COMPLETED' : 'WORKING', required_hours: 8, break_minutes: clockedOut ? 75 : kind === 'PERMISSION' ? 45 : 0, break_overrun_minutes: clockedOut ? 15 : 0, late_minutes: 0, shift_template_id: db.shift_templates[0].id, work_mode: 'OFFICE' });
+    const brk = (start: number, end: number | null, type = 'REGULAR') => db.attendance_breaks.push({ id: uid(), attendance_id: attId, employee_id: e.id, break_type: type, started_at: ago(start), ended_at: end === null ? null : ago(end), duration_minutes: end === null ? null : start - end });
+    const live = (lastSeen: string | null, side: string) => db.employee_live_locations.push({ id: uid(), employee_id: e.id, latitude: 13.0108, longitude: 80.2123, accuracy_meters: 15, location_status: side, location_context: 'OFFICE', last_seen_at: lastSeen, office_id: db.offices[0].id });
+    if (kind === 'LIVE') { brk(25, null); live(ago(2), 'INSIDE_GEOFENCE'); }
+    if (kind === 'STALE') { brk(70, null, 'AUTO_GPS'); live(ago(40), 'OUTSIDE_GEOFENCE'); }
+    if (kind === 'PERMISSION') { brk(120, 75); live(ago(30), 'INSIDE_GEOFENCE'); db.location_verification_events.push({ id: uid(), employee_id: e.id, result: 'LOCATION_DENIED', verified_at: ago(5) }); }
+    if (kind === 'UNAVAILABLE') { db.location_verification_events.push({ id: uid(), employee_id: e.id, result: 'LOCATION_UNAVAILABLE', verified_at: ago(3) }); }
+    if (kind === 'NO_TIMESTAMP') { live(null, 'INSIDE_GEOFENCE'); }
+    if (clockedOut) { brk(150, 110); brk(60, 25); }
+  });
 }
 
 // ---------------------------------------------------------------- tiny PostgREST emulator

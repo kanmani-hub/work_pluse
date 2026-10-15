@@ -54,14 +54,20 @@ function measure(page: Page) {
   return page.evaluate(() => {
     const vw = document.documentElement.clientWidth;
     const SHELL = '.main-content,.main-wrapper,.app-layout,#root';
-    const inScroller = (el: Element) => {
+    // Can the user reach this control? Walk up from it: the first ancestor whose box it sticks out
+    // of decides — a horizontal scroller (overflow auto/scroll) means it can be scrolled into view;
+    // a clipping box (overflow hidden/clip) means it is cut off with no way to reach it.
+    const reachable = (el: Element) => {
+      const r = el.getBoundingClientRect();
       for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
         if (p.matches(SHELL)) continue;
+        const pr = p.getBoundingClientRect();
+        if (r.right <= pr.right + 1 && r.left >= pr.left - 1) continue;
         const s = getComputedStyle(p);
-        if (/(auto|scroll)/.test(s.overflowX) && p.scrollWidth > p.clientWidth + 1) return true;
-        if (/(auto|scroll|hidden|clip)/.test(s.overflowX) && p.getBoundingClientRect().right <= vw + 1) return true;
+        if (/(auto|scroll)/.test(s.overflowX)) return p.scrollWidth > p.clientWidth + 1;
+        if (/(hidden|clip)/.test(s.overflowX)) return false;
       }
-      return false;
+      return !(r.right > vw + 1 || r.left < -1);
     };
     const visible = (e: Element) => {
       const r = e.getBoundingClientRect();
@@ -73,7 +79,8 @@ function measure(page: Page) {
     const clipped = controls.filter(e => {
       const r = e.getBoundingClientRect();
       if (r.right <= 0 && e.closest('.sidebar')) return false; // closed off-canvas drawer
-      return (r.right > vw + 1 || r.left < -1) && !inScroller(e) && getComputedStyle(e).position !== 'fixed';
+      if (getComputedStyle(e).position === 'fixed') return false;
+      return !reachable(e);
     }).map(e => `${e.tagName.toLowerCase()} "${((e as HTMLElement).innerText || e.getAttribute('aria-label') || '').trim().slice(0, 30)}"`);
     const scrollers = [...document.querySelectorAll('.main-content, .main-wrapper')].map(e => e.scrollWidth - e.clientWidth);
     return {
