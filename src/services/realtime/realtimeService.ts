@@ -1,5 +1,8 @@
 import { supabase } from '../../lib/supabase';
 
+/** Makes each employee-breaks subscription a distinct channel (see subscribeToMyBreaks). */
+let myBreaksChannelSeq = 0;
+
 export const realtimeService = {
   /**
    * Subscribe to notifications for the current user
@@ -153,8 +156,13 @@ export const realtimeService = {
    */
   subscribeToMyBreaks(employeeId: string, callback: (payload: any) => void) {
     if (!employeeId) return null;
+    // supabase.channel(topic) returns the EXISTING channel when one with the same topic is still
+    // registered (e.g. a previous subscriber's channel that is subscribed or still being removed —
+    // removeChannel() is asynchronous). Adding .on('postgres_changes') to a channel that is already
+    // joined/joining throws. Each call therefore gets its own topic; the listener is still
+    // registered before subscribe() and the server-side employee filter is unchanged.
     return supabase
-      .channel(`breaks:emp_${employeeId}`)
+      .channel(`breaks:emp_${employeeId}:${++myBreaksChannelSeq}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance_breaks', filter: `employee_id=eq.${employeeId}` }, callback)
       .subscribe();
   },

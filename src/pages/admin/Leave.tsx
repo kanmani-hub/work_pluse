@@ -304,7 +304,7 @@ const AdminLeave: React.FC = () => {
                     <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
                       <button onClick={() => setApproveModal(r.id)} className="btn btn-primary" style={{ flex: 1, padding: '0.25rem 0', fontSize: '0.75rem' }}>Approve</button>
                       <button onClick={() => setRejectModal(r.id)} className="btn btn-outline" style={{ flex: 1, padding: '0.25rem 0', fontSize: '0.75rem', color: 'var(--danger-600)', borderColor: 'var(--danger-300)' }}>Reject</button>
-                      <button onClick={() => setDetailDrawer(r)} className="icon-button border"><Eye size={16}/></button>
+                      <button onClick={() => setDetailDrawer(r)} className="icon-button border" aria-label="View details"><Eye size={16}/></button>
                     </div>
                   </div>
                 ))}
@@ -315,12 +315,12 @@ const AdminLeave: React.FC = () => {
           {/* Main Table Card */}
           <div className="card" style={{ padding: 0 }}>
             <div style={{ padding: '1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              <div style={{ position: 'relative', width: '220px' }}>
+              <div className="toolbar-search" style={{ position: 'relative', width: '220px', maxWidth: '100%' }}>
                 <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-                <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} />
+                <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} aria-label="Search employee" />
               </div>
               
-              <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+              <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Department">
                   <option value="All">All Departments</option>
                   {deptLoading ? (
                     <option disabled>Loading...</option>
@@ -334,12 +334,12 @@ const AdminLeave: React.FC = () => {
                   )}
                 </select>
 
-              <select value={filterType} onChange={e => setFilterType(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+              <select value={filterType} onChange={e => setFilterType(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Leave type">
                 <option value="All">All Leave Types</option>
                 {(leaveTypes || []).map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
               </select>
 
-              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Status">
                 <option value="All">All Statuses</option>
                 <option>PENDING</option>
                 <option>APPROVED</option>
@@ -491,7 +491,7 @@ EmpC     AL  AL   —    —    —`}
               <div style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>Leave Request</h2>
-                  <button className="icon-button" onClick={() => setDetailDrawer(null)}><X size={20} /></button>
+                  <button className="icon-button" onClick={() => setDetailDrawer(null)} aria-label="Close"><X size={20} /></button>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem', alignItems: 'center' }}>
                   {getStatusBadge(detailDrawer.status)}
@@ -622,7 +622,7 @@ EmpC     AL  AL   —    —    —`}
             <form onSubmit={handleReject} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="form-label">Rejection Reason *</label>
-                <textarea required className="form-control" rows={3} placeholder="e.g. Insufficient leave balance" value={reasonForm} onChange={e => setReasonForm(e.target.value)}></textarea>
+                <textarea required className="form-control" rows={3} placeholder="e.g. Insufficient leave balance" value={reasonForm} onChange={e => setReasonForm(e.target.value)} aria-label="Rejection Reason"></textarea>
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
                 <button type="button" onClick={() => setRejectModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
@@ -642,7 +642,7 @@ EmpC     AL  AL   —    —    —`}
             <form onSubmit={handleRevoke} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="form-label">Revocation Reason *</label>
-                <textarea required className="form-control" rows={3} placeholder="Reason for revoking..." value={reasonForm} onChange={e => setReasonForm(e.target.value)}></textarea>
+                <textarea required className="form-control" rows={3} placeholder="Reason for revoking..." value={reasonForm} onChange={e => setReasonForm(e.target.value)} aria-label="Revocation Reason"></textarea>
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
                 <button type="button" onClick={() => setRevokeModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
@@ -659,7 +659,7 @@ EmpC     AL  AL   —    —    —`}
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Leave Policies & Types</h2>
-              <button className="icon-button" onClick={() => setSettingsDrawer(false)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setSettingsDrawer(false)} aria-label="Close"><X size={20} /></button>
             </div>
             <div className="drawer-body">
               <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '2rem' }}>Configure leave types and company policies. Do not hard-code these as permanent system values.</p>
@@ -713,19 +713,19 @@ EmpC     AL  AL   —    —    —`}
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Add Leave (Admin)</h2>
-              <button className="icon-button" onClick={() => setAddLeaveDrawer(false)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setAddLeaveDrawer(false)} aria-label="Close"><X size={20} /></button>
             </div>
             <div className="drawer-body">
               <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '2rem' }}>Submit leave on behalf of an employee.</p>
               <form onSubmit={e => { e.preventDefault(); setAddLeaveDrawer(false); showToast('Leave created successfully'); }} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                <div><label className="form-label">Employee</label><select className="form-control"><option>Select Employee</option></select></div>
-                <div><label className="form-label">Leave Type</label><select className="form-control">{(leaveTypes || []).filter(t => t.active).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+                <div><label className="form-label">Employee</label><select className="form-control" aria-label="Employee"><option>Select Employee</option></select></div>
+                <div><label className="form-label">Leave Type</label><select className="form-control" aria-label="Leave Type">{(leaveTypes || []).filter(t => t.active).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
                 <div style={{ display: 'flex', gap: '1rem' }}>
-                  <div style={{ flex: 1 }}><label className="form-label">Start Date</label><input type="date" className="form-control"/></div>
-                  <div style={{ flex: 1 }}><label className="form-label">End Date</label><input type="date" className="form-control"/></div>
+                  <div style={{ flex: 1 }}><label className="form-label">Start Date</label><input type="date" className="form-control" aria-label="Start Date" /></div>
+                  <div style={{ flex: 1 }}><label className="form-label">End Date</label><input type="date" className="form-control" aria-label="End Date" /></div>
                 </div>
                 <div><label className="form-label">Half Day</label><input type="checkbox" /></div>
-                <div><label className="form-label">Reason</label><textarea className="form-control" rows={3}></textarea></div>
+                <div><label className="form-label">Reason</label><textarea className="form-control" rows={3} aria-label="Reason"></textarea></div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button className="btn btn-primary">Save Leave</button></div>
               </form>
             </div>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { 
@@ -18,8 +18,13 @@ import {
   MapPin,
   ShieldCheck,
   FileText,
-  Hourglass
+  Hourglass,
+  X
 } from 'lucide-react';
+
+/** Below this width the sidebar is an off-canvas drawer (same breakpoint as the CSS). */
+const DRAWER_QUERY = '(max-width: 1024px)';
+const isDrawerViewport = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(DRAWER_QUERY).matches;
 
 interface SidebarProps {
   isOpen: boolean;
@@ -31,6 +36,21 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, role }) => {
   const navigate = useNavigate();
 
   const { signOut } = useAuth();
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const [isDrawer, setIsDrawer] = useState(isDrawerViewport);
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia(DRAWER_QUERY);
+    const onChange = () => setIsDrawer(mq.matches);
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+
+  // Drawer open: move focus into it (the close button)
+  useEffect(() => {
+    if (isOpen && isDrawer) closeRef.current?.focus();
+  }, [isOpen, isDrawer]);
 
   const handleLogout = async () => {
     onClose();
@@ -40,7 +60,14 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, role }) => {
 
   return (
     <>
-      <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
+      <aside
+        id="app-sidebar"
+        className={`sidebar ${isOpen ? 'open' : ''}`}
+        aria-label="Main navigation"
+        // A closed drawer is off-screen: keep it out of the tab order and away from screen readers
+        inert={isDrawer && !isOpen ? true : undefined}
+        {...(isDrawer && isOpen ? { role: 'dialog', 'aria-modal': true } : {})}
+      >
         <div className="sidebar-header">
           <div className="sidebar-logo-icon">
             <Activity size={26} strokeWidth={2.5} />
@@ -49,6 +76,9 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, role }) => {
             <span>◈ WorkPulse</span>
             HR Command Center
           </div>
+          <button ref={closeRef} type="button" className="sidebar-close icon-button" onClick={onClose} aria-label="Close menu">
+            <X size={20} />
+          </button>
         </div>
         
         <nav className="sidebar-nav">
@@ -198,7 +228,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, role }) => {
       </aside>
       
       {/* Overlay for mobile */}
-      <div className="sidebar-overlay" onClick={onClose} />
+      <div className="sidebar-overlay" onClick={onClose} aria-hidden="true" />
     </>
   );
 };

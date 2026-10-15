@@ -39,7 +39,7 @@ const Employees: React.FC = () => {
           <div style={{ display: 'flex', gap: '0.5rem', flex: 1, minWidth: '250px' }}>
             <div style={{ position: 'relative', flex: 1 }}>
               <Search size={18} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-              <input type="text" placeholder="Search employees..." style={{ width: '100%', padding: '0.5rem 1rem 0.5rem 2.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', outline: 'none' }} />
+              <input type="text" placeholder="Search employees..." style={{ width: '100%', padding: '0.5rem 1rem 0.5rem 2.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', outline: 'none' }} aria-label="Search employees" />
             </div>
           </div>
           <button className="btn btn-outline">

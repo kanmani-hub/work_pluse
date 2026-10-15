@@ -941,7 +941,7 @@ const EmployeeDashboard: React.FC = () => {
                 <ShieldCheck size={20} color="var(--primary-600)"/>
                 Secure {clockAction === 'in' ? 'Clock In' : 'Clock Out'}
               </h2>
-              <button className="icon-button" onClick={closeSecurityModal}><X size={20}/></button>
+              <button className="icon-button" onClick={closeSecurityModal} aria-label="Close"><X size={20}/></button>
             </div>
 
             <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -1063,7 +1063,7 @@ const EmployeeDashboard: React.FC = () => {
                   
                   <div style={{ textAlign: 'left', marginBottom: '1.5rem' }}>
                     <label className="form-label" style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', fontWeight: 500 }}>Reason for override (Required)</label>
-                    <textarea className="form-control" rows={3} placeholder="E.g., Camera broken, poor lighting in current room..." style={{ width: '100%', resize: 'none', padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', outline: 'none' }}></textarea>
+                    <textarea className="form-control" rows={3} placeholder="E.g., Camera broken, poor lighting in current room..." style={{ width: '100%', resize: 'none', padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', outline: 'none' }} aria-label="Reason for override (Required)"></textarea>
                   </div>
 
                   <div style={{ display: 'flex', gap: '1rem' }}>

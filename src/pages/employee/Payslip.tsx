@@ -263,7 +263,7 @@ const EmployeePayslip: React.FC = () => {
       <div className="page-header" style={{ marginBottom: 0, flexWrap: 'wrap', gap: '1rem', alignItems: 'flex-start' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <button onClick={() => navigate('/employee/payroll')} className="icon-button" style={{ padding: '0.25rem', marginLeft: '-0.25rem' }}><ArrowLeft size={20} /></button>
+            <button onClick={() => navigate('/employee/payroll')} className="icon-button" style={{ padding: '0.25rem', marginLeft: '-0.25rem' }} aria-label="Back"><ArrowLeft size={20} /></button>
             <h1 className="page-title">Payslip</h1>
           </div>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>View your monthly payslip details and history.</p>
@@ -271,12 +271,12 @@ const EmployeePayslip: React.FC = () => {
         
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '0.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-            <button onClick={handlePrevMonth} className="icon-button" disabled={currentIndex === allPayrolls.length - 1} style={{ opacity: currentIndex === allPayrolls.length - 1 ? 0.3 : 1 }}><ChevronLeft size={20} /></button>
+            <button onClick={handlePrevMonth} className="icon-button" disabled={currentIndex === allPayrolls.length - 1} style={{ opacity: currentIndex === allPayrolls.length - 1 ? 0.3 : 1 }} aria-label="Previous month"><ChevronLeft size={20} /></button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0 0.5rem', fontWeight: 600 }}>
               <CalendarIcon size={18} className="nav-icon" />
               {currentPayroll ? `${getMonthName(currentPayroll.payroll_month)} ${currentPayroll.payroll_year}` : 'No Data'}
             </div>
-            <button onClick={handleNextMonth} className="icon-button" disabled={currentIndex === 0} style={{ opacity: currentIndex === 0 ? 0.3 : 1 }}><ChevronRight size={20} /></button>
+            <button onClick={handleNextMonth} className="icon-button" disabled={currentIndex === 0} style={{ opacity: currentIndex === 0 ? 0.3 : 1 }} aria-label="Next month"><ChevronRight size={20} /></button>
           </div>
         </div>
       </div>
@@ -487,7 +487,7 @@ const EmployeePayslip: React.FC = () => {
               <h2>Payslip Preview</h2>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button type="button" className="btn btn-outline" onClick={() => window.print()} style={{ fontSize: '0.875rem', padding: '0.25rem 0.75rem' }}>Print</button>
-                <button type="button" className="icon-button" onClick={() => setShowPreview(false)}><X size={20}/></button>
+                <button type="button" className="icon-button" onClick={() => setShowPreview(false)} aria-label="Close"><X size={20}/></button>
               </div>
             </div>
             <div style={{ padding: '2rem' }} className="print-area">

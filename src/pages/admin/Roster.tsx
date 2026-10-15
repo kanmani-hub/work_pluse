@@ -395,9 +395,9 @@ const AdminRoster: React.FC = () => {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface)' }}>
-            <button onClick={handlePrev} className="icon-button" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)' }}><ChevronLeft size={18}/></button>
+            <button type="button" onClick={handlePrev} className="icon-button" aria-label="Previous period" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)' }}><ChevronLeft size={18}/></button>
             <button onClick={handleToday} className="btn" style={{ backgroundColor: 'transparent', border: 'none', padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600 }}>{monthNames[month]} {year}</button>
-            <button onClick={handleNext} className="icon-button" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}><ChevronRight size={18}/></button>
+            <button type="button" onClick={handleNext} className="icon-button" aria-label="Next period" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}><ChevronRight size={18}/></button>
             <button onClick={handleToday} className="btn" style={{ backgroundColor: 'var(--bg-surface-elevated)', border: 'none', borderLeft: '1px solid var(--border-color)', padding: '0.5rem 1rem', fontSize: '0.875rem', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}>Today</button>
           </div>
           
@@ -481,11 +481,11 @@ const AdminRoster: React.FC = () => {
         {/* Toolbar */}
         <div style={{ padding: '1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', flex: 1 }}>
-            <div style={{ position: 'relative', width: '220px' }}>
+            <div className="toolbar-search" style={{ position: 'relative', width: '220px', maxWidth: '100%' }}>
               <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-              <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} />
+              <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} aria-label="Search employee" />
             </div>
-            <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+            <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Department">
               <option value="All">All Departments</option>
               {deptLoading ? (
                 <option disabled>Loading...</option>
@@ -628,7 +628,7 @@ const AdminRoster: React.FC = () => {
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Assignments for {dayLabel(dayDrawer, { day: 'numeric', month: 'short', year: 'numeric' })}</h2>
-              <button className="icon-button" onClick={() => setDayDrawer(null)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setDayDrawer(null)} aria-label="Close"><X size={20} /></button>
             </div>
             <div className="drawer-body">
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -666,7 +666,7 @@ const AdminRoster: React.FC = () => {
             <form onSubmit={handleSaveAssign} style={{ marginTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="form-label">Shift Template</label>
-                <select className="form-control" value={formData.shift} onChange={e => setFormData({...formData, shift: e.target.value})} disabled={formData.mode === 'Week Off'}>
+                <select className="form-control" value={formData.shift} onChange={e => setFormData({...formData, shift: e.target.value})} disabled={formData.mode === 'Week Off'} aria-label="Shift Template">
                   {shifts.map(s => (
                     <option key={s.id} value={s.id}>{s.name} ({s.start_time?.slice(0,5)} - {s.end_time?.slice(0,5)})</option>
                   ))}
@@ -675,7 +675,7 @@ const AdminRoster: React.FC = () => {
               
               <div>
                 <label className="form-label">Work Mode / Exception</label>
-                <select className="form-control" value={formData.mode} onChange={e => setFormData({...formData, mode: e.target.value})}>
+                <select className="form-control" value={formData.mode} onChange={e => setFormData({...formData, mode: e.target.value})} aria-label="Work Mode / Exception">
                   <option>Office</option>
                   <option>WFH</option>
                   <option>Week Off</option>

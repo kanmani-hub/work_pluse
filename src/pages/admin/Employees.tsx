@@ -394,10 +394,10 @@ const AdminEmployees: React.FC = () => {
           <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', flex: 1 }}>
             <div style={{ position: 'relative', width: '250px' }}>
               <Search size={18} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-              <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employees..." className="form-control" style={{ paddingLeft: '2.25rem' }} />
+              <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employees..." className="form-control" style={{ paddingLeft: '2.25rem' }} aria-label="Search employees" />
             </div>
             
-            <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto' }}>
+            <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto' }} aria-label="Department">
               <option value="All">All Departments</option>
               {deptLoading ? (
                 <option disabled>Loading...</option>
@@ -411,7 +411,7 @@ const AdminEmployees: React.FC = () => {
               )}
             </select>
             
-            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto' }}>
+            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto' }} aria-label="Status">
               <option value="All">All Statuses</option>
               <option value='ACTIVE'>Active</option>
               <option value='INACTIVE'>Inactive</option>
@@ -505,7 +505,7 @@ const AdminEmployees: React.FC = () => {
                       </span>
                     </td>
                     <td style={{ textAlign: 'right', position: 'relative' }}>
-                      <button onClick={() => setActiveMenu(activeMenu === emp.id ? null : emp.id)} className="icon-button"><MoreVertical size={18}/></button>
+                      <button onClick={() => setActiveMenu(activeMenu === emp.id ? null : emp.id)} className="icon-button" aria-label="More actions"><MoreVertical size={18}/></button>
                       
                       {activeMenu === emp.id && (
                         <div className="dropdown-menu" style={{ position: 'absolute', right: '30px', top: '12px', zIndex: 10 }}>
@@ -548,7 +548,7 @@ const AdminEmployees: React.FC = () => {
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>{showEditForm ? 'Edit Employee' : 'Add Employee'}</h2>
-              <button className="icon-button" onClick={() => { setShowAddForm(false); setShowEditForm(null); }}><X size={20} /></button>
+              <button className="icon-button" onClick={() => { setShowAddForm(false); setShowEditForm(null); }} aria-label="Close"><X size={20} /></button>
             </div>
             
             <form onSubmit={handleSaveForm} className="drawer-body" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -558,19 +558,19 @@ const AdminEmployees: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
                     <label className="form-label">First Name *</label>
-                    <input required className="form-control" value={formData.first_name || ''} onChange={e => setFormData({...formData, first_name: e.target.value})} placeholder="e.g. Arun" />
+                    <input required className="form-control" value={formData.first_name || ''} onChange={e => setFormData({...formData, first_name: e.target.value})} placeholder="e.g. Arun" aria-label="First Name" />
                   </div>
                   <div>
                     <label className="form-label">Last Name</label>
-                    <input className="form-control" value={formData.last_name || ''} onChange={e => setFormData({...formData, last_name: e.target.value})} placeholder="e.g. Kumar" />
+                    <input className="form-control" value={formData.last_name || ''} onChange={e => setFormData({...formData, last_name: e.target.value})} placeholder="e.g. Kumar" aria-label="Last Name" />
                   </div>
                   <div>
                     <label className="form-label">Email *</label>
-                    <input required type="email" className="form-control" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} placeholder="arun@example.com" />
+                    <input required type="email" className="form-control" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})} placeholder="arun@example.com" aria-label="Email" />
                   </div>
                   <div>
                     <label className="form-label">Mobile Number</label>
-                    <input className="form-control" value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} placeholder="9876543210" />
+                    <input className="form-control" value={formData.phone || ''} onChange={e => setFormData({...formData, phone: e.target.value})} placeholder="9876543210" aria-label="Mobile Number" />
                   </div>
                 </div>
               </section>
@@ -580,26 +580,26 @@ const AdminEmployees: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
                     <label className="form-label">Employee Code</label>
-                    <input className="form-control" value={formData.employee_code || ''} onChange={e => setFormData({...formData, employee_code: e.target.value})} disabled={true} placeholder={showEditForm ? "" : "Auto-generated"} />
+                    <input className="form-control" value={formData.employee_code || ''} onChange={e => setFormData({...formData, employee_code: e.target.value})} disabled={true} placeholder={showEditForm ? "" : "Auto-generated"} aria-label="Employee Code" />
                   </div>
                   <div>
                     <label className="form-label">Date of Joining *</label>
-                    <input required type="date" className="form-control" value={formData.joining_date || ''} onChange={e => setFormData({...formData, joining_date: e.target.value})} />
+                    <input required type="date" className="form-control" value={formData.joining_date || ''} onChange={e => setFormData({...formData, joining_date: e.target.value})} aria-label="Date of Joining" />
                   </div>
                   <div>
                     <label className="form-label">Department</label>
-                    <select className="form-control" value={formData.department_id || ''} onChange={e => setFormData({...formData, department_id: e.target.value})}>
+                    <select className="form-control" value={formData.department_id || ''} onChange={e => setFormData({...formData, department_id: e.target.value})} aria-label="Department">
                       <option value="">Select Dept</option>
                       {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                     </select>
                   </div>
                   <div>
                     <label className="form-label">Designation</label>
-                    <input className="form-control" value={formData.designation || ''} onChange={e => setFormData({...formData, designation: e.target.value})} placeholder="e.g. Software Developer" />
+                    <input className="form-control" value={formData.designation || ''} onChange={e => setFormData({...formData, designation: e.target.value})} placeholder="e.g. Software Developer" aria-label="Designation" />
                   </div>
                   <div>
                     <label className="form-label">Employment Type</label>
-                    <select className="form-control" value={formData.employment_type || ''} onChange={e => setFormData({...formData, employment_type: e.target.value})}>
+                    <select className="form-control" value={formData.employment_type || ''} onChange={e => setFormData({...formData, employment_type: e.target.value})} aria-label="Employment Type">
                       <option>Full Time</option>
                       <option>Part Time</option>
                       <option>Contract</option>
@@ -607,7 +607,7 @@ const AdminEmployees: React.FC = () => {
                   </div>
                   <div>
                     <label className="form-label">Employment Status</label>
-                    <select className="form-control" value={formData.status || 'Active'} onChange={e => setFormData({...formData, status: e.target.value})}>
+                    <select className="form-control" value={formData.status || 'Active'} onChange={e => setFormData({...formData, status: e.target.value})} aria-label="Employment Status">
                       <option value='ACTIVE'>Active</option>
                       <option value='INACTIVE'>Inactive</option>
                     </select>
@@ -620,7 +620,7 @@ const AdminEmployees: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
                     <label className="form-label">Office</label>
-                    <select className="form-control" value={formData.office_id || ''} onChange={e => setFormData({...formData, office_id: e.target.value})}>
+                    <select className="form-control" value={formData.office_id || ''} onChange={e => setFormData({...formData, office_id: e.target.value})} aria-label="Office">
                       <option value="">Select Office</option>
                       {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                     </select>
@@ -633,7 +633,7 @@ const AdminEmployees: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
                     <label className="form-label">Gross Salary *</label>
-                    <input required type="number" min="0" className="form-control" value={formData.gross_salary || ''} onChange={e => setFormData({...formData, gross_salary: e.target.value})} placeholder="e.g. 50000" />
+                    <input required type="number" min="0" className="form-control" value={formData.gross_salary || ''} onChange={e => setFormData({...formData, gross_salary: e.target.value})} placeholder="e.g. 50000" aria-label="Gross Salary" />
                   </div>
                 </div>
               </section>
@@ -645,7 +645,7 @@ const AdminEmployees: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
                     <label className="form-label">System Role</label>
-                    <select className="form-control" value={formData.role_id || ''} onChange={e => setFormData({...formData, role_id: e.target.value})}>
+                    <select className="form-control" value={formData.role_id || ''} onChange={e => setFormData({...formData, role_id: e.target.value})} aria-label="System Role">
                       <option value="">Select Role</option>
                       {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                     </select>
@@ -695,7 +695,7 @@ const AdminEmployees: React.FC = () => {
         <div className="drawer-overlay" onClick={() => setShowProfile(null)}>
           <div className="drawer profile-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header" style={{ borderBottom: 'none', paddingBottom: 0 }}>
-              <button className="icon-button" onClick={() => setShowProfile(null)} style={{ position: 'absolute', right: '1.5rem', top: '1.5rem' }}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setShowProfile(null)} style={{ position: 'absolute', right: '1.5rem', top: '1.5rem' }} aria-label="Close"><X size={20} /></button>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '1.5rem' }}>
                 <div className="avatar" style={{ width: '80px', height: '80px', fontSize: '2rem', backgroundColor: showProfile.status === 'INACTIVE' ? 'var(--gray-200)' : 'var(--primary-100)', color: showProfile.status === 'INACTIVE' ? 'var(--gray-500)' : 'var(--primary-700)' }}>
                   {showProfile.first_name?.[0]}{showProfile.last_name?.[0]}
@@ -787,7 +787,7 @@ const AdminEmployees: React.FC = () => {
           <div className="modal-content" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Delete Employee?</h2>
-              <button className="icon-button" onClick={() => setDeleteModal(null)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setDeleteModal(null)} aria-label="Close"><X size={20} /></button>
             </div>
             <div className="modal-body">
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem', padding: '1rem', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)', color: 'var(--danger)' }}>
@@ -822,8 +822,7 @@ const AdminEmployees: React.FC = () => {
                   required 
                   className="form-control" 
                   value={formData.effective_date || today} 
-                  onChange={e => setFormData({ ...formData, effective_date: e.target.value })} 
-                />
+                  onChange={e => setFormData({ ...formData, effective_date: e.target.value })} aria-label="Effective Date" />
               </div>
               <div>
                 <label className="form-label">Shift</label>
@@ -831,8 +830,7 @@ const AdminEmployees: React.FC = () => {
                   className="form-control" 
                   required 
                   value={formData.shift_id || ''} 
-                  onChange={e => setFormData({ ...formData, shift_id: e.target.value })}
-                >
+                  onChange={e => setFormData({ ...formData, shift_id: e.target.value })} aria-label="Shift">
                   <option value="">Select a shift...</option>
                   {shifts.map(s => (
                     <option key={s.id} value={s.id}>{s.name} ({s.start_time} - {s.end_time})</option>
@@ -855,7 +853,7 @@ const AdminEmployees: React.FC = () => {
             <form onSubmit={handleAssignOffice} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="form-label">Office</label>
-                <select className="form-control" value={formData.office_id || assignOfficeModal.office_id || ''} onChange={e => setFormData({...formData, office_id: e.target.value})}>
+                <select className="form-control" value={formData.office_id || assignOfficeModal.office_id || ''} onChange={e => setFormData({...formData, office_id: e.target.value})} aria-label="Office">
                   <option value="">Select an office...</option>
                   {offices.map(o => (
                     <option key={o.id} value={o.id}>{o.name}</option>
@@ -906,7 +904,7 @@ const AdminEmployees: React.FC = () => {
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '500px', animation: 'slideUp 0.3s' }}>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
               Import Employees
-              <button onClick={() => setImportModal(false)} className="icon-button"><X size={18}/></button>
+              <button onClick={() => setImportModal(false)} className="icon-button" aria-label="Close"><X size={18}/></button>
             </h3>
             
             {importState === 'idle' && (

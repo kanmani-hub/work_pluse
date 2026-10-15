@@ -222,16 +222,16 @@ const AdminOffices: React.FC = () => {
           
           <div style={{ position: 'relative', width: '250px', flex: '1 1 auto', maxWidth: '300px' }}>
             <Search size={18} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search office name, code or address..." className="form-control" style={{ paddingLeft: '2.25rem' }} />
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search office name, code or address..." className="form-control" style={{ paddingLeft: '2.25rem' }} aria-label="Search office name, code or address" />
           </div>
           
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto' }}>
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto' }} aria-label="Status">
             <option value="All">All Statuses</option>
             <option>Active</option>
             <option>Inactive</option>
           </select>
 
-          <select value={filterGeofence} onChange={e => setFilterGeofence(e.target.value)} className="form-control" style={{ width: 'auto' }}>
+          <select aria-label="Geofencing" value={filterGeofence} onChange={e => setFilterGeofence(e.target.value)} className="form-control" style={{ width: 'auto' }}>
             <option value="All">All Geofencing</option>
             <option>Enabled</option>
             <option>Disabled</option>
@@ -285,7 +285,7 @@ const AdminOffices: React.FC = () => {
                       </span>
                     </td>
                     <td style={{ textAlign: 'right', position: 'relative' }}>
-                      <button onClick={() => setActiveMenu(activeMenu === office.id ? null : office.id)} className="icon-button"><MoreVertical size={18}/></button>
+                      <button onClick={() => setActiveMenu(activeMenu === office.id ? null : office.id)} className="icon-button" aria-label="More actions"><MoreVertical size={18}/></button>
                       
                       {activeMenu === office.id && (
                         <div className="dropdown-menu" style={{ position: 'absolute', right: '30px', top: '12px', zIndex: 10 }}>
@@ -311,7 +311,7 @@ const AdminOffices: React.FC = () => {
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>{typeof showForm === 'string' ? 'Edit Office' : 'Add Office'}</h2>
-              <button className="icon-button" onClick={() => setShowForm(false)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setShowForm(false)} aria-label="Close"><X size={20} /></button>
             </div>
             
             <form onSubmit={handleSaveForm} className="drawer-body" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -327,7 +327,7 @@ const AdminOffices: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div style={{ gridColumn: '1 / -1' }}>
                     <label className="form-label">Office Name *</label>
-                    <input required className="form-control" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="e.g. Chennai Main Office" />
+                    <input required className="form-control" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="e.g. Chennai Main Office" aria-label="Office Name" />
                   </div>
                   <div style={{ gridColumn: '1 / -1', position: 'relative' }}>
                     <label className="form-label">Search Location</label>
@@ -376,8 +376,7 @@ const AdminOffices: React.FC = () => {
                         }}
                         onFocus={() => locationSuggestions.length > 0 && setShowSuggestions(true)}
                         placeholder="Search office location... (e.g. Guindy, Chennai)" 
-                        style={{ paddingLeft: '2.25rem' }}
-                      />
+                        style={{ paddingLeft: '2.25rem' }} aria-label="Search office location... (e.g. Guindy, Chennai)" />
                       <MapPin size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
                       {locationLoading && <Loader2 size={16} className="spinner" style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--primary-500)' }} />}
                     </div>
@@ -450,7 +449,7 @@ const AdminOffices: React.FC = () => {
                   </div>
                   <div style={{ gridColumn: '1 / -1' }}>
                     <label className="form-label">Address *</label>
-                    <textarea required className="form-control" rows={2} value={formData.address || ''} onChange={e => setFormData({...formData, address: e.target.value})} placeholder="Full physical address..." />
+                    <textarea required className="form-control" rows={2} value={formData.address || ''} onChange={e => setFormData({...formData, address: e.target.value})} placeholder="Full physical address..." aria-label="Address" />
                   </div>
                 </div>
               </section>
@@ -463,11 +462,11 @@ const AdminOffices: React.FC = () => {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                     <div>
                       <label className="form-label">Latitude *</label>
-                      <input required type="number" step="any" className="form-control" value={formData.lat || ''} onChange={e => setFormData({...formData, lat: e.target.value})} placeholder="-90 to 90" />
+                      <input required type="number" step="any" className="form-control" value={formData.lat || ''} onChange={e => setFormData({...formData, lat: e.target.value})} placeholder="-90 to 90" aria-label="Latitude" />
                     </div>
                     <div>
                       <label className="form-label">Longitude *</label>
-                      <input required type="number" step="any" className="form-control" value={formData.lng || ''} onChange={e => setFormData({...formData, lng: e.target.value})} placeholder="-180 to 180" />
+                      <input required type="number" step="any" className="form-control" value={formData.lng || ''} onChange={e => setFormData({...formData, lng: e.target.value})} placeholder="-180 to 180" aria-label="Longitude" />
                     </div>
                   </div>
 
@@ -479,7 +478,7 @@ const AdminOffices: React.FC = () => {
                   {formData.geofence !== false && (
                     <div>
                       <label className="form-label">Geofence Radius (Meters) *</label>
-                      <input required type="number" min="1" className="form-control" value={formData.radius || ''} onChange={e => setFormData({...formData, radius: e.target.value})} placeholder="e.g. 200" />
+                      <input required type="number" min="1" className="form-control" value={formData.radius || ''} onChange={e => setFormData({...formData, radius: e.target.value})} placeholder="e.g. 200" aria-label="Geofence Radius (Meters)" />
                     </div>
                   )}
 
@@ -547,7 +546,7 @@ const AdminOffices: React.FC = () => {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                   <span className={`badge ${showDetail.status === 'Active' ? 'badge-success' : 'badge-gray'}`}>{showDetail.status}</span>
-                  <button className="icon-button" onClick={() => setShowDetail(null)}><X size={20} /></button>
+                  <button className="icon-button" onClick={() => setShowDetail(null)} aria-label="Close"><X size={20} /></button>
                 </div>
               </div>
             </div>
@@ -629,7 +628,7 @@ const AdminOffices: React.FC = () => {
             <form onSubmit={handleAssignSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div style={{ position: 'relative' }}>
                 <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-                <input type="text" className="form-control" placeholder="Search employees..." style={{ paddingLeft: '2.25rem' }} />
+                <input type="text" className="form-control" placeholder="Search employees..." style={{ paddingLeft: '2.25rem' }} aria-label="Search employees" />
               </div>
               
               <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', maxHeight: '200px', overflowY: 'auto' }}>
@@ -665,7 +664,7 @@ const AdminOffices: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Crosshair size={20} color="var(--primary-600)" /> Geofence Simulator
               </div>
-              <button className="icon-button" onClick={() => setTestGeofenceModal(null)}><X size={18}/></button>
+              <button className="icon-button" onClick={() => setTestGeofenceModal(null)} aria-label="Close"><X size={18}/></button>
             </h3>
             
             <div style={{ backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem', fontSize: '0.875rem', border: '1px solid var(--border-color)' }}>

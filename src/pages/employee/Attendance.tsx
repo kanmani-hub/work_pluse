@@ -563,13 +563,13 @@ const EmployeeAttendance: React.FC = () => {
               {cameraError}
             </div>
           ) : (
-            <div style={{ position: 'relative', width: '320px', height: '400px', backgroundColor: '#111827', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+            <div style={{ position: 'relative', width: 'min(320px, 100%)', aspectRatio: '4 / 5', backgroundColor: '#111827', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
               <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               <div style={{ position: 'absolute', inset: 0, opacity: 0.2, backgroundImage: 'linear-gradient(45deg, #000 25%, transparent 25%, transparent 75%, #000 75%, #000), linear-gradient(45deg, #000 25%, transparent 25%, transparent 75%, #000 75%, #000)', backgroundSize: '20px 20px', backgroundPosition: '0 0, 10px 10px', pointerEvents: 'none' }} />
-              <div style={{ width: '200px', height: '260px', border: '2px dashed rgba(255,255,255,0.7)', borderRadius: '50% 50% 40% 40%', position: 'absolute', zIndex: 10, top: '50%', left: '50%', transform: 'translate(-50%, -50%)', pointerEvents: 'none' }}></div>
+              <div style={{ width: '62.5%', aspectRatio: '200 / 260', border: '2px dashed rgba(255,255,255,0.7)', borderRadius: '50% 50% 40% 40%', position: 'absolute', zIndex: 10, top: '50%', left: '50%', transform: 'translate(-50%, -50%)', pointerEvents: 'none' }}></div>
             </div>
           )}
-          <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem', width: '320px' }}>
+          <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem', width: '100%', maxWidth: '320px' }}>
             <button className="btn btn-outline" style={{ flex: 1 }} onClick={cancelClockInFlow}>Cancel</button>
             <button className="btn btn-primary" style={{ flex: 2 }} disabled={!!cameraError} onClick={captureAndVerify}>
               Capture & {cameraAction === 'REGISTER_FACE' ? 'Register' : 'Clock In'}
@@ -785,7 +785,7 @@ const EmployeeAttendance: React.FC = () => {
         </div>
       )}
 
-      <div className="two-col-grid">
+      <div className="two-col-grid fit-columns">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           
           {renderTodayAttendanceCard()}
@@ -935,12 +935,12 @@ const EmployeeAttendance: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)' }}>
                 <Filter size={18} /> Filters
               </div>
-              <select className="btn btn-outline" value={filterMode} onChange={(e) => setFilterMode(e.target.value)}>
+              <select className="btn btn-outline" value={filterMode} onChange={(e) => setFilterMode(e.target.value)} aria-label="Work mode">
                 <option value="All">All Modes</option>
                 <option value="OFFICE">Office</option>
                 <option value="WFH">WFH</option>
               </select>
-              <select className="btn btn-outline" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+              <select className="btn btn-outline" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} aria-label="Status">
                 <option value="All">All Statuses</option>
                 <option value="PRESENT">Present</option>
                 <option value="WORKING">Working</option>
@@ -1045,7 +1045,7 @@ const EmployeeAttendance: React.FC = () => {
           <div className="drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Attendance Details</h2>
-              <button className="icon-button" onClick={() => setSelectedDateDetail(null)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setSelectedDateDetail(null)} aria-label="Close"><X size={20} /></button>
             </div>
             <div className="drawer-body">
               

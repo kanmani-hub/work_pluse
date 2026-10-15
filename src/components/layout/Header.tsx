@@ -9,9 +9,10 @@ import { realtimeService } from '../../services/realtime/realtimeService';
 interface HeaderProps {
   toggleMenu: () => void;
   role: 'admin' | 'employee';
+  menuOpen?: boolean;
 }
 
-const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
+const Header: React.FC<HeaderProps> = ({ toggleMenu, role, menuOpen = false }) => {
   const navigate = useNavigate();
   const [showDropdown, setShowDropdown] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -97,7 +98,7 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
   return (
     <header className="header">
       <div className="header-left">
-        <button className="menu-toggle" onClick={toggleMenu} aria-label="Toggle Menu">
+        <button className="menu-toggle" onClick={toggleMenu} aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen} aria-controls="app-sidebar">
           <Menu size={24} />
         </button>
         
@@ -112,7 +113,7 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
         
         <div className="command-search" style={{ display: 'none' }} id="desktop-search">
           <Search size={16} style={{ color: 'var(--text-muted)' }} />
-          <input type="text" placeholder="Search WorkPulse..." />
+          <input type="text" placeholder="Search WorkPulse..." aria-label="Search WorkPulse" />
           <span className="shortcut-hint">Ctrl K</span>
         </div>
         
@@ -125,14 +126,24 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
       
       <div className="header-right">
         
-        <div style={{ display: 'flex', alignItems: 'center', backgroundColor: 'var(--bg-surface-elevated)', borderRadius: 'var(--radius-full)', padding: '0.25rem', border: '1px solid var(--border-color)', gap: '0.25rem', marginRight: '0.5rem' }}>
+        {/* Phones narrower than ~400px: one button that switches theme (same action as the pair below) */}
+        <button type="button" className="theme-toggle-compact icon-button" onClick={toggleTheme} aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}>
+          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
+        <div className="theme-switch" role="group" aria-label="Theme" style={{ display: 'flex', alignItems: 'center', backgroundColor: 'var(--bg-surface-elevated)', borderRadius: 'var(--radius-full)', padding: '0.25rem', border: '1px solid var(--border-color)', gap: '0.25rem', marginRight: '0.5rem' }}>
           <button 
+            type="button"
+            aria-label="Light theme"
+            aria-pressed={theme === 'light'}
             onClick={() => theme !== 'light' && toggleTheme()}
             style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.375rem 0.75rem', borderRadius: 'var(--radius-full)', fontSize: '0.75rem', fontWeight: 600, backgroundColor: theme === 'light' ? 'var(--primary-500)' : 'transparent', color: theme === 'light' ? '#fff' : 'var(--text-secondary)', transition: 'all var(--transition-fast)' }}
           >
             <Sun size={14} /> <span style={{ display: 'none' }} id="desktop-theme-text-light">Light</span>
           </button>
           <button 
+            type="button"
+            aria-label="Dark theme"
+            aria-pressed={theme === 'dark'}
             onClick={() => theme !== 'dark' && toggleTheme()}
             style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', padding: '0.375rem 0.75rem', borderRadius: 'var(--radius-full)', fontSize: '0.75rem', fontWeight: 600, backgroundColor: theme === 'dark' ? 'var(--primary-500)' : 'transparent', color: theme === 'dark' ? '#fff' : 'var(--text-secondary)', transition: 'all var(--transition-fast)' }}
           >
@@ -247,12 +258,19 @@ const Header: React.FC<HeaderProps> = ({ toggleMenu, role }) => {
           )}
         </div>
         
-        <div className="user-profile" onClick={() => navigate(role === 'admin' ? '/admin/settings' : '/employee/profile')}>
+        <div
+          className="user-profile"
+          role="button"
+          tabIndex={0}
+          aria-label={role === 'admin' ? 'Open settings' : 'Open my profile'}
+          onClick={() => navigate(role === 'admin' ? '/admin/settings' : '/employee/profile')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(role === 'admin' ? '/admin/settings' : '/employee/profile'); } }}
+        >
           <div className="avatar">
             {initials}
           </div>
           <div className="user-info" style={{ paddingRight: '0.5rem', display: 'none' }} id="desktop-user">
-            <span className="user-name">
+            <span className="user-name" title={displayName}>
               {displayName}
             </span>
             <span className="user-role">

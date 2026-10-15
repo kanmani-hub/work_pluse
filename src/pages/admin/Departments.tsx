@@ -204,10 +204,10 @@ const AdminDepartments: React.FC = () => {
           
           <div style={{ position: 'relative', width: '250px', flex: '1 1 auto', maxWidth: '300px' }}>
             <Search size={18} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search department name or code..." className="form-control" style={{ paddingLeft: '2.25rem' }} />
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search department name or code..." className="form-control" style={{ paddingLeft: '2.25rem' }} aria-label="Search department name or code" />
           </div>
           
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto' }}>
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto' }} aria-label="Status">
             <option value="All">All Statuses</option>
             <option>Active</option>
             <option>Inactive</option>
@@ -275,7 +275,7 @@ const AdminDepartments: React.FC = () => {
                     </td>
                     <td style={{ fontSize: '0.875rem' }}>{new Date(dept.created_at).toLocaleDateString()}</td>
                     <td style={{ textAlign: 'right', position: 'relative' }}>
-                      <button onClick={() => setActiveMenu(activeMenu === dept.id ? null : dept.id)} className="icon-button"><MoreVertical size={18}/></button>
+                      <button onClick={() => setActiveMenu(activeMenu === dept.id ? null : dept.id)} className="icon-button" aria-label="More actions"><MoreVertical size={18}/></button>
                       
                       {activeMenu === dept.id && (
                         <div className="dropdown-menu" style={{ position: 'absolute', right: '30px', top: '12px', zIndex: 10 }}>
@@ -302,7 +302,7 @@ const AdminDepartments: React.FC = () => {
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>{typeof showForm === 'string' ? 'Edit Department' : 'Add Department'}</h2>
-              <button className="icon-button" onClick={() => setShowForm(false)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setShowForm(false)} aria-label="Close"><X size={20} /></button>
             </div>
             
             <form onSubmit={handleSaveForm} className="drawer-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -315,28 +315,28 @@ const AdminDepartments: React.FC = () => {
 
               <div>
                 <label className="form-label">Department Name *</label>
-                <input required className="form-control" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="e.g. Development" />
+                <input required className="form-control" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="e.g. Development" aria-label="Department Name" />
               </div>
               
               <div>
                 <label className="form-label">Department Code *</label>
-                <input required className="form-control" style={{ textTransform: 'uppercase' }} value={formData.code || ''} onChange={e => setFormData({...formData, code: e.target.value})} placeholder="e.g. DEV" />
+                <input required className="form-control" style={{ textTransform: 'uppercase' }} value={formData.code || ''} onChange={e => setFormData({...formData, code: e.target.value})} placeholder="e.g. DEV" aria-label="Department Code" />
               </div>
 
               <div>
                 <label className="form-label">Department Manager</label>
-                <input className="form-control" value={formData.manager || ''} onChange={e => setFormData({...formData, manager: e.target.value})} placeholder="e.g. Rahul Kumar" />
+                <input className="form-control" value={formData.manager || ''} onChange={e => setFormData({...formData, manager: e.target.value})} placeholder="e.g. Rahul Kumar" aria-label="Department Manager" />
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Optional. Maps to employee reporting structure.</div>
               </div>
 
               <div>
                 <label className="form-label">Description</label>
-                <textarea className="form-control" rows={3} value={formData.desc || ''} onChange={e => setFormData({...formData, desc: e.target.value})} placeholder="Briefly describe department functions..." />
+                <textarea className="form-control" rows={3} value={formData.desc || ''} onChange={e => setFormData({...formData, desc: e.target.value})} placeholder="Briefly describe department functions..." aria-label="Description" />
               </div>
 
               <div>
                 <label className="form-label">Status</label>
-                <select className="form-control" value={formData.status || 'Active'} onChange={e => setFormData({...formData, status: e.target.value})}>
+                <select className="form-control" value={formData.status || 'Active'} onChange={e => setFormData({...formData, status: e.target.value})} aria-label="Status">
                   <option>Active</option>
                   <option>Inactive</option>
                 </select>
@@ -369,7 +369,7 @@ const AdminDepartments: React.FC = () => {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                   <span className={`badge ${showDetail.status === 'Active' ? 'badge-success' : 'badge-gray'}`}>{showDetail.status}</span>
-                  <button className="icon-button" onClick={() => setShowDetail(null)}><X size={20} /></button>
+                  <button className="icon-button" onClick={() => setShowDetail(null)} aria-label="Close"><X size={20} /></button>
                 </div>
               </div>
             </div>

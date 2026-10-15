@@ -133,12 +133,12 @@ const EmployeePayroll: React.FC = () => {
       ) : (
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '0.5rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', width: 'fit-content', marginBottom: '0.5rem' }}>
-            <button onClick={handlePrevMonth} className="icon-button" disabled={currentIndex === payrolls.length - 1} style={{ opacity: currentIndex === payrolls.length - 1 ? 0.3 : 1 }}><ChevronLeft size={20} /></button>
+            <button onClick={handlePrevMonth} className="icon-button" disabled={currentIndex === payrolls.length - 1} style={{ opacity: currentIndex === payrolls.length - 1 ? 0.3 : 1 }} aria-label="Previous month"><ChevronLeft size={20} /></button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0 1rem', fontWeight: 600, fontSize: '1.125rem' }}>
               <CalendarIcon size={18} className="nav-icon" />
               {currentMonthLabel}
             </div>
-            <button onClick={handleNextMonth} className="icon-button" disabled={currentIndex === 0} style={{ opacity: currentIndex === 0 ? 0.3 : 1 }}><ChevronRight size={20} /></button>
+            <button onClick={handleNextMonth} className="icon-button" disabled={currentIndex === 0} style={{ opacity: currentIndex === 0 ? 0.3 : 1 }} aria-label="Next month"><ChevronRight size={20} /></button>
           </div>
         </>
       )}
@@ -219,10 +219,10 @@ const EmployeePayroll: React.FC = () => {
 
           {/* NET PAY */}
           <div className="card" style={{ padding: '1.25rem', backgroundColor: 'var(--primary-50)', borderColor: 'var(--primary-200)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div className="net-pay-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <div style={{ fontSize: '0.875rem', color: 'var(--primary-700)', fontWeight: 600 }}>NET PAY</div>
-                <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--primary-800)', marginTop: '0.25rem' }}>₹{Number(currentPayroll.net_salary).toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
+                <div className="net-pay-amount" style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--primary-800)', marginTop: '0.25rem' }}>₹{Number(currentPayroll.net_salary).toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
                 <span className={`badge ${currentPayroll.status === 'PAID' || currentPayroll.status === 'CLOSED' ? 'badge-success' : 'badge-warning'}`} style={{ fontSize: '0.75rem', marginBottom: '0.5rem', display: 'inline-block' }}>

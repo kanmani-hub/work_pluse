@@ -92,10 +92,12 @@ const ResetPassword = () => {
         ) : (
           <form onSubmit={handleResetPassword} className="login-form">
             <div className="form-group">
-              <label style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>New Password</label>
+              <label htmlFor="reset-new-password" style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>New Password</label>
               <div className="input-with-icon" style={{ position: 'relative' }}>
                 <Lock size={18} className="input-icon" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
                 <input 
+                  id="reset-new-password"
+                  autoComplete="new-password"
                   type={showPassword ? 'text' : 'password'} 
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -105,6 +107,7 @@ const ResetPassword = () => {
                 />
                 <button 
                   type="button" 
+                  aria-label={showPassword ? 'Hide passwords' : 'Show passwords'}
                   onClick={() => setShowPassword(!showPassword)}
                   style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)' }}
                 >
@@ -114,10 +117,12 @@ const ResetPassword = () => {
             </div>
 
             <div className="form-group" style={{ marginTop: '1.5rem' }}>
-              <label style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Confirm Password</label>
+              <label htmlFor="reset-confirm-password" style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Confirm Password</label>
               <div className="input-with-icon" style={{ position: 'relative' }}>
                 <Lock size={18} className="input-icon" style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
                 <input 
+                  id="reset-confirm-password"
+                  autoComplete="new-password"
                   type={showPassword ? 'text' : 'password'} 
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}

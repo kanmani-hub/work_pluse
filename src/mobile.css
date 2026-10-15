@@ -1,0 +1,450 @@
+/* =====================================================================================
+   WORKPULSE HR — MOBILE & TABLET LAYER (loaded last, after responsive.css)
+
+   Desktop rule: every layout rule below sits inside a max-width media query (≤1024px),
+   so laptop and desktop layouts (≥1025px) are unchanged. The only rules outside a media
+   query are marked "ALL WIDTHS" and either hide new mobile-only controls or correct a
+   defect that is visible at every width.
+   ===================================================================================== */
+
+/* ALL WIDTHS — new mobile-only controls are hidden on desktop */
+.sidebar-close,
+.theme-toggle-compact {
+  display: none;
+}
+
+/* ALL WIDTHS — the global "inputs are 100% wide" rule must not stretch checkboxes/radios
+   (it pushed the "Remember me" label to the far side of the login form at every width). */
+input[type="checkbox"],
+input[type="radio"] {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  flex: 0 0 auto;
+}
+
+/* ------------------------------------------------------------------ ≤1024px: drawer */
+@media (max-width: 1024px) {
+  .sidebar-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  /* the page behind an open drawer does not scroll */
+  body.nav-open .main-content {
+    overflow: hidden !important;
+  }
+}
+
+/* ------------------------------------------------------------------ ≤767px: phones */
+@media (max-width: 767px) {
+  /* Header: one compact row instead of three (it stays pinned above the content) */
+  .header {
+    flex-wrap: nowrap !important;
+    gap: 8px !important;
+    padding-top: max(8px, env(safe-area-inset-top)) !important;
+  }
+  .header-left {
+    flex: 1 1 auto !important;
+    min-width: 0;
+    flex-wrap: nowrap !important;
+    gap: 8px !important;
+  }
+  .header-right {
+    flex: 0 0 auto;
+    flex-wrap: nowrap !important;
+    gap: 6px !important;
+  }
+  #mobile-header-logo {
+    min-width: 0;
+    margin-left: 0 !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .header .system-status {
+    display: none !important;
+  }
+  .header .theme-switch {
+    margin-right: 0 !important;
+  }
+  .header .theme-switch button {
+    min-height: 36px;
+    min-width: 36px;
+    padding: 0.375rem 0.5rem !important;
+    justify-content: center;
+  }
+  .header .menu-toggle,
+  .header .icon-button {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .header .theme-toggle-compact {
+    display: none;
+  }
+  .header .user-profile {
+    padding: 2px !important;
+  }
+  .header .avatar {
+    width: 36px;
+    height: 36px;
+  }
+
+  /* Page headers: title on its own line, actions share rows instead of one full-width
+     button per row (which pushed every page's content far down). */
+  .page-header {
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+  .page-header > :first-child {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+  }
+  .page-header > :not(:first-child) {
+    display: flex;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 8px !important;
+    width: 100%;
+    min-width: 0;
+  }
+  .page-header > :not(:first-child) > * {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-top: 0 !important;
+  }
+  /* nested button groups (steppers, view toggles) wrap instead of running off-screen */
+  .page-header > :not(:first-child) > div {
+    flex: 1 1 100% !important;
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+  .page-header > :not(:first-child) > div > div {
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: center;
+  }
+  /* action labels stay on one line; buttons wrap to the next row instead */
+  .page-header .btn {
+    white-space: nowrap;
+  }
+  .page-header button,
+  .page-header .btn {
+    width: auto !important;
+    margin-top: 0 !important;
+  }
+  .page-header select {
+    flex-basis: 100%;
+  }
+}
+
+/* ≤400px: the two-button theme switch becomes one button (same action) */
+@media (max-width: 400px) {
+  .header .theme-switch {
+    display: none !important;
+  }
+  .header .theme-toggle-compact {
+    display: inline-flex !important;
+  }
+}
+
+/* ------------------------------------------------------------------ KPI / summary cards */
+/* Phones showed one card per row (each ~130px tall), so a page's numbers filled several
+   screens before any data. Two cards per row from 360px; one per row only below 360px. */
+@media (max-width: 767px) {
+  .kpi-grid,
+  .tracking-kpi-grid,
+  .stats-grid,
+  .dashboard-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+  .bento-grid > .kpi-card.bento-col-3 {
+    grid-column: span 6 !important;
+  }
+  .kpi-card,
+  .summary-card-small,
+  .tracking-kpi-card {
+    padding: 12px !important;
+    min-width: 0;
+  }
+  .kpi-card .kpi-value,
+  .summary-card-small .sc-val,
+  .tracking-kpi-card .sc-val {
+    font-size: clamp(1.25rem, 6vw, 1.75rem) !important;
+    overflow-wrap: anywhere;
+  }
+  .kpi-card .kpi-header,
+  .summary-card-small .sc-title,
+  .tracking-kpi-card .sc-title {
+    font-size: 0.75rem !important;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+}
+@media (max-width: 359px) {
+  .kpi-grid,
+  .tracking-kpi-grid,
+  .stats-grid,
+  .dashboard-stats {
+    grid-template-columns: 1fr !important;
+  }
+  .bento-grid > .kpi-card.bento-col-3 {
+    grid-column: span 12 !important;
+  }
+}
+
+/* ------------------------------------------------------------------ toolbars, search, filters */
+@media (max-width: 767px) {
+  /* fixed 220px search boxes take the full row on phones (still 220px on desktop) */
+  .toolbar-search {
+    width: 100% !important;
+    flex: 1 1 100%;
+  }
+}
+
+/* ------------------------------------------------------------------ page-level grids */
+@media (max-width: 1023px) {
+  /* Single-column page grids: a wide child (a table that already scrolls inside its card)
+     must not widen the column past the screen — 1fr alone resolves to min-content. */
+  .two-col-grid > * {
+    min-width: 0;
+  }
+}
+@media (min-width: 1024px) and (max-width: 1299px) {
+  /* Small laptops (sidebar shown): employee Leave and Attendance overflowed the window by
+     68px / 52px because both columns kept their min-content width. On those two pages
+     (class "fit-columns") the right-hand column may now shrink; other pages are unchanged. */
+  .two-col-grid.fit-columns > :last-child {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  /* icon-only buttons in page headers (month/day steppers) keep their size */
+  .page-header .icon-button {
+    flex: 0 0 auto !important;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* ------------------------------------------------------------------ dialogs */
+.modal-overlay,
+.drawer-overlay {
+  /* scrolling inside an open dialog does not scroll the page behind it */
+  overscroll-behavior: contain;
+}
+
+/* ------------------------------------------------------------------ wide tables (≤1024px) */
+@media (max-width: 1024px) {
+  /* a fade on the edge that still has columns to scroll to (set by useScrollRegionA11y) */
+  [data-scroll-more="right"] {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+  [data-scroll-more="left"] {
+    -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent);
+  }
+  [data-scroll-more="both"] {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  }
+}
+[data-scroll-region="true"]:focus-visible {
+  outline: 2px solid var(--primary-500);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ header user name (ALL WIDTHS)
+   A long employee name made the header wrap to two rows on 1280–1440px laptops (135px tall
+   instead of 73px). The name is truncated with an ellipsis; the full name is in the title. */
+.header .user-profile {
+  min-width: 0;
+}
+.header .user-info {
+  min-width: 0;
+  max-width: 220px;
+}
+.header .user-name,
+.header .user-role {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ admin dashboard */
+@media (max-width: 1024px) {
+  /* "Remote vs Onsite": the 120px-tall bar area holds ~150px of content; on short phone
+     cards the numbers rose into the card title. Let the area grow instead. */
+  .dash-split-chart {
+    height: auto !important;
+    min-height: 120px;
+  }
+}
+
+/* ------------------------------------------------------------------ admin payroll */
+@media (max-width: 767px) {
+  /* 7-step payroll status track: the last steps were cut off. On phones the steps scroll
+     sideways inside the card (the connector line only spans the visible width, so it is hidden). */
+  .payroll-steps {
+    overflow-x: auto;
+    justify-content: flex-start !important;
+    gap: 4px;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .payroll-steps > [role="listitem"] {
+    flex: 0 0 auto;
+    min-width: 72px;
+    text-align: center;
+  }
+  .payroll-steps-line {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------------------------ admin settings */
+@media (max-width: 900px) {
+  /* the section tabs were squeezed into the 220px desktop sidebar width */
+  .settings-nav {
+    width: 100% !important;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+  .settings-nav .nav-item {
+    width: auto !important;
+    flex: 0 0 auto;
+    min-height: 44px;
+  }
+  /* the fixed save bar covered the last fields: compact it and leave room for it */
+  .bottom-action-bar {
+    flex-direction: row !important;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem !important;
+    padding: 0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom)) !important;
+  }
+  .bottom-action-bar > :first-child {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: 0.5rem !important;
+  }
+  .bottom-action-bar > :last-child {
+    flex: 1 1 100%;
+    gap: 0.5rem !important;
+  }
+  .bottom-action-bar > :last-child > .btn {
+    flex: 1 1 0;
+    justify-content: center;
+    white-space: nowrap;
+  }
+  .responsive-layout > :last-child {
+    padding-bottom: calc(9rem + env(safe-area-inset-bottom)) !important;
+  }
+}
+
+/* ------------------------------------------------------------------ tables on phones */
+@media (max-width: 767px) {
+  /* Tables already scroll sideways inside their containers. Columns were squeezed to ~80px,
+     so short values wrapped onto 5–6 lines and each row was ~140px tall. A modest minimum
+     column width keeps rows readable; the extra width scrolls inside the container. */
+  .table th,
+  .table td {
+    min-width: 6.5rem;
+  }
+  .table th:has(> input[type="checkbox"]),
+  .table td:has(> input[type="checkbox"]) {
+    min-width: 0;
+  }
+  .table td .btn,
+  .table td .badge {
+    white-space: nowrap;
+  }
+}
+
+/* ------------------------------------------------------------------ employee payroll */
+@media (max-width: 767px) {
+  /* Net pay and its status badge overlapped for 8-digit amounts: the badge moves to the
+     next line instead, and the amount never breaks inside the number. */
+  .net-pay-row {
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    align-items: flex-start !important;
+  }
+  .net-pay-row > * {
+    min-width: 0;
+  }
+  .net-pay-amount {
+    font-size: clamp(1.5rem, 8vw, 2rem) !important;
+    white-space: nowrap;
+  }
+}
+
+/* ------------------------------------------------------------------ text size on phones
+   Status badges, roster cells, calendar headings and the drawer's section titles were
+   10.4–11.2px. On phones (portrait, or landscape up to 500px tall) they are raised to 12px
+   (0.75rem); tablet, laptop and desktop sizes are unchanged. */
+@media (max-width: 767px), (max-width: 1024px) and (max-height: 500px) {
+  .badge,
+  .shift-time,
+  .shift-mode,
+  .sidebar-nav-title,
+  .cal-head,
+  .user-role,
+  .sidebar-logo-text > span,
+  [style*="font-size: 0.6rem"],
+  [style*="font-size: 0.625rem"],
+  [style*="font-size: 0.65rem"],
+  [style*="font-size: 0.6875rem"],
+  [style*="font-size: 0.7rem"],
+  [style*="font-size: 10px"],
+  [style*="font-size: 11px"],
+  [style*="font-size: clamp(0.7rem"] {
+    font-size: 0.75rem !important;
+  }
+}
+
+/* ------------------------------------------------------------------ header on tablets/laptops
+   With a long employee name the header still wrapped to two rows at 768–1280px (125–135px).
+   The search box may now shrink (it keeps its 300px width whenever there is room), and on
+   tablets the decorative "System live" pill is hidden as it already is on phones. */
+@media (min-width: 768px) {
+  .header-left {
+    min-width: 0;
+  }
+  .header .command-search {
+    flex: 0 1 300px;
+    min-width: 140px;
+  }
+  .header .command-search input {
+    min-width: 0;
+  }
+}
+@media (min-width: 768px) and (max-width: 1024px) {
+  .header {
+    flex-wrap: nowrap !important;
+  }
+  .header .system-status {
+    display: none !important;
+  }
+  .header .user-info {
+    max-width: 160px;
+  }
+}
+@media (min-width: 1600px) {
+  /* wide screens have room for the full name (as before) */
+  .header .user-info {
+    max-width: 480px;
+  }
+}

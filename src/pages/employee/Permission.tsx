@@ -353,7 +353,7 @@ const EmployeePermission: React.FC = () => {
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '500px', maxHeight: '95vh', overflowY: 'auto', animation: 'slideUp 0.3s' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Request Permission</h2>
-              <button className="icon-button" onClick={() => setShowRequestModal(false)}><X size={20}/></button>
+              <button className="icon-button" onClick={() => setShowRequestModal(false)} aria-label="Close"><X size={20}/></button>
             </div>
             
             <form onSubmit={handleRequestSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -366,11 +366,11 @@ const EmployeePermission: React.FC = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Date *</label>
-                  <input type="date" value={reqDate} onChange={e => setReqDate(e.target.value)} className="form-control" />
+                  <input type="date" value={reqDate} onChange={e => setReqDate(e.target.value)} className="form-control" aria-label="Date" />
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Permission Type *</label>
-                  <select value={reqType} onChange={e => setReqType(e.target.value)} className="form-control">
+                  <select value={reqType} onChange={e => setReqType(e.target.value)} className="form-control" aria-label="Permission Type">
                     <option>Short Permission</option>
                     <option>Late Arrival</option>
                     <option>Early Departure</option>
@@ -383,11 +383,11 @@ const EmployeePermission: React.FC = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Start Time *</label>
-                  <input type="time" value={reqStart} onChange={e => setReqStart(e.target.value)} className="form-control" />
+                  <input type="time" value={reqStart} onChange={e => setReqStart(e.target.value)} className="form-control" aria-label="Start Time" />
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>End Time *</label>
-                  <input type="time" value={reqEnd} onChange={e => setReqEnd(e.target.value)} className="form-control" />
+                  <input type="time" value={reqEnd} onChange={e => setReqEnd(e.target.value)} className="form-control" aria-label="End Time" />
                 </div>
               </div>
 
@@ -398,7 +398,7 @@ const EmployeePermission: React.FC = () => {
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Reason *</label>
-                <textarea value={reqReason} onChange={e => setReqReason(e.target.value)} className="form-control" rows={3} placeholder="Provide a reason for the permission..."></textarea>
+                <textarea value={reqReason} onChange={e => setReqReason(e.target.value)} className="form-control" rows={3} placeholder="Provide a reason for the permission..." aria-label="Reason"></textarea>
               </div>
 
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
@@ -416,7 +416,7 @@ const EmployeePermission: React.FC = () => {
           <div className="drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Permission Details</h2>
-              <button className="icon-button" onClick={() => setSelectedDetail(null)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setSelectedDetail(null)} aria-label="Close"><X size={20} /></button>
             </div>
             <div className="drawer-body">
               

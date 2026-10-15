@@ -171,8 +171,10 @@ const Login: React.FC = () => {
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <label style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Email or Employee ID</label>
+            <label htmlFor="login-identifier" style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Email or Employee ID</label>
             <input 
+              id="login-identifier"
+              autoComplete="username"
               type="text" 
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -185,7 +187,7 @@ const Login: React.FC = () => {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Password</label>
+              <label htmlFor="login-password" style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Password</label>
               <button 
                 type="button" 
                 onClick={handleForgotPassword}
@@ -197,6 +199,8 @@ const Login: React.FC = () => {
             </div>
             <div style={{ position: 'relative' }}>
               <input 
+                id="login-password"
+                autoComplete="current-password"
                 type={showPassword ? 'text' : 'password'} 
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

@@ -8,6 +8,7 @@ import { ROLES, ADMIN_PORTAL_ROLES } from './lib/roles';
 import { QaControlPanel } from './components/QaControlPanel';
 import './App.css';
 import './responsive.css';
+import './mobile.css';
 
 const AdminDashboard = React.lazy(() => import('./pages/admin/Dashboard'));
 const AdminLiveTracking = React.lazy(() => import('./pages/admin/LiveTracking'));

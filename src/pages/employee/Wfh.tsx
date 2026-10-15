@@ -511,7 +511,7 @@ const EmployeeWfh: React.FC = () => {
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '450px', maxHeight: '90vh', overflowY: 'auto', animation: 'slideUp 0.3s' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Request WFH</h2>
-              <button className="icon-button" onClick={() => setShowRequestModal(false)}><X size={20}/></button>
+              <button className="icon-button" onClick={() => setShowRequestModal(false)} aria-label="Close"><X size={20}/></button>
             </div>
             
             <form onSubmit={handleRequestSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -523,12 +523,12 @@ const EmployeeWfh: React.FC = () => {
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Date *</label>
-                <input type="date" value={reqDate} onChange={e => setReqDate(e.target.value)} className="form-control" />
+                <input type="date" value={reqDate} onChange={e => setReqDate(e.target.value)} className="form-control" aria-label="Date" />
               </div>
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Request Type *</label>
-                <select value={reqType} onChange={e => setReqType(e.target.value)} className="form-control">
+                <select value={reqType} onChange={e => setReqType(e.target.value)} className="form-control" aria-label="Request Type">
                   <option value="Full Day">Full Day</option>
                   <option value="Half Day">Half Day</option>
                 </select>
@@ -537,7 +537,7 @@ const EmployeeWfh: React.FC = () => {
               {reqType === 'Half Day' && (
                 <div style={{ backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Half-Day Period</label>
-                  <select value={reqHalf} onChange={e => setReqHalf(e.target.value)} className="form-control">
+                  <select value={reqHalf} onChange={e => setReqHalf(e.target.value)} className="form-control" aria-label="Half-Day Period">
                     <option value="First Half">First Half (9:00 AM — 1:00 PM)</option>
                     <option value="Second Half">Second Half (2:00 PM — 6:00 PM)</option>
                   </select>
@@ -547,12 +547,12 @@ const EmployeeWfh: React.FC = () => {
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Reason *</label>
-                <textarea value={reqReason} onChange={e => setReqReason(e.target.value)} className="form-control" rows={3} placeholder="Please provide a valid reason..."></textarea>
+                <textarea value={reqReason} onChange={e => setReqReason(e.target.value)} className="form-control" rows={3} placeholder="Please provide a valid reason..." aria-label="Reason"></textarea>
               </div>
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Optional Note</label>
-                <input type="text" className="form-control" placeholder="Any additional info..." />
+                <input type="text" className="form-control" placeholder="Any additional info..." aria-label="Optional Note" />
               </div>
 
               <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
@@ -589,7 +589,7 @@ const EmployeeWfh: React.FC = () => {
           <div className="drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Request Details</h2>
-              <button className="icon-button" onClick={() => setSelectedDetail(null)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setSelectedDetail(null)} aria-label="Close"><X size={20} /></button>
             </div>
             <div className="drawer-body">
               

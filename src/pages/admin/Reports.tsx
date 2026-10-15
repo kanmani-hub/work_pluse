@@ -142,7 +142,7 @@ const AdminReports: React.FC = () => {
         <div className="card">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 className="section-title" style={{ borderBottom: 'none', margin: 0 }}>Attendance Trend</h3>
-            <select className="form-control" style={{ width: 'auto', padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}><option>Weekly</option><option>Monthly</option></select>
+            <select className="form-control" style={{ width: 'auto', padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} aria-label="Report period"><option>Weekly</option><option>Monthly</option></select>
           </div>
           <SimpleBarChart data={metrics.attendanceTrend?.length > 0 ? metrics.attendanceTrend : [
             { label: 'Mon', val: 0 }, { label: 'Tue', val: 0 }, { label: 'Wed', val: 0 }, 
@@ -298,27 +298,27 @@ const AdminReports: React.FC = () => {
           <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Global Filters</span>
         </div>
         
-        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.dateRange} onChange={e => setFilters({...filters, dateRange: e.target.value})}>
+        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.dateRange} onChange={e => setFilters({...filters, dateRange: e.target.value})} aria-label="Date range">
           <option>Today</option><option>This Week</option><option>This Month</option><option>Last Month</option><option>Custom Range</option>
         </select>
         
-        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.dept} onChange={e => setFilters({...filters, dept: e.target.value})}>
+        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.dept} onChange={e => setFilters({...filters, dept: e.target.value})} aria-label="Department">
           <option value="All">All Departments</option>
               
         </select>
         
-        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.office} onChange={e => setFilters({...filters, office: e.target.value})}>
+        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.office} onChange={e => setFilters({...filters, office: e.target.value})} aria-label="Office">
           <option value="All">All Offices</option>
               
         </select>
 
-        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.shift} onChange={e => setFilters({...filters, shift: e.target.value})}>
+        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.shift} onChange={e => setFilters({...filters, shift: e.target.value})} aria-label="Shift">
           <option value="All">All Shifts</option><option>Morning</option><option>General</option><option>Night</option>
         </select>
 
         <div style={{ position: 'relative', flex: 1, minWidth: '150px' }}>
           <Search size={14} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-          <input type="text" placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2rem', fontSize: '0.875rem' }} value={filters.search} onChange={e => setFilters({...filters, search: e.target.value})} />
+          <input type="text" placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2rem', fontSize: '0.875rem' }} value={filters.search} onChange={e => setFilters({...filters, search: e.target.value})} aria-label="Search employee" />
         </div>
 
         <button onClick={handleRefresh} className="btn btn-primary" style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem' }}>Apply</button>
@@ -439,13 +439,13 @@ const AdminReports: React.FC = () => {
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '500px', animation: 'slideUp 0.3s' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h3 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Export Report</h3>
-              <button className="icon-button" onClick={() => setExportModal(false)}><X size={20}/></button>
+              <button className="icon-button" onClick={() => setExportModal(false)} aria-label="Close"><X size={20}/></button>
             </div>
             
             <form onSubmit={handleExport} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               <div>
                 <label className="form-label">Report Data</label>
-                <select className="form-control">
+                <select className="form-control" aria-label="Report Data">
                   <option>Current Report ({activeTab})</option>
                   <option>Full HR Report</option>
                   <option>Payroll & Payments</option>
@@ -487,7 +487,7 @@ const AdminReports: React.FC = () => {
               <div style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{employeeDrawer.name}</h2>
-                  <button className="icon-button" onClick={() => setEmployeeDrawer(null)}><X size={20} /></button>
+                  <button className="icon-button" onClick={() => setEmployeeDrawer(null)} aria-label="Close"><X size={20} /></button>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                   <span>{employeeDrawer.id}</span> • <span>{employeeDrawer.dept}</span>
@@ -534,7 +534,7 @@ const AdminReports: React.FC = () => {
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>{deptDrawer} Analytics</h2>
-              <button className="icon-button" onClick={() => setDeptDrawer(null)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setDeptDrawer(null)} aria-label="Close"><X size={20} /></button>
             </div>
             <div className="drawer-body">
               <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Department-level drill-down analytics for the selected date range.</p>

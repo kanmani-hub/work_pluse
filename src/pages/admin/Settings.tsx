@@ -156,11 +156,11 @@ const AdminSettings: React.FC = () => {
     <div className="settings-section">
       <h3 className="section-title">Application Preferences</h3>
       <div className="form-grid">
-        <div><label className="form-label">Application Name</label><input type="text" className="form-control" value={settings.app.appName} onChange={e => handleChangeApp('appName', e.target.value)}/></div>
-        <div><label className="form-label">Company Timezone</label><select className="form-control" value={settings.app.timezone} onChange={e => handleChangeApp('timezone', e.target.value)}><option>Asia/Kolkata (IST)</option><option>UTC</option></select></div>
-        <div><label className="form-label">Date Format</label><select className="form-control" value={settings.app.dateFormat} onChange={e => handleChangeApp('dateFormat', e.target.value)}><option>DD/MM/YYYY</option><option>MM/DD/YYYY</option></select></div>
-        <div><label className="form-label">Currency</label><select className="form-control" value={settings.app.currency} onChange={e => handleChangeApp('currency', e.target.value)}><option>INR (₹)</option><option>USD ($)</option></select></div>
-        <div><label className="form-label">Week Starts On</label><select className="form-control" value={settings.app.weekStartsOn} onChange={e => handleChangeApp('weekStartsOn', e.target.value)}><option>Monday</option><option>Sunday</option></select></div>
+        <div><label className="form-label">Application Name</label><input type="text" className="form-control" value={settings.app.appName} onChange={e => handleChangeApp('appName', e.target.value)} aria-label="Application Name" /></div>
+        <div><label className="form-label">Company Timezone</label><select className="form-control" value={settings.app.timezone} onChange={e => handleChangeApp('timezone', e.target.value)} aria-label="Company Timezone"><option>Asia/Kolkata (IST)</option><option>UTC</option></select></div>
+        <div><label className="form-label">Date Format</label><select className="form-control" value={settings.app.dateFormat} onChange={e => handleChangeApp('dateFormat', e.target.value)} aria-label="Date Format"><option>DD/MM/YYYY</option><option>MM/DD/YYYY</option></select></div>
+        <div><label className="form-label">Currency</label><select className="form-control" value={settings.app.currency} onChange={e => handleChangeApp('currency', e.target.value)} aria-label="Currency"><option>INR (₹)</option><option>USD ($)</option></select></div>
+        <div><label className="form-label">Week Starts On</label><select className="form-control" value={settings.app.weekStartsOn} onChange={e => handleChangeApp('weekStartsOn', e.target.value)} aria-label="Week Starts On"><option>Monday</option><option>Sunday</option></select></div>
         <div>
           <label className="form-label">Theme</label>
           <div style={{ display: 'flex', gap: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '0.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
@@ -176,11 +176,11 @@ const AdminSettings: React.FC = () => {
     <div className="settings-section">
       <h3 className="section-title">Company Profile</h3>
       <div className="form-grid">
-        <div><label className="form-label">Company Name</label><input type="text" className="form-control" value={settings.app.companyName} onChange={e => handleChangeApp('companyName', e.target.value)}/></div>
-        <div><label className="form-label">Company Email</label><input type="email" className="form-control" value={settings.app.companyEmail} onChange={e => handleChangeApp('companyEmail', e.target.value)}/></div>
-        <div><label className="form-label">Company Phone</label><input type="text" className="form-control" value={settings.app.companyPhone} onChange={e => handleChangeApp('companyPhone', e.target.value)}/></div>
-        <div><label className="form-label">Website</label><input type="text" className="form-control" value={settings.app.website} onChange={e => handleChangeApp('website', e.target.value)}/></div>
-        <div style={{ gridColumn: '1 / -1' }}><label className="form-label">Company Address</label><textarea className="form-control" rows={3} value={settings.app.companyAddress} onChange={e => handleChangeApp('companyAddress', e.target.value)}></textarea></div>
+        <div><label className="form-label">Company Name</label><input type="text" className="form-control" value={settings.app.companyName} onChange={e => handleChangeApp('companyName', e.target.value)} aria-label="Company Name" /></div>
+        <div><label className="form-label">Company Email</label><input type="email" className="form-control" value={settings.app.companyEmail} onChange={e => handleChangeApp('companyEmail', e.target.value)} aria-label="Company Email" /></div>
+        <div><label className="form-label">Company Phone</label><input type="text" className="form-control" value={settings.app.companyPhone} onChange={e => handleChangeApp('companyPhone', e.target.value)} aria-label="Company Phone" /></div>
+        <div><label className="form-label">Website</label><input type="text" className="form-control" value={settings.app.website} onChange={e => handleChangeApp('website', e.target.value)} aria-label="Website" /></div>
+        <div style={{ gridColumn: '1 / -1' }}><label className="form-label">Company Address</label><textarea className="form-control" rows={3} value={settings.app.companyAddress} onChange={e => handleChangeApp('companyAddress', e.target.value)} aria-label="Company Address"></textarea></div>
       </div>
     </div>
   );
@@ -190,8 +190,8 @@ const AdminSettings: React.FC = () => {
       <h3 className="section-title">Global Working Hours</h3>
       <div className="warning-box"><AlertCircle size={16}/> These are default company rules. Individual shifts/rosters override them.</div>
       <div className="form-grid" style={{ marginTop: '1.5rem' }}>
-        <div><label className="form-label">Work Start Time</label><input type="time" className="form-control" value={settings.app.workStartTime} onChange={e => handleChangeApp('workStartTime', e.target.value)}/></div>
-        <div><label className="form-label">Work End Time</label><input type="time" className="form-control" value={settings.app.workEndTime} onChange={e => handleChangeApp('workEndTime', e.target.value)}/></div>
+        <div><label className="form-label">Work Start Time</label><input type="time" className="form-control" value={settings.app.workStartTime} onChange={e => handleChangeApp('workStartTime', e.target.value)} aria-label="Work Start Time" /></div>
+        <div><label className="form-label">Work End Time</label><input type="time" className="form-control" value={settings.app.workEndTime} onChange={e => handleChangeApp('workEndTime', e.target.value)} aria-label="Work End Time" /></div>
       </div>
       <h3 className="section-title" style={{ marginTop: '2rem' }}>Working Days</h3>
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -214,8 +214,8 @@ const AdminSettings: React.FC = () => {
       <h3 className="section-title" style={{ marginTop: '2rem' }}>Public Holidays</h3>
       <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>Holidays are not working days: payroll does not count them as absence (LOP). Click Save Changes to apply.</p>
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <div><label className="form-label">Date</label><input type="date" className="form-control" value={holidayDraft.date} onChange={e => setHolidayDraft(h => ({ ...h, date: e.target.value }))}/></div>
-        <div style={{ flex: 1, minWidth: '12rem' }}><label className="form-label">Holiday name</label><input type="text" className="form-control" value={holidayDraft.name} onChange={e => setHolidayDraft(h => ({ ...h, name: e.target.value }))}/></div>
+        <div><label className="form-label">Date</label><input type="date" className="form-control" value={holidayDraft.date} onChange={e => setHolidayDraft(h => ({ ...h, date: e.target.value }))} aria-label="Date" /></div>
+        <div style={{ flex: 1, minWidth: '12rem' }}><label className="form-label">Holiday name</label><input type="text" className="form-control" value={holidayDraft.name} onChange={e => setHolidayDraft(h => ({ ...h, name: e.target.value }))} aria-label="Holiday name" /></div>
         <button type="button" className="btn btn-outline" onClick={() => {
           const res = addHoliday(settings.app.publicHolidays, holidayDraft.date, holidayDraft.name);
           setHolidayError(res.error);
@@ -260,7 +260,7 @@ const AdminSettings: React.FC = () => {
       <div className="form-grid" style={{ marginTop: '1.5rem' }}>
         <div>
           <label className="form-label">Grace Period (Minutes)</label>
-          <input type="number" className="form-control" value={settings.app.gracePeriodMins} onChange={e => handleChangeApp('gracePeriodMins', parseInt(e.target.value) || 0)}/>
+          <input type="number" className="form-control" value={settings.app.gracePeriodMins} onChange={e => handleChangeApp('gracePeriodMins', parseInt(e.target.value) || 0)} aria-label="Grace Period (Minutes)" />
         </div>
       </div>
       
@@ -273,11 +273,11 @@ const AdminSettings: React.FC = () => {
         <div className="form-grid" style={{ marginTop: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
           <div>
             <label className="form-label">Auto Clock-Out After Shift Ends (Hours)</label>
-            <input type="number" min="0" className="form-control" value={settings.app.autoClockOutGraceHours} onChange={e => handleChangeApp('autoClockOutGraceHours', parseInt(e.target.value) || 0)}/>
+            <input type="number" min="0" className="form-control" value={settings.app.autoClockOutGraceHours} onChange={e => handleChangeApp('autoClockOutGraceHours', parseInt(e.target.value) || 0)} aria-label="Auto Clock-Out After Shift Ends (Hours)" />
           </div>
           <div>
             <label className="form-label">Auto Clock-Out Mode</label>
-            <select className="form-control" value={settings.app.autoClockOutMode} onChange={e => handleChangeApp('autoClockOutMode', e.target.value)}>
+            <select className="form-control" value={settings.app.autoClockOutMode} onChange={e => handleChangeApp('autoClockOutMode', e.target.value)} aria-label="Auto Clock-Out Mode">
               <option value="after_grace_period">After Grace Period</option>
               <option value="at_shift_end">At Shift End</option>
             </select>
@@ -302,8 +302,8 @@ const AdminSettings: React.FC = () => {
       </div>
       {settings.app.breakEnabled && (
         <div className="form-grid" style={{ marginTop: '1.5rem' }}>
-          <div><label className="form-label">Default Break Duration (Mins)</label><input type="number" className="form-control" value={settings.app.breakDurationMins} onChange={e => handleChangeApp('breakDurationMins', parseInt(e.target.value) || 0)}/></div>
-          <div><label className="form-label">Maximum Break Duration (Mins)</label><input type="number" className="form-control" value={settings.app.maxBreakDurationMins} onChange={e => handleChangeApp('maxBreakDurationMins', parseInt(e.target.value) || 0)}/></div>
+          <div><label className="form-label">Default Break Duration (Mins)</label><input type="number" className="form-control" value={settings.app.breakDurationMins} onChange={e => handleChangeApp('breakDurationMins', parseInt(e.target.value) || 0)} aria-label="Default Break Duration (Mins)" /></div>
+          <div><label className="form-label">Maximum Break Duration (Mins)</label><input type="number" className="form-control" value={settings.app.maxBreakDurationMins} onChange={e => handleChangeApp('maxBreakDurationMins', parseInt(e.target.value) || 0)} aria-label="Maximum Break Duration (Mins)" /></div>
         </div>
       )}
     </div>
@@ -313,8 +313,8 @@ const AdminSettings: React.FC = () => {
     <div className="settings-section">
       <h3 className="section-title">Shift Settings</h3>
       <div className="form-grid">
-        <div><label className="form-label">Default Shift Name</label><input type="text" className="form-control" value={settings.app.defaultShift} onChange={e => handleChangeApp('defaultShift', e.target.value)}/></div>
-        <div><label className="form-label">Shift Grace Period (Mins)</label><input type="number" className="form-control" value={settings.app.shiftGracePeriodMins} onChange={e => handleChangeApp('shiftGracePeriodMins', parseInt(e.target.value) || 0)}/></div>
+        <div><label className="form-label">Default Shift Name</label><input type="text" className="form-control" value={settings.app.defaultShift} onChange={e => handleChangeApp('defaultShift', e.target.value)} aria-label="Default Shift Name" /></div>
+        <div><label className="form-label">Shift Grace Period (Mins)</label><input type="number" className="form-control" value={settings.app.shiftGracePeriodMins} onChange={e => handleChangeApp('shiftGracePeriodMins', parseInt(e.target.value) || 0)} aria-label="Shift Grace Period (Mins)" /></div>
       </div>
     </div>
   );
@@ -349,7 +349,7 @@ const AdminSettings: React.FC = () => {
         </label>
         <div>
           <label className="form-label">Casual Leave Days Per Month</label>
-          <input type="number" min="0" className="form-control" value={settings.app.casualLeaveDaysPerMonth} onChange={e => handleChangeApp('casualLeaveDaysPerMonth', parseInt(e.target.value) || 0)}/>
+          <input type="number" min="0" className="form-control" value={settings.app.casualLeaveDaysPerMonth} onChange={e => handleChangeApp('casualLeaveDaysPerMonth', parseInt(e.target.value) || 0)} aria-label="Casual Leave Days Per Month" />
         </div>
       </div>
 
@@ -363,7 +363,7 @@ const AdminSettings: React.FC = () => {
           <>
             <div>
               <label className="form-label">Sandwich Treatment</label>
-              <select className="form-control" value={settings.app.sandwichTreatment} onChange={e => handleChangeApp('sandwichTreatment', e.target.value)}>
+              <select className="form-control" value={settings.app.sandwichTreatment} onChange={e => handleChangeApp('sandwichTreatment', e.target.value)} aria-label="Sandwich Treatment">
                 <option value="LOP">Loss of Pay (LOP)</option>
                 <option value="DEDUCT_LEAVE">Deduct Leave Balance</option>
               </select>
@@ -396,7 +396,7 @@ const AdminSettings: React.FC = () => {
       {settings.app.wfhEnabled && (
         <>
           <div className="form-grid" style={{ marginTop: '1.5rem' }}>
-            <div><label className="form-label">Maximum WFH Days Per Month</label><input type="number" className="form-control" value={settings.app.wfhMaxDaysPerMonth} onChange={e => handleChangeApp('wfhMaxDaysPerMonth', parseInt(e.target.value) || 0)}/></div>
+            <div><label className="form-label">Maximum WFH Days Per Month</label><input type="number" className="form-control" value={settings.app.wfhMaxDaysPerMonth} onChange={e => handleChangeApp('wfhMaxDaysPerMonth', parseInt(e.target.value) || 0)} aria-label="Maximum WFH Days Per Month" /></div>
           </div>
           <div className="toggle-row" style={{ marginTop: '1rem' }}>
             <div><div style={{ fontWeight: 600 }}>WFH Approval Required</div><div className="help-text">WFH requests must be approved before being active.</div></div>
@@ -421,7 +421,7 @@ const AdminSettings: React.FC = () => {
         </label>
         <div>
           <label className="form-label">Maximum Permission Hours Per Month</label>
-          <input type="number" min="0" className="form-control" value={settings.app.permissionMaxHoursPerMonth} onChange={e => handleChangeApp('permissionMaxHoursPerMonth', parseInt(e.target.value) || 0)}/>
+          <input type="number" min="0" className="form-control" value={settings.app.permissionMaxHoursPerMonth} onChange={e => handleChangeApp('permissionMaxHoursPerMonth', parseInt(e.target.value) || 0)} aria-label="Maximum Permission Hours Per Month" />
         </div>
       </div>
       
@@ -435,14 +435,14 @@ const AdminSettings: React.FC = () => {
           <>
             <div>
               <label className="form-label">Permission Exceeding Limit Method</label>
-              <select className="form-control" value={settings.app.permissionExceedingLimitMethod} onChange={e => handleChangeApp('permissionExceedingLimitMethod', e.target.value)}>
+              <select className="form-control" value={settings.app.permissionExceedingLimitMethod} onChange={e => handleChangeApp('permissionExceedingLimitMethod', e.target.value)} aria-label="Permission Exceeding Limit Method">
                 <option value="LOP">Loss of Pay (LOP)</option>
                 <option value="DEDUCT_LEAVE">Deduct Leave Balance</option>
               </select>
             </div>
             <div>
               <label className="form-label">Permission Deduction Amount/Rate</label>
-              <input type="number" min="0" step="0.5" className="form-control" value={settings.app.permissionDeductionAmountRate} onChange={e => handleChangeApp('permissionDeductionAmountRate', parseFloat(e.target.value) || 0)}/>
+              <input type="number" min="0" step="0.5" className="form-control" value={settings.app.permissionDeductionAmountRate} onChange={e => handleChangeApp('permissionDeductionAmountRate', parseFloat(e.target.value) || 0)} aria-label="Permission Deduction Amount/Rate" />
             </div>
           </>
         )}
@@ -459,7 +459,7 @@ const AdminSettings: React.FC = () => {
       <div className="form-grid">
         <div>
           <label className="form-label">Payroll Period</label>
-          <select className="form-control" value={settings.payroll.payrollPeriod || 'monthly'} onChange={e => handleChangePayroll('payrollPeriod', e.target.value)}>
+          <select className="form-control" value={settings.payroll.payrollPeriod || 'monthly'} onChange={e => handleChangePayroll('payrollPeriod', e.target.value)} aria-label="Payroll Period">
             <option value="1_day">1 Day</option>
             <option value="10_days">10 Days</option>
             <option value="15_days">15 Days</option>
@@ -469,18 +469,18 @@ const AdminSettings: React.FC = () => {
         </div>
         <div>
           <label className="form-label">Working Days Basis</label>
-          <select className="form-control" value={settings.payroll.workingDaysBasis} onChange={e => handleChangePayroll('workingDaysBasis', e.target.value)}>
+          <select className="form-control" value={settings.payroll.workingDaysBasis} onChange={e => handleChangePayroll('workingDaysBasis', e.target.value)} aria-label="Working Days Basis">
             <option value="configured">Configured Working Days</option>
             <option value="calendar">Calendar Days</option>
             <option value="actual">Actual Working Days</option>
           </select>
         </div>
         {settings.payroll.workingDaysBasis === 'configured' && (
-          <div><label className="form-label">Configured Working Days</label><input type="number" className="form-control" value={settings.payroll.configuredWorkingDays !== null ? settings.payroll.configuredWorkingDays : ''} onChange={e => handleChangePayroll('configuredWorkingDays', e.target.value === '' ? null : parseInt(e.target.value))}/></div>
+          <div><label className="form-label">Configured Working Days</label><input type="number" className="form-control" value={settings.payroll.configuredWorkingDays !== null ? settings.payroll.configuredWorkingDays : ''} onChange={e => handleChangePayroll('configuredWorkingDays', e.target.value === '' ? null : parseInt(e.target.value))} aria-label="Configured Working Days" /></div>
         )}
         <div>
           <label className="form-label">Salary Rounding</label>
-          <select className="form-control" value={settings.payroll.salaryRounding} onChange={e => handleChangePayroll('salaryRounding', e.target.value)}>
+          <select className="form-control" value={settings.payroll.salaryRounding} onChange={e => handleChangePayroll('salaryRounding', e.target.value)} aria-label="Salary Rounding">
             <option value="round">Round to nearest integer</option>
             <option value="exact">Exact decimals</option>
           </select>
@@ -493,7 +493,7 @@ const AdminSettings: React.FC = () => {
       </div>
       {settings.payroll.requireMultiLevelApproval && (
         <div className="form-grid" style={{ marginTop: '0.5rem' }}>
-          <div><label className="form-label">Number of Approval Levels</label><input type="number" className="form-control" value={settings.payroll.approvalLevels !== null ? settings.payroll.approvalLevels : ''} onChange={e => handleChangePayroll('approvalLevels', e.target.value === '' ? null : parseInt(e.target.value))}/></div>
+          <div><label className="form-label">Number of Approval Levels</label><input type="number" className="form-control" value={settings.payroll.approvalLevels !== null ? settings.payroll.approvalLevels : ''} onChange={e => handleChangePayroll('approvalLevels', e.target.value === '' ? null : parseInt(e.target.value))} aria-label="Number of Approval Levels" /></div>
         </div>
       )}
 
@@ -506,13 +506,13 @@ const AdminSettings: React.FC = () => {
         <div className="form-grid" style={{ marginTop: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
           <div>
             <label className="form-label">LOP Calculation Basis</label>
-            <select className="form-control" value={settings.payroll.lopMethod} onChange={e => handleChangePayroll('lopMethod', e.target.value)}>
+            <select className="form-control" value={settings.payroll.lopMethod} onChange={e => handleChangePayroll('lopMethod', e.target.value)} aria-label="LOP Calculation Basis">
               <option value="daily_rate">Daily Rate</option>
               <option value="fixed">Fixed Amount</option>
             </select>
           </div>
           {settings.payroll.lopMethod === 'fixed' && (
-            <div><label className="form-label">LOP Amount / Rate (₹)</label><input type="number" className="form-control" value={settings.payroll.lopAmount !== null ? settings.payroll.lopAmount : ''} onChange={e => handleChangePayroll('lopAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+            <div><label className="form-label">LOP Amount / Rate (₹)</label><input type="number" className="form-control" value={settings.payroll.lopAmount !== null ? settings.payroll.lopAmount : ''} onChange={e => handleChangePayroll('lopAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="LOP Amount / Rate (₹)" /></div>
           )}
         </div>
       )}
@@ -526,13 +526,13 @@ const AdminSettings: React.FC = () => {
         <div className="form-grid" style={{ marginTop: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
           <div>
             <label className="form-label">Half-Day Deduction Method</label>
-            <select className="form-control" value={settings.payroll.halfDayMethod} onChange={e => handleChangePayroll('halfDayMethod', e.target.value)}>
+            <select className="form-control" value={settings.payroll.halfDayMethod} onChange={e => handleChangePayroll('halfDayMethod', e.target.value)} aria-label="Half-Day Deduction Method">
               <option value="50_percent">50% of Daily Salary</option>
               <option value="fixed">Fixed Amount</option>
             </select>
           </div>
           {settings.payroll.halfDayMethod === 'fixed' && (
-            <div><label className="form-label">Half-Day Deduction Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.halfDayAmount !== null ? settings.payroll.halfDayAmount : ''} onChange={e => handleChangePayroll('halfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+            <div><label className="form-label">Half-Day Deduction Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.halfDayAmount !== null ? settings.payroll.halfDayAmount : ''} onChange={e => handleChangePayroll('halfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Half-Day Deduction Amount (₹)" /></div>
           )}
         </div>
       )}
@@ -547,11 +547,11 @@ const AdminSettings: React.FC = () => {
           <div className="form-grid">
             <div>
               <label className="form-label">Monthly Late Login Limit</label>
-              <input type="number" className="form-control" value={settings.payroll.monthlyLateLoginLimit !== null ? settings.payroll.monthlyLateLoginLimit : ''} onChange={e => handleChangePayroll('monthlyLateLoginLimit', e.target.value === '' ? null : parseInt(e.target.value))}/>
+              <input type="number" className="form-control" value={settings.payroll.monthlyLateLoginLimit !== null ? settings.payroll.monthlyLateLoginLimit : ''} onChange={e => handleChangePayroll('monthlyLateLoginLimit', e.target.value === '' ? null : parseInt(e.target.value))} aria-label="Monthly Late Login Limit" />
             </div>
             <div>
               <label className="form-label">Deduction Method</label>
-              <select className="form-control" value={settings.payroll.lateDeductionMethod} onChange={e => handleChangePayroll('lateDeductionMethod', e.target.value)}>
+              <select className="form-control" value={settings.payroll.lateDeductionMethod} onChange={e => handleChangePayroll('lateDeductionMethod', e.target.value)} aria-label="Deduction Method">
                 <option value="interval_based">Every 15 Minutes</option>
                 <option value="fixed">Fixed Amount</option>
                 <option value="per_minute">Per Late Minute</option>
@@ -562,18 +562,18 @@ const AdminSettings: React.FC = () => {
           <div className="form-grid">
             {settings.payroll.lateDeductionMethod === 'interval_based' && (
               <>
-                <div><label className="form-label">Deduction Interval (minutes)</label><input type="number" className="form-control" value={settings.payroll.lateIntervalMinutes !== null ? settings.payroll.lateIntervalMinutes : ''} onChange={e => handleChangePayroll('lateIntervalMinutes', e.target.value === '' ? null : parseInt(e.target.value))}/></div>
-                <div><label className="form-label">Deduction Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.lateIntervalAmount !== null ? settings.payroll.lateIntervalAmount : ''} onChange={e => handleChangePayroll('lateIntervalAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+                <div><label className="form-label">Deduction Interval (minutes)</label><input type="number" className="form-control" value={settings.payroll.lateIntervalMinutes !== null ? settings.payroll.lateIntervalMinutes : ''} onChange={e => handleChangePayroll('lateIntervalMinutes', e.target.value === '' ? null : parseInt(e.target.value))} aria-label="Deduction Interval (minutes)" /></div>
+                <div><label className="form-label">Deduction Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.lateIntervalAmount !== null ? settings.payroll.lateIntervalAmount : ''} onChange={e => handleChangePayroll('lateIntervalAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Deduction Amount (₹)" /></div>
               </>
             )}
             {settings.payroll.lateDeductionMethod === 'fixed' && (
-              <div><label className="form-label">Amount per Late Occurrence (₹)</label><input type="number" className="form-control" value={settings.payroll.lateFixedAmount !== null ? settings.payroll.lateFixedAmount : ''} onChange={e => handleChangePayroll('lateFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+              <div><label className="form-label">Amount per Late Occurrence (₹)</label><input type="number" className="form-control" value={settings.payroll.lateFixedAmount !== null ? settings.payroll.lateFixedAmount : ''} onChange={e => handleChangePayroll('lateFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Amount per Late Occurrence (₹)" /></div>
             )}
             {settings.payroll.lateDeductionMethod === 'per_minute' && (
-              <div><label className="form-label">Amount per Late Minute (₹)</label><input type="number" className="form-control" value={settings.payroll.latePerMinuteRate !== null ? settings.payroll.latePerMinuteRate : ''} onChange={e => handleChangePayroll('latePerMinuteRate', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+              <div><label className="form-label">Amount per Late Minute (₹)</label><input type="number" className="form-control" value={settings.payroll.latePerMinuteRate !== null ? settings.payroll.latePerMinuteRate : ''} onChange={e => handleChangePayroll('latePerMinuteRate', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Amount per Late Minute (₹)" /></div>
             )}
             {settings.payroll.lateDeductionMethod === 'half_day' && (
-              <div><label className="form-label">Half-Day Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.lateHalfDayAmount !== null ? settings.payroll.lateHalfDayAmount : ''} onChange={e => handleChangePayroll('lateHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+              <div><label className="form-label">Half-Day Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.lateHalfDayAmount !== null ? settings.payroll.lateHalfDayAmount : ''} onChange={e => handleChangePayroll('lateHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Half-Day Amount (₹)" /></div>
             )}
           </div>
         </div>
@@ -589,11 +589,11 @@ const AdminSettings: React.FC = () => {
           <div className="form-grid">
             <div>
               <label className="form-label">Monthly Permission Limit</label>
-              <input type="number" className="form-control" value={settings.payroll.permissionLimit !== null ? settings.payroll.permissionLimit : ''} onChange={e => handleChangePayroll('permissionLimit', e.target.value === '' ? null : parseInt(e.target.value))}/>
+              <input type="number" className="form-control" value={settings.payroll.permissionLimit !== null ? settings.payroll.permissionLimit : ''} onChange={e => handleChangePayroll('permissionLimit', e.target.value === '' ? null : parseInt(e.target.value))} aria-label="Monthly Permission Limit" />
             </div>
             <div>
               <label className="form-label">Deduction Method</label>
-              <select className="form-control" value={settings.payroll.permissionDeductionMethod} onChange={e => handleChangePayroll('permissionDeductionMethod', e.target.value)}>
+              <select className="form-control" value={settings.payroll.permissionDeductionMethod} onChange={e => handleChangePayroll('permissionDeductionMethod', e.target.value)} aria-label="Deduction Method">
                 <option value="fixed">Fixed Amount</option>
                 <option value="per_minute">Per Excess Minute</option>
                 <option value="salary_based">Salary Based</option>
@@ -603,13 +603,13 @@ const AdminSettings: React.FC = () => {
           </div>
           <div className="form-grid">
             {settings.payroll.permissionDeductionMethod === 'fixed' && (
-              <div><label className="form-label">Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.permissionFixedAmount !== null ? settings.payroll.permissionFixedAmount : ''} onChange={e => handleChangePayroll('permissionFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+              <div><label className="form-label">Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.permissionFixedAmount !== null ? settings.payroll.permissionFixedAmount : ''} onChange={e => handleChangePayroll('permissionFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Amount (₹)" /></div>
             )}
             {settings.payroll.permissionDeductionMethod === 'per_minute' && (
-              <div><label className="form-label">Rate per Excess Minute (₹)</label><input type="number" className="form-control" value={settings.payroll.permissionPerMinuteRate !== null ? settings.payroll.permissionPerMinuteRate : ''} onChange={e => handleChangePayroll('permissionPerMinuteRate', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+              <div><label className="form-label">Rate per Excess Minute (₹)</label><input type="number" className="form-control" value={settings.payroll.permissionPerMinuteRate !== null ? settings.payroll.permissionPerMinuteRate : ''} onChange={e => handleChangePayroll('permissionPerMinuteRate', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Rate per Excess Minute (₹)" /></div>
             )}
             {settings.payroll.permissionDeductionMethod === 'half_day' && (
-              <div><label className="form-label">Half-Day Deduction (₹)</label><input type="number" className="form-control" value={settings.payroll.permissionHalfDayAmount !== null ? settings.payroll.permissionHalfDayAmount : ''} onChange={e => handleChangePayroll('permissionHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+              <div><label className="form-label">Half-Day Deduction (₹)</label><input type="number" className="form-control" value={settings.payroll.permissionHalfDayAmount !== null ? settings.payroll.permissionHalfDayAmount : ''} onChange={e => handleChangePayroll('permissionHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Half-Day Deduction (₹)" /></div>
             )}
           </div>
         </div>
@@ -628,7 +628,7 @@ const AdminSettings: React.FC = () => {
           <div className="form-grid">
             <div>
               <label className="form-label">Deduction Method</label>
-              <select className="form-control" value={settings.payroll.wfhDeductionMethod} onChange={e => handleChangePayroll('wfhDeductionMethod', e.target.value)}>
+              <select className="form-control" value={settings.payroll.wfhDeductionMethod} onChange={e => handleChangePayroll('wfhDeductionMethod', e.target.value)} aria-label="Deduction Method">
                 <option value="fixed">Fixed Amount</option>
                 <option value="per_day">Per WFH Day</option>
                 <option value="half_day">Half Day</option>
@@ -637,13 +637,13 @@ const AdminSettings: React.FC = () => {
           </div>
           <div className="form-grid">
             {settings.payroll.wfhDeductionMethod === 'fixed' && (
-              <div><label className="form-label">Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.wfhFixedAmount !== null ? settings.payroll.wfhFixedAmount : ''} onChange={e => handleChangePayroll('wfhFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+              <div><label className="form-label">Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.wfhFixedAmount !== null ? settings.payroll.wfhFixedAmount : ''} onChange={e => handleChangePayroll('wfhFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Amount (₹)" /></div>
             )}
             {settings.payroll.wfhDeductionMethod === 'per_day' && (
-              <div><label className="form-label">Amount per WFH Day (₹)</label><input type="number" className="form-control" value={settings.payroll.wfhPerDayAmount !== null ? settings.payroll.wfhPerDayAmount : ''} onChange={e => handleChangePayroll('wfhPerDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+              <div><label className="form-label">Amount per WFH Day (₹)</label><input type="number" className="form-control" value={settings.payroll.wfhPerDayAmount !== null ? settings.payroll.wfhPerDayAmount : ''} onChange={e => handleChangePayroll('wfhPerDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Amount per WFH Day (₹)" /></div>
             )}
             {settings.payroll.wfhDeductionMethod === 'half_day' && (
-              <div><label className="form-label">Half-Day Deduction (₹)</label><input type="number" className="form-control" value={settings.payroll.wfhHalfDayAmount !== null ? settings.payroll.wfhHalfDayAmount : ''} onChange={e => handleChangePayroll('wfhHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+              <div><label className="form-label">Half-Day Deduction (₹)</label><input type="number" className="form-control" value={settings.payroll.wfhHalfDayAmount !== null ? settings.payroll.wfhHalfDayAmount : ''} onChange={e => handleChangePayroll('wfhHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Half-Day Deduction (₹)" /></div>
             )}
           </div>
         </div>
@@ -665,7 +665,7 @@ const AdminSettings: React.FC = () => {
               <div className="form-grid">
                 <div>
                   <label className="form-label">Deduction Method</label>
-                  <select className="form-control" value={settings.payroll.breakOverrunDeductionMethod} onChange={e => handleChangePayroll('breakOverrunDeductionMethod', e.target.value)}>
+                  <select className="form-control" value={settings.payroll.breakOverrunDeductionMethod} onChange={e => handleChangePayroll('breakOverrunDeductionMethod', e.target.value)} aria-label="Deduction Method">
                     <option value="salary_based">Salary Based</option>
                     <option value="fixed">Fixed Amount</option>
                     <option value="per_minute">Per Excess Minute</option>
@@ -680,13 +680,13 @@ const AdminSettings: React.FC = () => {
                   </div>
                 )}
                 {settings.payroll.breakOverrunDeductionMethod === 'fixed' && (
-                  <div><label className="form-label">Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.breakOverrunFixedAmount !== null ? settings.payroll.breakOverrunFixedAmount : ''} onChange={e => handleChangePayroll('breakOverrunFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+                  <div><label className="form-label">Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.breakOverrunFixedAmount !== null ? settings.payroll.breakOverrunFixedAmount : ''} onChange={e => handleChangePayroll('breakOverrunFixedAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Amount (₹)" /></div>
                 )}
                 {settings.payroll.breakOverrunDeductionMethod === 'per_minute' && (
-                  <div><label className="form-label">Rate per Excess Minute (₹)</label><input type="number" className="form-control" value={settings.payroll.breakOverrunPerMinuteRate !== null ? settings.payroll.breakOverrunPerMinuteRate : ''} onChange={e => handleChangePayroll('breakOverrunPerMinuteRate', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+                  <div><label className="form-label">Rate per Excess Minute (₹)</label><input type="number" className="form-control" value={settings.payroll.breakOverrunPerMinuteRate !== null ? settings.payroll.breakOverrunPerMinuteRate : ''} onChange={e => handleChangePayroll('breakOverrunPerMinuteRate', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Rate per Excess Minute (₹)" /></div>
                 )}
                 {settings.payroll.breakOverrunDeductionMethod === 'half_day' && (
-                  <div><label className="form-label">Half-Day Deduction (₹)</label><input type="number" className="form-control" value={settings.payroll.breakOverrunHalfDayAmount !== null ? settings.payroll.breakOverrunHalfDayAmount : ''} onChange={e => handleChangePayroll('breakOverrunHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+                  <div><label className="form-label">Half-Day Deduction (₹)</label><input type="number" className="form-control" value={settings.payroll.breakOverrunHalfDayAmount !== null ? settings.payroll.breakOverrunHalfDayAmount : ''} onChange={e => handleChangePayroll('breakOverrunHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Half-Day Deduction (₹)" /></div>
                 )}
               </div>
             </>
@@ -704,7 +704,7 @@ const AdminSettings: React.FC = () => {
           <div className="form-grid">
             <div>
               <label className="form-label">Overtime Rate Type</label>
-              <select className="form-control" value={settings.payroll.overtimeRateType} onChange={e => handleChangePayroll('overtimeRateType', e.target.value)}>
+              <select className="form-control" value={settings.payroll.overtimeRateType} onChange={e => handleChangePayroll('overtimeRateType', e.target.value)} aria-label="Overtime Rate Type">
                 <option value="multiplier">Multiplier</option>
                 <option value="fixed">Fixed Rate</option>
               </select>
@@ -712,10 +712,10 @@ const AdminSettings: React.FC = () => {
           </div>
           <div className="form-grid">
             {settings.payroll.overtimeRateType === 'multiplier' && (
-              <div><label className="form-label">Overtime Multiplier (e.g., 1.5)</label><input type="number" step="0.1" className="form-control" value={settings.payroll.overtimeMultiplier !== null ? settings.payroll.overtimeMultiplier : ''} onChange={e => handleChangePayroll('overtimeMultiplier', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+              <div><label className="form-label">Overtime Multiplier (e.g., 1.5)</label><input type="number" step="0.1" className="form-control" value={settings.payroll.overtimeMultiplier !== null ? settings.payroll.overtimeMultiplier : ''} onChange={e => handleChangePayroll('overtimeMultiplier', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Overtime Multiplier (e.g., 1.5)" /></div>
             )}
             {settings.payroll.overtimeRateType === 'fixed' && (
-              <div><label className="form-label">Overtime Rate Per Hour (₹)</label><input type="number" className="form-control" value={settings.payroll.overtimeFixedRate !== null ? settings.payroll.overtimeFixedRate : ''} onChange={e => handleChangePayroll('overtimeFixedRate', e.target.value === '' ? null : parseFloat(e.target.value))}/></div>
+              <div><label className="form-label">Overtime Rate Per Hour (₹)</label><input type="number" className="form-control" value={settings.payroll.overtimeFixedRate !== null ? settings.payroll.overtimeFixedRate : ''} onChange={e => handleChangePayroll('overtimeFixedRate', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Overtime Rate Per Hour (₹)" /></div>
             )}
           </div>
         </div>
@@ -731,7 +731,7 @@ const AdminSettings: React.FC = () => {
         <div>
           <label className="form-label">Maximum additional working time (hours)</label>
           <input type="number" min="0" step="0.25" className="form-control" value={settings.payroll.missingClockOutMaxAdditionalHours ?? 3}
-            onChange={e => handleChangePayroll('missingClockOutMaxAdditionalHours', e.target.value === '' ? null : parseFloat(e.target.value))}/>
+            onChange={e => handleChangePayroll('missingClockOutMaxAdditionalHours', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Maximum additional working time (hours)" />
           <div className="help-text">Time claimed beyond this is shown to the admin as excess; it is never silently dropped.</div>
         </div>
       </div>
@@ -747,7 +747,7 @@ const AdminSettings: React.FC = () => {
           <div>
             <label className="form-label">Deduction per case (₹)</label>
             <input type="number" min="0" className="form-control" value={settings.payroll.missingClockOutDeductionAmount ?? 0}
-              onChange={e => handleChangePayroll('missingClockOutDeductionAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/>
+              onChange={e => handleChangePayroll('missingClockOutDeductionAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Deduction per case (₹)" />
           </div>
         </div>
       )}
@@ -768,9 +768,9 @@ const AdminSettings: React.FC = () => {
         <div className="sub-settings">
           <div>
             <label className="form-label">Default Radius (Meters)</label>
-            <input type="number" className="form-control" value={settings.app.defaultRadiusMeters} onChange={e => handleChangeApp('defaultRadiusMeters', parseInt(e.target.value) || 0)}/>
+            <input type="number" className="form-control" value={settings.app.defaultRadiusMeters} onChange={e => handleChangeApp('defaultRadiusMeters', parseInt(e.target.value) || 0)} aria-label="Default Radius (Meters)" />
           </div>
-          <div><label className="form-label">Required Accuracy</label><select className="form-control" value={settings.app.locationAccuracy} onChange={e => handleChangeApp('locationAccuracy', e.target.value as any)}><option>High</option><option>Good</option><option>Any</option></select></div>
+          <div><label className="form-label">Required Accuracy</label><select className="form-control" value={settings.app.locationAccuracy} onChange={e => handleChangeApp('locationAccuracy', e.target.value as any)} aria-label="Required Accuracy"><option>High</option><option>Good</option><option>Any</option></select></div>
           <div className="toggle-row" style={{ gridColumn: '1 / -1' }}><span style={{ fontWeight: 500, fontSize: '0.875rem' }}>Allow Clock In Outside Geofence (Flags as exception)</span><input type="checkbox" checked={settings.app.allowOutsideClockIn} onChange={e => handleChangeApp('allowOutsideClockIn', e.target.checked)}/></div>
         </div>
       )}

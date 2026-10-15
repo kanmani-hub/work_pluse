@@ -91,8 +91,10 @@ const ChangePassword: React.FC = () => {
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <label style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>New Password</label>
+            <label htmlFor="change-new-password" style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>New Password</label>
             <input 
+              id="change-new-password"
+              autoComplete="new-password"
               type="password" 
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -104,8 +106,10 @@ const ChangePassword: React.FC = () => {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <label style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Confirm Password</label>
+            <label htmlFor="change-confirm-password" style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Confirm Password</label>
             <input 
+              id="change-confirm-password"
+              autoComplete="new-password"
               type="password" 
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}

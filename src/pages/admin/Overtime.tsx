@@ -124,9 +124,9 @@ const AdminOvertime: React.FC = () => {
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
           <div style={{ position: 'relative', flex: '1 1 220px' }}>
             <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-            <input className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} placeholder="Search employee…" value={search} onChange={e => setSearch(e.target.value)} />
+            <input className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} placeholder="Search employee…" value={search} onChange={e => setSearch(e.target.value)} aria-label="Search employee" />
           </div>
-          <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={status} onChange={e => setStatus(e.target.value)}>
+          <select aria-label="Status" className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={status} onChange={e => setStatus(e.target.value)}>
             {['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED', 'All'].map(s => <option key={s} value={s}>{s === 'All' ? 'All statuses' : s.charAt(0) + s.slice(1).toLowerCase()}</option>)}
           </select>
         </div>

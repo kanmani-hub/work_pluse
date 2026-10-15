@@ -189,7 +189,7 @@ const AdminDashboard: React.FC = () => {
         </div>
         
         <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <select value={period} onChange={(e) => {setLoading(true); setPeriod(e.target.value);}} className="form-control" style={{ width: 'auto', borderRadius: 'var(--radius-full)' }}>
+          <select value={period} onChange={(e) => {setLoading(true); setPeriod(e.target.value);}} className="form-control" style={{ width: 'auto', borderRadius: 'var(--radius-full)' }} aria-label="Date range">
             <option>Today</option>
             <option>This Week</option>
             <option>This Month</option>
@@ -258,7 +258,7 @@ const AdminDashboard: React.FC = () => {
           <div className="bento-col-4 card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
             <div className="card-header" style={{ width: '100%' }}>
               <h3 className="card-title">Attendance Rate</h3>
-              <button className="icon-button"><Filter size={16}/></button>
+              <button className="icon-button" aria-label="Filter"><Filter size={16}/></button>
             </div>
             <div style={{ position: 'relative', width: '200px', height: '100px', overflow: 'hidden', marginTop: '1rem' }}>
               <div style={{ width: '200px', height: '200px', borderRadius: '50%', border: '20px solid var(--bg-glass)', borderTopColor: 'var(--accent-primary)', borderRightColor: 'var(--accent-primary)', transform: 'rotate(-45deg)', position: 'absolute', top: 0, left: 0 }}></div>
@@ -305,7 +305,7 @@ const AdminDashboard: React.FC = () => {
           <div className="bento-col-4 bento-row-2 card">
             <div className="card-header">
               <h3 className="card-title">Schedule</h3>
-              <button className="icon-button"><Filter size={16}/></button>
+              <button className="icon-button" aria-label="Filter"><Filter size={16}/></button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginTop: '1rem' }}>
               {shifts.length > 0 ? shifts.map((s, idx) => (
@@ -327,7 +327,7 @@ const AdminDashboard: React.FC = () => {
              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%)', opacity: 0.1 }}></div>
              <div style={{ padding: '1.5rem', height: '100%', display: 'flex', flexDirection: 'column' }}>
                <h3 className="card-title" style={{ marginBottom: 'auto' }}>Remote vs Onsite</h3>
-               <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around', height: '120px', marginTop: '1rem' }}>
+               <div className="dash-split-chart" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-around', height: '120px', marginTop: '1rem' }}>
                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
                    <span style={{ fontSize: '1.5rem', fontWeight: 700 }}>{stats.onsite}</span>
                    <div style={{ width: '40px', height: '80px', borderRadius: '20px 20px 0 0', background: 'linear-gradient(to top, var(--info), var(--cyan-400))' }}></div>

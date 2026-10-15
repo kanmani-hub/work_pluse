@@ -187,29 +187,29 @@ const AuditLogs: React.FC = () => {
           <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Filters</span>
         </div>
         
-        <select className="form-control" style={{ width: 'auto' }} value={filters.dateRange} onChange={e => setFilters({...filters, dateRange: e.target.value})}>
+        <select className="form-control" style={{ width: 'auto' }} value={filters.dateRange} onChange={e => setFilters({...filters, dateRange: e.target.value})} aria-label="Date range">
           <option>Today</option><option>Yesterday</option><option>Last 7 Days</option><option>Last 30 Days</option><option>This Month</option>
         </select>
         
-        <select className="form-control" style={{ width: 'auto' }} value={filters.role} onChange={e => setFilters({...filters, role: e.target.value})}>
+        <select className="form-control" style={{ width: 'auto' }} value={filters.role} onChange={e => setFilters({...filters, role: e.target.value})} aria-label="Role">
           <option value="All">All Roles</option><option>Admin</option><option>HR</option><option>Employee</option><option>System</option><option>Unknown</option>
         </select>
 
-        <select className="form-control" style={{ width: 'auto' }} value={filters.module} onChange={e => setFilters({...filters, module: e.target.value})}>
+        <select className="form-control" style={{ width: 'auto' }} value={filters.module} onChange={e => setFilters({...filters, module: e.target.value})} aria-label="Module">
           <option value="All">All Modules</option><option>Authentication</option><option>Attendance</option><option>Leave</option><option>Payroll</option><option>Security</option><option>Settings</option><option>Employees</option>
         </select>
 
-        <select className="form-control" style={{ width: 'auto' }} value={filters.severity} onChange={e => setFilters({...filters, severity: e.target.value})}>
+        <select className="form-control" style={{ width: 'auto' }} value={filters.severity} onChange={e => setFilters({...filters, severity: e.target.value})} aria-label="Severity">
           <option value="All">All Severities</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option><option>Info</option>
         </select>
 
-        <select className="form-control" style={{ width: 'auto' }} value={filters.result} onChange={e => setFilters({...filters, result: e.target.value})}>
+        <select className="form-control" style={{ width: 'auto' }} value={filters.result} onChange={e => setFilters({...filters, result: e.target.value})} aria-label="Result">
           <option value="All">All Results</option><option>Success</option><option>Failed</option><option>Blocked</option>
         </select>
 
         <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
           <Search size={14} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-          <input type="text" placeholder="Search logs..." className="form-control" style={{ paddingLeft: '2rem' }} value={filters.search} onChange={e => setFilters({...filters, search: e.target.value})} />
+          <input type="text" placeholder="Search logs..." className="form-control" style={{ paddingLeft: '2rem' }} value={filters.search} onChange={e => setFilters({...filters, search: e.target.value})} aria-label="Search logs" />
         </div>
         
         <button onClick={() => setFilters({dateRange: 'This Month', user: 'All', role: 'All', module: 'All', action: 'All', severity: 'All', result: 'All', search: ''})} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.375rem 0.75rem' }}>Reset</button>
@@ -271,11 +271,11 @@ const AuditLogs: React.FC = () => {
             <div style={{ padding: '1rem', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Showing {filteredLogs.length} of {rangeLogs.length} events in {filters.dateRange.toLowerCase()}</div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button className="btn btn-outline" style={{ padding: '0.25rem 0.5rem' }} disabled><ChevronLeft size={16}/></button>
+                <button className="btn btn-outline" style={{ padding: '0.25rem 0.5rem' }} disabled aria-label="Previous page"><ChevronLeft size={16}/></button>
                 <button className="btn btn-primary" style={{ padding: '0.25rem 0.75rem' }}>1</button>
                 <button className="btn btn-outline" style={{ padding: '0.25rem 0.75rem' }}>2</button>
                 <button className="btn btn-outline" style={{ padding: '0.25rem 0.75rem' }}>3</button>
-                <button className="btn btn-outline" style={{ padding: '0.25rem 0.5rem' }}><ChevronRight size={16}/></button>
+                <button className="btn btn-outline" style={{ padding: '0.25rem 0.5rem' }} aria-label="Next page"><ChevronRight size={16}/></button>
               </div>
             </div>
           </div>
@@ -309,7 +309,7 @@ const AuditLogs: React.FC = () => {
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '450px', animation: 'slideUp 0.3s' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h3 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Export Audit Logs</h3>
-              <button className="icon-button" onClick={() => setExportModal(false)}><X size={20}/></button>
+              <button className="icon-button" onClick={() => setExportModal(false)} aria-label="Close"><X size={20}/></button>
             </div>
             
             <form onSubmit={handleExport} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -358,7 +358,7 @@ const AuditLogs: React.FC = () => {
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0, marginBottom: '0.25rem' }}>Audit Event Details</h2>
                 <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{selectedLog.id}</span>
               </div>
-              <button className="icon-button" onClick={() => setSelectedLog(null)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setSelectedLog(null)} aria-label="Close"><X size={20} /></button>
             </div>
             
             <div className="drawer-body" style={{ padding: '1.5rem', overflowY: 'auto' }}>

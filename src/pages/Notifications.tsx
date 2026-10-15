@@ -216,25 +216,25 @@ const Notifications: React.FC = () => {
           <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>Filters</span>
         </div>
         
-        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Read status" title="Read status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option>All</option><option>Unread</option><option>Read</option>
         </select>
         
-        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}>
+        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Category" title="Category" value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}>
           <option>All</option><option>Attendance</option><option>Leave</option><option>WFH</option><option>Permission</option><option>Payroll</option><option>Shift</option><option>Security</option>
         </select>
         
-        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={priorityFilter} onChange={e => setPriorityFilter(e.target.value)}>
+        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Priority" title="Priority" value={priorityFilter} onChange={e => setPriorityFilter(e.target.value)}>
           <option>All</option><option>Critical</option><option>High</option><option>Normal</option>
         </select>
 
-        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={dateFilter} onChange={e => setDateFilter(e.target.value)}>
+        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Date" title="Date" value={dateFilter} onChange={e => setDateFilter(e.target.value)}>
           <option>All</option><option>Today</option><option>This Week</option>
         </select>
 
         <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
           <Search size={14} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-          <input type="text" placeholder="Search notifications..." className="form-control" style={{ paddingLeft: '2rem', fontSize: '0.875rem' }} value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          <input type="text" placeholder="Search notifications..." className="form-control" style={{ paddingLeft: '2rem', fontSize: '0.875rem' }} value={searchQuery} onChange={e => setSearchQuery(e.target.value)} aria-label="Search notifications" />
         </div>
         
         { (statusFilter !== 'All' || categoryFilter !== 'All' || priorityFilter !== 'All' || dateFilter !== 'All' || searchQuery !== '') && (
@@ -274,7 +274,7 @@ const Notifications: React.FC = () => {
                 </div>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>Notification Detail</h2>
               </div>
-              <button className="icon-button" onClick={() => setSelectedNotif(null)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setSelectedNotif(null)} aria-label="Close"><X size={20} /></button>
             </div>
             
             <div className="drawer-body" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -324,7 +324,7 @@ const Notifications: React.FC = () => {
           <div className="drawer detail-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header" style={{ alignItems: 'center' }}>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>My Notification Preferences</h2>
-              <button className="icon-button" onClick={() => setShowPreferences(false)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setShowPreferences(false)} aria-label="Close"><X size={20} /></button>
             </div>
             
             <div className="drawer-body" style={{ padding: '1.5rem', overflowY: 'auto' }}>

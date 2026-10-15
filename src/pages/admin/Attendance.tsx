@@ -212,17 +212,17 @@ const AdminAttendance: React.FC = () => {
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           
           <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface-elevated)' }}>
-            <button className="icon-button" onClick={handlePrevDay} style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)' }}><ChevronLeft size={18}/></button>
+            <button type="button" className="icon-button" onClick={handlePrevDay} aria-label="Previous day" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)' }}><ChevronLeft size={18}/></button>
             <div style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Calendar size={16} /> {currentDateDisplay}
             </div>
-            <button className="icon-button" onClick={handleNextDay} style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}><ChevronRight size={18}/></button>
+            <button type="button" className="icon-button" onClick={handleNextDay} aria-label="Next day" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0' }}><ChevronRight size={18}/></button>
           </div>
           <button className="btn btn-outline" onClick={handleToday} style={{ fontSize: '0.875rem' }}>Today</button>
 
           <button onClick={() => exportService.excel(filteredData.map(a => ({ empId: a.empId, name: a.name, dept: a.dept, shift: a.shiftTime, mode: a.mode, clockIn: a.clockIn, clockOut: a.clockOut, break: a.breakMins, status: a.status, late: a.late })), [{ header: 'Code', key: 'empId', width: 10 }, { header: 'Name', key: 'name', width: 22 }, { header: 'Department', key: 'dept', width: 16 }, { header: 'Shift Time', key: 'shift', width: 16 }, { header: 'Mode', key: 'mode', width: 10 }, { header: 'In', key: 'clockIn', width: 10 }, { header: 'Out', key: 'clockOut', width: 10 }, { header: 'Break (m)', key: 'break', width: 10 }, { header: 'Status', key: 'status', width: 12 }, { header: 'Late', key: 'late', width: 10 }], `attendance_export_${currentDateDisplay}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
-          <button onClick={() => fetchAttendance()} className="icon-button  border"><RefreshCw size={16}/></button>
-          <button className="icon-button  border"><Settings size={16}/></button>
+          <button type="button" onClick={() => fetchAttendance()} className="icon-button  border" aria-label="Refresh attendance" title="Refresh"><RefreshCw size={16}/></button>
+          <button type="button" className="icon-button  border" aria-label="Attendance settings" title="Settings"><Settings size={16}/></button>
         </div>
       </div>
 
@@ -349,12 +349,12 @@ const AdminAttendance: React.FC = () => {
         {/* Toolbar */}
         <div style={{ padding: '1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
           
-          <div style={{ position: 'relative', width: '220px' }}>
+          <div className="toolbar-search" style={{ position: 'relative', width: '220px', maxWidth: '100%' }}>
             <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} />
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} aria-label="Search employee" />
           </div>
           
-          <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+          <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Department">
             <option value="All">All Departments</option>
             {deptLoading ? (
               <option disabled>Loading...</option>
@@ -368,14 +368,14 @@ const AdminAttendance: React.FC = () => {
             )}
           </select>
 
-          <select value={filterMode} onChange={e => setFilterMode(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+          <select value={filterMode} onChange={e => setFilterMode(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Work mode">
             <option value="All">All Modes</option>
             <option>Office</option>
             <option>WFH</option>
             <option>Leave</option>
           </select>
 
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Status">
             <option value="All">All Statuses</option>
             <option>PRESENT</option>
             <option>LATE</option>
@@ -526,7 +526,7 @@ const AdminAttendance: React.FC = () => {
               <div style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{detailDrawer.name}</h2>
-                  <button className="icon-button" onClick={() => setDetailDrawer(null)}><X size={20} /></button>
+                  <button className="icon-button" onClick={() => setDetailDrawer(null)} aria-label="Close"><X size={20} /></button>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                   <span>{detailDrawer.empId}</span> • <span>{detailDrawer.dept}</span> • <span>{detailDrawer.office}</span>
@@ -731,22 +731,22 @@ Attendance Completed`}
               <div style={{ display: 'flex', gap: '1rem' }}>
                 <div style={{ flex: 1 }}>
                   <label className="form-label">Clock In</label>
-                  <input type="time" className="form-control" value={cForm.clockIn || ''} onChange={e => setCForm({...cForm, clockIn: e.target.value})} />
+                  <input type="time" className="form-control" value={cForm.clockIn || ''} onChange={e => setCForm({...cForm, clockIn: e.target.value})} aria-label="Clock In" />
                 </div>
                 <div style={{ flex: 1 }}>
                   <label className="form-label">Clock Out</label>
-                  <input type="time" className="form-control" value={cForm.clockOut || ''} onChange={e => setCForm({...cForm, clockOut: e.target.value})} />
+                  <input type="time" className="form-control" value={cForm.clockOut || ''} onChange={e => setCForm({...cForm, clockOut: e.target.value})} aria-label="Clock Out" />
                 </div>
               </div>
               
               <div>
                 <label className="form-label">Break Duration (Mins)</label>
-                <input type="number" className="form-control" defaultValue={detailDrawer?.breakMins} />
+                <input type="number" className="form-control" defaultValue={detailDrawer?.breakMins} aria-label="Break Duration (Mins)" />
               </div>
 
               <div>
                 <label className="form-label">Correction Reason *</label>
-                <textarea required className="form-control" rows={3} placeholder="e.g. Employee forgot to clock out." value={cForm.reason || ''} onChange={e => setCForm({...cForm, reason: e.target.value})}></textarea>
+                <textarea required className="form-control" rows={3} placeholder="e.g. Employee forgot to clock out." value={cForm.reason || ''} onChange={e => setCForm({...cForm, reason: e.target.value})} aria-label="Correction Reason"></textarea>
               </div>
 
               <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>

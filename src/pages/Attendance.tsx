@@ -22,7 +22,7 @@ const Attendance: React.FC = () => {
       <div className="card" style={{ padding: '0' }}>
         <div style={{ padding: '1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
           <input type="date" className="btn btn-outline" defaultValue="2024-10-24" style={{ outline: 'none' }} />
-          <select className="btn btn-outline" style={{ outline: 'none' }}>
+          <select className="btn btn-outline" style={{ outline: 'none' }} aria-label="Department">
             <option>All Departments</option>
             
             <option>Design</option>

@@ -185,7 +185,7 @@ const FaceRegistration: React.FC = () => {
             <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '1rem' }}>
               <div style={{ position: 'relative', flex: 1, maxWidth: '300px' }}>
                 <Search size={14} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-                <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2rem', fontSize: '0.875rem' }} />
+                <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2rem', fontSize: '0.875rem' }} aria-label="Search employee" />
               </div>
             </div>
             
@@ -247,7 +247,7 @@ const FaceRegistration: React.FC = () => {
               <ShieldCheck size={24} color="var(--primary-600)" />
               Face Registration Workflow
             </h2>
-            <button onClick={() => setStep(0)} className="icon-button"><X size={20}/></button>
+            <button onClick={() => setStep(0)} className="icon-button" aria-label="Close"><X size={20}/></button>
           </div>
 
           <div className="card" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -313,7 +313,7 @@ const FaceRegistration: React.FC = () => {
                     <button onClick={initCamera} className="btn btn-primary" style={{ marginTop: '1rem' }}>Retry Camera</button>
                   </div>
                 ) : (
-                  <div style={{ position: 'relative', width: '320px', height: '400px', backgroundColor: '#111827', borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: '2rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ position: 'relative', width: 'min(320px, 100%)', aspectRatio: '4 / 5', backgroundColor: '#111827', borderRadius: 'var(--radius-lg)', overflow: 'hidden', marginBottom: '2rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     
                     <video 
                       ref={videoRef}
@@ -324,7 +324,7 @@ const FaceRegistration: React.FC = () => {
                     />
 
                     <div style={{ position: 'absolute', inset: 0, opacity: 0.2, backgroundImage: 'linear-gradient(45deg, #000 25%, transparent 25%, transparent 75%, #000 75%, #000), linear-gradient(45deg, #000 25%, transparent 25%, transparent 75%, #000 75%, #000)', backgroundSize: '20px 20px', backgroundPosition: '0 0, 10px 10px', pointerEvents: 'none' }} />
-                    <div style={{ width: '200px', height: '260px', border: '2px dashed rgba(255,255,255,0.7)', borderRadius: '50% 50% 40% 40%', position: 'absolute', zIndex: 10, pointerEvents: 'none' }}></div>
+                    <div style={{ width: '62.5%', aspectRatio: '200 / 260', border: '2px dashed rgba(255,255,255,0.7)', borderRadius: '50% 50% 40% 40%', position: 'absolute', zIndex: 10, pointerEvents: 'none' }}></div>
                   </div>
                 )}
 
@@ -340,7 +340,7 @@ const FaceRegistration: React.FC = () => {
                 <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem', textAlign: 'center' }}>Step 3: Registration Result</h3>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', textAlign: 'center' }}>Confirm registration for {selectedEmp.name}.</p>
                 
-                <div style={{ width: '320px', height: '400px', backgroundColor: 'var(--gray-100)', borderRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', marginBottom: '2rem' }}>
+                <div style={{ width: 'min(320px, 100%)', aspectRatio: '4 / 5', backgroundColor: 'var(--gray-100)', borderRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden', marginBottom: '2rem' }}>
                   {capturedImage ? (
                     <img src={capturedImage} alt="Captured face" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : (

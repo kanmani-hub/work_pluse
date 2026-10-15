@@ -268,7 +268,7 @@ const EmployeeLeave: React.FC = () => {
         </>
       )}
 
-      <div className="two-col-grid">
+      <div className="two-col-grid fit-columns">
         {/* Left Col */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           
@@ -425,7 +425,7 @@ const EmployeeLeave: React.FC = () => {
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '500px', maxHeight: '95vh', overflowY: 'auto', animation: 'slideUp 0.3s' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Apply Leave</h2>
-              <button className="icon-button" onClick={() => setShowRequestModal(false)}><X size={20}/></button>
+              <button className="icon-button" onClick={() => setShowRequestModal(false)} aria-label="Close"><X size={20}/></button>
             </div>
             
             <form onSubmit={handleRequestSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -437,7 +437,7 @@ const EmployeeLeave: React.FC = () => {
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Leave Type *</label>
-                <select value={reqTypeId} onChange={e => setReqTypeId(e.target.value)} className="form-control">
+                <select value={reqTypeId} onChange={e => setReqTypeId(e.target.value)} className="form-control" aria-label="Leave Type">
                   {leaveTypes.map(lt => (
                     <option key={lt.id} value={lt.id}>{lt.name}</option>
                   ))}
@@ -447,11 +447,11 @@ const EmployeeLeave: React.FC = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>From Date *</label>
-                  <input type="date" value={reqFrom} onChange={e => setReqFrom(e.target.value)} className="form-control" />
+                  <input type="date" value={reqFrom} onChange={e => setReqFrom(e.target.value)} className="form-control" aria-label="From Date" />
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>To Date *</label>
-                  <input type="date" value={reqTo} onChange={e => setReqTo(e.target.value)} className="form-control" />
+                  <input type="date" value={reqTo} onChange={e => setReqTo(e.target.value)} className="form-control" aria-label="To Date" />
                 </div>
               </div>
 
@@ -476,7 +476,7 @@ const EmployeeLeave: React.FC = () => {
 
               <div>
                 <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Reason *</label>
-                <textarea value={reqReason} onChange={e => setReqReason(e.target.value)} className="form-control" rows={3} placeholder="Provide a reason for the leave..."></textarea>
+                <textarea value={reqReason} onChange={e => setReqReason(e.target.value)} className="form-control" rows={3} placeholder="Provide a reason for the leave..." aria-label="Reason"></textarea>
               </div>
 
               <div>
@@ -503,7 +503,7 @@ const EmployeeLeave: React.FC = () => {
           <div className="drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Leave Details</h2>
-              <button className="icon-button" onClick={() => setSelectedDetail(null)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setSelectedDetail(null)} aria-label="Close"><X size={20} /></button>
             </div>
             <div className="drawer-body">
               

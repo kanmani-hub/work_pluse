@@ -491,19 +491,18 @@ const AdminLiveTracking: React.FC = () => {
                           className="form-control" 
                           style={{ paddingLeft: "2.5rem" }}
                           value={search}
-                          onChange={e => setSearch(e.target.value)}
-                        />
+                          onChange={e => setSearch(e.target.value)} aria-label="Search by Name or ID" />
                       </div>
                       
                       <div className="filters-grid">
-                        <select className="form-control form-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+                        <select className="form-control form-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)} aria-label="Status">
                           <option value="Currently Working">Status: Currently Working</option>
                           <option value="All">Status: All</option>
                           <option value="Working">Working</option>
                           <option value="WFH">WFH</option>
                           <option value="Outside Geofence">Outside Geofence</option>
                         </select>
-                        <select className="form-control form-select" value={officeFilter} onChange={e => setOfficeFilter(e.target.value)}>
+                        <select className="form-control form-select" value={officeFilter} onChange={e => setOfficeFilter(e.target.value)} aria-label="Office">
                           <option value="All">Office: All</option>
                           {activeOffices.map(office => (
                             <option key={office.id} value={office.id}>{office.name}</option>
@@ -581,8 +580,7 @@ const AdminLiveTracking: React.FC = () => {
                 className="form-control" 
                 style={{ paddingLeft: "2.5rem" }}
                 value={hSearch}
-                onChange={e => setHSearch(e.target.value)}
-              />
+                onChange={e => setHSearch(e.target.value)} aria-label="Search History by Employee" />
             </div>
             <input 
               type="date" 
@@ -590,13 +588,13 @@ const AdminLiveTracking: React.FC = () => {
               value={hDate} 
               onChange={e => setHDate(e.target.value)}
             />
-            <select className="form-control" value={hOfficeFilter} onChange={e => setHOfficeFilter(e.target.value)}>
+            <select className="form-control" value={hOfficeFilter} onChange={e => setHOfficeFilter(e.target.value)} aria-label="Office">
               <option value="All">All Offices</option>
               {activeOffices.map(o => (
                 <option key={o.id} value={o.id}>{o.name}</option>
               ))}
             </select>
-            <select className="form-control" value={hStatusFilter} onChange={e => setHStatusFilter(e.target.value)}>
+            <select className="form-control" value={hStatusFilter} onChange={e => setHStatusFilter(e.target.value)} aria-label="Result">
               <option value="All">All Results</option>
               <option value="INSIDE_GEOFENCE">Inside Geofence</option>
               <option value="OUTSIDE_GEOFENCE">Outside Geofence</option>
@@ -682,7 +680,7 @@ const AdminLiveTracking: React.FC = () => {
                 <h2 style={{ fontSize: "1.25rem", fontWeight: 600 }}>{selectedEmp.name}</h2>
                 <div style={{ fontSize: "0.875rem", color: "var(--text-secondary)" }}>{selectedEmp.empId} • {selectedEmp.department}</div>
               </div>
-              <button className="icon-button" onClick={() => setSelectedEmp(null)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setSelectedEmp(null)} aria-label="Close"><X size={20} /></button>
             </div>
             
             <div className="drawer-body" style={{ padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1.5rem" }}>

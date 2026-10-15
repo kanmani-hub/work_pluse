@@ -484,9 +484,9 @@ const AdminPayroll: React.FC = () => {
         {viewMode === 'MONTH' && (
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-surface-elevated)' }}>
-              <button onClick={handlePrevMonth} className="icon-button" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)', padding: '0.5rem' }}><ChevronLeft size={16}/></button>
+              <button onClick={handlePrevMonth} className="icon-button" style={{ borderRight: '1px solid var(--border-color)', borderRadius: 'var(--radius-md) 0 0 var(--radius-md)', padding: '0.5rem' }} aria-label="Previous month"><ChevronLeft size={16}/></button>
               <div style={{ padding: '0.5rem 1rem', fontSize: '0.875rem', fontWeight: 600 }}>{monthLabel}</div>
-              <button onClick={handleNextMonth} className="icon-button" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0', padding: '0.5rem' }}><ChevronRight size={16}/></button>
+              <button onClick={handleNextMonth} className="icon-button" style={{ borderLeft: '1px solid var(--border-color)', borderRadius: '0 var(--radius-md) var(--radius-md) 0', padding: '0.5rem' }} aria-label="Next month"><ChevronRight size={16}/></button>
             </div>
             <button onClick={handleCurrentMonth} className="btn btn-outline" style={{ fontSize: '0.875rem', padding: '0.5rem 1rem' }}>Current Month</button>
           </div>
@@ -571,8 +571,8 @@ const AdminPayroll: React.FC = () => {
               </div>
             </div>
             
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem', position: 'relative' }}>
-              <div style={{ position: 'absolute', top: '12px', left: '20px', right: '20px', height: '2px', backgroundColor: 'var(--gray-200)', zIndex: 0 }}></div>
+            <div className="payroll-steps" role="list" aria-label="Payroll status steps" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem', position: 'relative' }}>
+              <div className="payroll-steps-line" style={{ position: 'absolute', top: '12px', left: '20px', right: '20px', height: '2px', backgroundColor: 'var(--gray-200)', zIndex: 0 }}></div>
               {['Draft', 'Calculated', 'Under Review', 'Approved', 'Payment Pending', 'Paid', 'Closed'].map((step, i) => {
                 const steps = ['DRAFT', 'CALCULATED', 'UNDER_REVIEW', 'APPROVED', 'PAYMENT_PENDING', 'PAID', 'CLOSED'];
                 const currentIndex = steps.indexOf(globalStatus);
@@ -580,7 +580,7 @@ const AdminPayroll: React.FC = () => {
                 const isCurrent = i === currentIndex;
                 
                 return (
-                  <div key={step} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', zIndex: 1, backgroundColor: 'var(--bg-surface-elevated)', padding: '0 0.5rem' }}>
+                  <div key={step} role="listitem" aria-current={isCurrent ? 'step' : undefined} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', zIndex: 1, backgroundColor: 'var(--bg-surface-elevated)', padding: '0 0.5rem' }}>
                     <div style={{ 
                       width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
                       backgroundColor: isCurrent ? 'var(--primary-600)' : isCompleted ? 'var(--success)' : 'var(--gray-200)',
@@ -598,11 +598,11 @@ const AdminPayroll: React.FC = () => {
           {/* Main Table */}
           <div className="card" style={{ padding: 0 }}>
             <div style={{ padding: '1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              <div style={{ position: 'relative', width: '220px' }}>
+              <div className="toolbar-search" style={{ position: 'relative', width: '220px', maxWidth: '100%' }}>
                 <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-                <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} />
+                <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} aria-label="Search employee" />
               </div>
-              <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+              <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Department">
                   <option value="All">All Departments</option>
                   {deptLoading ? (
                     <option disabled>Loading...</option>
@@ -615,7 +615,7 @@ const AdminPayroll: React.FC = () => {
                     </>
                   )}
                 </select>
-              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Status">
                 <option value="All">All Statuses</option>
                 <option value="NOT_GENERATED">Not Generated</option>
                 <option value="CALCULATED">Calculated</option>
@@ -639,7 +639,8 @@ const AdminPayroll: React.FC = () => {
                 <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>Generate payroll to create records for this month.</p>
               </div>
             ) : (
-              <div className="table-container desktop-only">
+              <div className="table-container payroll-records">
+                {/* Was "desktop-only": below 900px the payroll records were hidden with no mobile alternative. The table now scrolls horizontally inside its container instead. */}
                 <table className="table" style={{ width: '100%', minWidth: '1000px' }}>
                   <thead>
                     <tr>
@@ -827,7 +828,7 @@ const AdminPayroll: React.FC = () => {
               <div style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>{detailDrawer.employees?.first_name} {detailDrawer.employees?.last_name}</h2>
-                  <button className="icon-button" onClick={() => { setDetailDrawer(null); setDetailEmpData(null); }}><X size={20} /></button>
+                  <button className="icon-button" onClick={() => { setDetailDrawer(null); setDetailEmpData(null); }} aria-label="Close"><X size={20} /></button>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                   <span>{detailDrawer.employees?.employee_code}</span> • <span>{detailDrawer.employees?.departments?.name}</span>
@@ -1109,7 +1110,7 @@ const AdminPayroll: React.FC = () => {
           <div className="modal-content" style={{ maxWidth: '800px', width: '90%' }}>
             <div className="modal-header">
               <h2>Edit Salary Structure</h2>
-              <button className="icon-button" onClick={() => setShowSalaryEditor(null)}><X size={20}/></button>
+              <button className="icon-button" onClick={() => setShowSalaryEditor(null)} aria-label="Close"><X size={20}/></button>
             </div>
             <div style={{ padding: '1.5rem' }}>
               <SalaryEditor 
@@ -1146,7 +1147,7 @@ const AdminPayroll: React.FC = () => {
               <h2>Payslip</h2>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button className="btn btn-outline" onClick={() => window.print()} style={{ fontSize: '0.875rem', padding: '0.25rem 0.75rem' }}>Print</button>
-                <button className="icon-button" onClick={() => setShowPayslip(null)}><X size={20}/></button>
+                <button className="icon-button" onClick={() => setShowPayslip(null)} aria-label="Close"><X size={20}/></button>
               </div>
             </div>
             <div style={{ padding: '1.5rem', backgroundColor: 'var(--gray-50)' }}>
@@ -1171,15 +1172,15 @@ const AdminPayroll: React.FC = () => {
                 </div>
               </div>
 
-              <div><label className="form-label">Payment Date *</label><input required type="date" className="form-control" value={paymentForm.date} onChange={e => setPaymentForm({...paymentForm, date: e.target.value})} /></div>
+              <div><label className="form-label">Payment Date *</label><input required type="date" className="form-control" value={paymentForm.date} onChange={e => setPaymentForm({...paymentForm, date: e.target.value})} aria-label="Payment Date" /></div>
               <div>
                 <label className="form-label">Payment Method *</label>
-                <select className="form-control" value={paymentForm.method} onChange={e => setPaymentForm({...paymentForm, method: e.target.value})}>
+                <select className="form-control" value={paymentForm.method} onChange={e => setPaymentForm({...paymentForm, method: e.target.value})} aria-label="Payment Method">
                   <option>Bank Transfer</option><option>UPI</option><option>Cheque</option><option>Cash</option>
                 </select>
               </div>
-              <div><label className="form-label">Transaction Reference Number *</label><input required type="text" className="form-control" placeholder="e.g. TXN12345678" value={paymentForm.ref} onChange={e => setPaymentForm({...paymentForm, ref: e.target.value})} /></div>
-              <div><label className="form-label">Remarks (Optional)</label><input type="text" className="form-control" value={paymentForm.remarks} onChange={e => setPaymentForm({...paymentForm, remarks: e.target.value})} /></div>
+              <div><label className="form-label">Transaction Reference Number *</label><input required type="text" className="form-control" placeholder="e.g. TXN12345678" value={paymentForm.ref} onChange={e => setPaymentForm({...paymentForm, ref: e.target.value})} aria-label="Transaction Reference Number" /></div>
+              <div><label className="form-label">Remarks (Optional)</label><input type="text" className="form-control" value={paymentForm.remarks} onChange={e => setPaymentForm({...paymentForm, remarks: e.target.value})} aria-label="Remarks (Optional)" /></div>
 
               <div style={{ padding: '0.75rem', backgroundColor: 'var(--primary-50)', color: 'var(--primary-400)', borderRadius: 'var(--radius-md)', fontSize: '0.75rem', display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
                 <ShieldCheck size={16} /> I confirm that this salary payment has been successfully completed.
@@ -1203,7 +1204,7 @@ const AdminPayroll: React.FC = () => {
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--text-primary)' }}>Payroll Policy Configuration</h2>
                 <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Manage company payroll rules</div>
               </div>
-              <button className="btn btn-icon" onClick={() => setSettingsDrawer(false)}><X size={20} /></button>
+              <button className="btn btn-icon" onClick={() => setSettingsDrawer(false)} aria-label="Close"><X size={20} /></button>
             </div>
             <div className="drawer-body" style={{ display: 'flex', flexDirection: 'column', gap: '2rem', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '4rem 2rem' }}>
               <Settings size={64} style={{ color: 'var(--gray-400)' }} />
@@ -1296,7 +1297,7 @@ const AdminPayroll: React.FC = () => {
           <div className="modal-content" style={{ width: '90%', maxWidth: '600px' }}>
             <div className="modal-header">
               <h2 className="modal-title">Daily Deduction Breakdown</h2>
-              <button onClick={() => setDailyDetailModal(null)} className="icon-button"><X size={20}/></button>
+              <button onClick={() => setDailyDetailModal(null)} className="icon-button" aria-label="Close"><X size={20}/></button>
             </div>
             <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               <div>

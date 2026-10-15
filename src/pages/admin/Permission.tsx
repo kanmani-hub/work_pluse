@@ -318,7 +318,7 @@ const AdminPermission: React.FC = () => {
                     <div style={{ marginTop: 'auto', display: 'flex', gap: '0.5rem', paddingTop: '0.75rem' }}>
                       <button onClick={() => setApproveModal(r.id)} className="btn btn-primary" style={{ flex: 1, padding: '0.25rem 0', fontSize: '0.75rem' }}>Approve</button>
                       <button onClick={() => setRejectModal(r.id)} className="btn btn-outline" style={{ flex: 1, padding: '0.25rem 0', fontSize: '0.75rem', color: 'var(--danger-600)', borderColor: 'var(--danger-300)' }}>Reject</button>
-                      <button onClick={() => setDetailDrawer(r)} className="icon-button border"><Eye size={16}/></button>
+                      <button onClick={() => setDetailDrawer(r)} className="icon-button border" aria-label="View details"><Eye size={16}/></button>
                     </div>
                   </div>
                 ))}
@@ -329,12 +329,12 @@ const AdminPermission: React.FC = () => {
           {/* Main Table */}
           <div className="card" style={{ padding: 0 }}>
             <div style={{ padding: '1.25rem', borderBottom: '1px solid var(--border-color)', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              <div style={{ position: 'relative', width: '220px' }}>
+              <div className="toolbar-search" style={{ position: 'relative', width: '220px', maxWidth: '100%' }}>
                 <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-                <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} />
+                <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search employee..." className="form-control" style={{ paddingLeft: '2.25rem', fontSize: '0.875rem' }} aria-label="Search employee" />
               </div>
               
-              <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+              <select value={filterDept} onChange={e => setFilterDept(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Department">
                   <option value="All">All Departments</option>
                   {deptLoading ? (
                     <option disabled>Loading...</option>
@@ -348,7 +348,7 @@ const AdminPermission: React.FC = () => {
                   )}
                 </select>
 
-              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }}>
+              <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} aria-label="Status">
                 <option value="All">All Statuses</option><option>PENDING</option><option>APPROVED</option><option>REJECTED</option><option>REVOKED</option>
               </select>
               
@@ -482,7 +482,7 @@ const AdminPermission: React.FC = () => {
               <div style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>Permission Request</h2>
-                  <button className="icon-button" onClick={() => setDetailDrawer(null)}><X size={20} /></button>
+                  <button className="icon-button" onClick={() => setDetailDrawer(null)} aria-label="Close"><X size={20} /></button>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem', alignItems: 'center' }}>
                   {getStatusBadge(detailDrawer.status)}
@@ -600,7 +600,7 @@ const AdminPermission: React.FC = () => {
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '450px', animation: 'slideUp 0.3s', borderTop: '4px solid var(--danger)' }}>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem' }}>Reject Permission</h3>
             <form onSubmit={handleReject} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div><label className="form-label">Rejection Reason *</label><textarea required className="form-control" rows={3} value={reasonForm} onChange={e => setReasonForm(e.target.value)}></textarea></div>
+              <div><label className="form-label">Rejection Reason *</label><textarea required className="form-control" rows={3} value={reasonForm} onChange={e => setReasonForm(e.target.value)} aria-label="Rejection Reason"></textarea></div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
                 <button type="button" onClick={() => setRejectModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
                 <button type="submit" className="btn btn-primary" style={{ flex: 1, backgroundColor: 'var(--danger-600)', borderColor: 'var(--danger-600)' }}>Reject</button>
@@ -616,7 +616,7 @@ const AdminPermission: React.FC = () => {
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '450px', animation: 'slideUp 0.3s', borderTop: '4px solid var(--danger)' }}>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem' }}>Revoke Permission</h3>
             <form onSubmit={handleRevoke} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div><label className="form-label">Reason *</label><textarea required className="form-control" rows={3} value={reasonForm} onChange={e => setReasonForm(e.target.value)}></textarea></div>
+              <div><label className="form-label">Reason *</label><textarea required className="form-control" rows={3} value={reasonForm} onChange={e => setReasonForm(e.target.value)} aria-label="Reason"></textarea></div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
                 <button type="button" onClick={() => setRevokeModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
                 <button type="submit" className="btn btn-primary" style={{ flex: 1, backgroundColor: 'var(--danger-600)', borderColor: 'var(--danger-600)' }}>Revoke</button>
@@ -632,19 +632,19 @@ const AdminPermission: React.FC = () => {
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Add Permission (Admin)</h2>
-              <button className="icon-button" onClick={() => setAddDrawer(false)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setAddDrawer(false)} aria-label="Close"><X size={20} /></button>
             </div>
             <div className="drawer-body">
               <form onSubmit={e => { e.preventDefault(); setAddDrawer(false); showToast('Permission added successfully'); }} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                <div><label className="form-label">Employee</label><select className="form-control"><option>Select Employee</option></select></div>
-                <div><label className="form-label">Date</label><input type="date" className="form-control"/></div>
+                <div><label className="form-label">Employee</label><select className="form-control" aria-label="Employee"><option>Select Employee</option></select></div>
+                <div><label className="form-label">Date</label><input type="date" className="form-control" aria-label="Date" /></div>
                 <div style={{ display: 'flex', gap: '1rem' }}>
-                  <div style={{ flex: 1 }}><label className="form-label">Start Time</label><input type="time" className="form-control" defaultValue="14:00" id="pt_start"/></div>
-                  <div style={{ flex: 1 }}><label className="form-label">End Time</label><input type="time" className="form-control" defaultValue="15:30" id="pt_end"/></div>
+                  <div style={{ flex: 1 }}><label className="form-label">Start Time</label><input type="time" className="form-control" defaultValue="14:00" id="pt_start" aria-label="Start Time" /></div>
+                  <div style={{ flex: 1 }}><label className="form-label">End Time</label><input type="time" className="form-control" defaultValue="15:30" id="pt_end" aria-label="End Time" /></div>
                 </div>
-                <div><label className="form-label">Duration</label><input type="text" className="form-control" disabled value="1h 30m" style={{ backgroundColor: 'var(--gray-100)' }}/></div>
-                <div><label className="form-label">Reason *</label><textarea required className="form-control" rows={3}></textarea></div>
-                <div><label className="form-label">Status</label><select className="form-control"><option>Approved</option><option>Pending</option></select></div>
+                <div><label className="form-label">Duration</label><input type="text" className="form-control" disabled value="1h 30m" style={{ backgroundColor: 'var(--gray-100)' }} aria-label="Duration" /></div>
+                <div><label className="form-label">Reason *</label><textarea required className="form-control" rows={3} aria-label="Reason"></textarea></div>
+                <div><label className="form-label">Status</label><select className="form-control" aria-label="Status"><option>Approved</option><option>Pending</option></select></div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button type="submit" className="btn btn-primary">Save Permission</button></div>
               </form>
             </div>
@@ -658,7 +658,7 @@ const AdminPermission: React.FC = () => {
           <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
             <div className="drawer-header">
               <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Permission Rules</h2>
-              <button className="icon-button" onClick={() => setSettingsDrawer(false)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setSettingsDrawer(false)} aria-label="Close"><X size={20} /></button>
             </div>
             <div className="drawer-body">
               {permissionSettings.loading ? (
@@ -676,12 +676,12 @@ const AdminPermission: React.FC = () => {
                 <div>
                   <label className="form-label">Max Permissions Per Month (Hours)</label>
                   <input type="text" className="form-control" disabled
-                    value={permissionSettings.app ? `${permissionSettings.app.permissionMaxHoursPerMonth ?? 3} hours` : '—'} />
+                    value={permissionSettings.app ? `${permissionSettings.app.permissionMaxHoursPerMonth ?? 3} hours` : '—'} aria-label="Max Permissions Per Month (Hours)" />
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Enforced on employee requests and used by payroll deductions. Change it in Admin → Settings → Permission.</div>
                 </div>
                 <div>
                   <label className="form-label">Max Duration Per Request (Hours)</label>
-                  <input type="text" className="form-control" disabled value="Not available yet" />
+                  <input type="text" className="form-control" disabled value="Not available yet" aria-label="Max Duration Per Request (Hours)" />
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>There is no stored per-request limit yet, so this cannot be configured.</div>
                 </div>
                 <PersistedSettingToggle stored={permissionSettings} settingKey="permissionApprovalRequired" label="Require Manager Approval"

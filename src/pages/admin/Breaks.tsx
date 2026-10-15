@@ -182,12 +182,11 @@ const AdminBreaks: React.FC = () => {
               type="date"
               className="form-control"
               value={filterDate}
-              onChange={(e) => setFilterDate(e.target.value)}
-            />
+              onChange={(e) => setFilterDate(e.target.value)} aria-label="Date" />
           </div>
           <div style={{ flex: 1, minWidth: '200px' }}>
             <label className="form-label">Status Filter</label>
-            <select className="form-select" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+            <select className="form-select" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} aria-label="Status Filter">
               <option value="ALL">All Break Statuses</option>
               <option value="WITHIN">Within Limit</option>
               <option value="EXCESS">Excess Break</option>

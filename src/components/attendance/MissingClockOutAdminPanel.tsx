@@ -123,7 +123,7 @@ const MissingClockOutAdminPanel: React.FC<{ onChanged?: () => void }> = ({ onCha
     <div className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.75rem' }}>
         <h3 className="card-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}><AlertTriangle size={18} /> Missing Clock-Outs</h3>
-        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filter} onChange={e => setFilter(e.target.value as any)}>
+        <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filter} onChange={e => setFilter(e.target.value as any)} aria-label="Status">
           <option value="OPEN">Open and pending</option>
           <option value="ALL">All (last 62 days)</option>
         </select>

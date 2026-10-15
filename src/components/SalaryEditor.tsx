@@ -100,8 +100,7 @@ const SalaryEditor: React.FC<SalaryEditorProps> = ({ employeeId, payrollYear, pa
             required 
             className="form-control" 
             value={salaryForm.basic_salary ?? ''} 
-            onChange={e => setSalaryForm({...salaryForm, basic_salary: e.target.value})} 
-          />
+            onChange={e => setSalaryForm({...salaryForm, basic_salary: e.target.value})} aria-label="Gross Salary" />
         </div>
         
         <div style={{ display: 'flex', gap: '1rem' }}>

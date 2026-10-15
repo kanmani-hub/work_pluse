@@ -265,16 +265,16 @@ const AdminShifts: React.FC = () => {
           
           <div style={{ position: 'relative', width: '250px', flex: '1 1 auto', maxWidth: '300px' }}>
             <Search size={18} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search shift name or code..." className="form-control" style={{ paddingLeft: '2.25rem' }} />
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search shift name or code..." className="form-control" style={{ paddingLeft: '2.25rem' }} aria-label="Search shift name or code" />
           </div>
           
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto' }}>
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="form-control" style={{ width: 'auto' }} aria-label="Status">
             <option value="All">All Statuses</option>
             <option>Active</option>
             <option>Inactive</option>
           </select>
 
-          <select value={filterOvernight} onChange={e => setFilterOvernight(e.target.value)} className="form-control" style={{ width: 'auto' }}>
+          <select value={filterOvernight} onChange={e => setFilterOvernight(e.target.value)} className="form-control" style={{ width: 'auto' }} aria-label="Type">
             <option value="All">All Types</option>
             <option>Non-Overnight</option>
             <option>Overnight</option>
@@ -332,7 +332,7 @@ const AdminShifts: React.FC = () => {
                       </span>
                     </td>
                     <td style={{ textAlign: 'right', position: 'relative' }}>
-                      <button onClick={() => setActiveMenu(activeMenu === shift.id ? null : shift.id)} className="icon-button"><MoreVertical size={18}/></button>
+                      <button onClick={() => setActiveMenu(activeMenu === shift.id ? null : shift.id)} className="icon-button" aria-label="More actions"><MoreVertical size={18}/></button>
                       
                       {activeMenu === shift.id && (
                         <div className="dropdown-menu" style={{ position: 'absolute', right: '30px', top: '12px', zIndex: 10 }}>
@@ -390,7 +390,7 @@ const AdminShifts: React.FC = () => {
                   </p>
                 )}
               </div>
-              <button className="icon-button" onClick={() => setShowForm(false)}><X size={20} /></button>
+              <button className="icon-button" onClick={() => setShowForm(false)} aria-label="Close"><X size={20} /></button>
             </div>
             
             <form onSubmit={handleSaveForm} className="drawer-body" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -425,15 +425,15 @@ const AdminShifts: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
                     <label className="form-label">Shift Name *</label>
-                    <input required className="form-control" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="e.g. Morning Shift" />
+                    <input required className="form-control" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="e.g. Morning Shift" aria-label="Shift Name" />
                   </div>
                   <div>
                     <label className="form-label">Shift Code *</label>
-                    <input required className="form-control" style={{ textTransform: 'uppercase' }} value={formData.code || ''} onChange={e => setFormData({...formData, code: e.target.value})} placeholder="e.g. MORNING" />
+                    <input required className="form-control" style={{ textTransform: 'uppercase' }} value={formData.code || ''} onChange={e => setFormData({...formData, code: e.target.value})} placeholder="e.g. MORNING" aria-label="Shift Code" />
                   </div>
                   <div style={{ gridColumn: '1 / -1' }}>
                     <label className="form-label">Description</label>
-                    <textarea className="form-control" rows={2} value={formData.desc || ''} onChange={e => setFormData({...formData, desc: e.target.value})} placeholder="Brief description..." />
+                    <textarea className="form-control" rows={2} value={formData.desc || ''} onChange={e => setFormData({...formData, desc: e.target.value})} placeholder="Brief description..." aria-label="Description" />
                   </div>
                 </div>
               </section>
@@ -444,12 +444,12 @@ const AdminShifts: React.FC = () => {
                   
                   <div>
                     <label className="form-label">Start Time *</label>
-                    <input required type="time" className="form-control" value={formData.start || ''} onChange={e => setFormData({...formData, start: e.target.value})} />
+                    <input required type="time" className="form-control" value={formData.start || ''} onChange={e => setFormData({...formData, start: e.target.value})} aria-label="Start Time" />
                   </div>
                   
                   <div>
                     <label className="form-label">End Time *</label>
-                    <input required type="time" className="form-control" value={formData.end || ''} onChange={e => setFormData({...formData, end: e.target.value})} />
+                    <input required type="time" className="form-control" value={formData.end || ''} onChange={e => setFormData({...formData, end: e.target.value})} aria-label="End Time" />
                     
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}>
                       <input type="checkbox" id="overnight" checked={formData.overnight || false} onChange={e => setFormData({...formData, overnight: e.target.checked})} style={{ cursor: 'pointer' }} />
@@ -469,17 +469,17 @@ const AdminShifts: React.FC = () => {
 
                   <div>
                     <label className="form-label">Required Working Hours *</label>
-                    <input required type="number" step="0.5" min="1" className="form-control" value={formData.reqHours || ''} onChange={e => setFormData({...formData, reqHours: e.target.value})} placeholder="e.g. 8" />
+                    <input required type="number" step="0.5" min="1" className="form-control" value={formData.reqHours || ''} onChange={e => setFormData({...formData, reqHours: e.target.value})} placeholder="e.g. 8" aria-label="Required Working Hours" />
                   </div>
 
                   <div style={{ display: 'flex', gap: '1rem' }}>
                     <div style={{ flex: 1 }}>
                       <label className="form-label">Min. Hours</label>
-                      <input type="number" step="0.5" className="form-control" placeholder="4" />
+                      <input type="number" step="0.5" className="form-control" placeholder="4" aria-label="Min. Hours" />
                     </div>
                     <div style={{ flex: 1 }}>
                       <label className="form-label">Max. Hours</label>
-                      <input type="number" step="0.5" className="form-control" placeholder="12" />
+                      <input type="number" step="0.5" className="form-control" placeholder="12" aria-label="Max. Hours" />
                     </div>
                   </div>
                 </div>
@@ -491,13 +491,13 @@ const AdminShifts: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem', marginBottom: '1.25rem' }}>
                   <div className="rule-box">
                     <label className="form-label">Grace Period (Mins)</label>
-                    <input type="number" className="form-control" value={formData.grace || ''} onChange={e => setFormData({...formData, grace: e.target.value})} placeholder="15" />
+                    <input type="number" className="form-control" value={formData.grace || ''} onChange={e => setFormData({...formData, grace: e.target.value})} placeholder="15" aria-label="Grace Period (Mins)" />
                     <div className="rule-desc">Clock-in within this period is not treated as late.</div>
                   </div>
                   
                   <div className="rule-box">
                     <label className="form-label">Break Duration (Mins)</label>
-                    <input type="number" className="form-control" value={formData.breakMins || ''} onChange={e => setFormData({...formData, breakMins: e.target.value})} placeholder="60" />
+                    <input type="number" className="form-control" value={formData.breakMins || ''} onChange={e => setFormData({...formData, breakMins: e.target.value})} placeholder="60" aria-label="Break Duration (Mins)" />
                     <div className="rule-desc">Required break tracking or automatic deduction.</div>
                   </div>
                 </div>
@@ -559,7 +559,7 @@ const AdminShifts: React.FC = () => {
                   </div>
                   <div>
                     <label className="form-label">Default Work Mode</label>
-                    <select className="form-control" value={formData.mode || 'Office'} onChange={e => setFormData({...formData, mode: e.target.value})}>
+                    <select className="form-control" value={formData.mode || 'Office'} onChange={e => setFormData({...formData, mode: e.target.value})} aria-label="Default Work Mode">
                       <option>Office</option>
                       <option>WFH</option>
                       <option>Hybrid</option>
@@ -596,7 +596,7 @@ const AdminShifts: React.FC = () => {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                   <span className={`badge ${showDetail.status === 'Active' ? 'badge-success' : 'badge-gray'}`}>{showDetail.status}</span>
-                  <button className="icon-button" onClick={() => setShowDetail(null)}><X size={20} /></button>
+                  <button className="icon-button" onClick={() => setShowDetail(null)} aria-label="Close"><X size={20} /></button>
                 </div>
               </div>
             </div>
@@ -659,12 +659,12 @@ const AdminShifts: React.FC = () => {
             <form onSubmit={triggerMockConflict} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label className="form-label">Effective Date(s)</label>
-                <input required type="date" className="form-control" defaultValue="2026-09-25" />
+                <input required type="date" className="form-control" defaultValue="2026-09-25" aria-label="Effective Date(s)" />
               </div>
               
               <div style={{ position: 'relative' }}>
                 <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-                <input type="text" className="form-control" placeholder="Search employees..." style={{ paddingLeft: '2.25rem' }} />
+                <input type="text" className="form-control" placeholder="Search employees..." style={{ paddingLeft: '2.25rem' }} aria-label="Search employees" />
               </div>
               
               <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>

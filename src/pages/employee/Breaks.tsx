@@ -38,19 +38,24 @@ const EmployeeBreaks: React.FC = () => {
   useEffect(() => {
     fetchBreaks();
 
-    const employeeId = user?.id; // Assuming auth user id resolves to employee id in realtimeService internally if we map it, wait, subscribeToMyBreaks takes employeeId. Let's fetch employeeId.
-    let subscription: any;
-    
+    // The employee id is looked up asynchronously. If this effect is cleaned up before the lookup
+    // finishes (unmount, a new `user`, or React StrictMode's mount → unmount → mount in development),
+    // the late result must not open a channel: nothing would ever remove it, and the next subscribe
+    // for the same employee would receive that already-subscribed channel.
+    let cancelled = false;
+    let subscription: ReturnType<typeof realtimeService.subscribeToMyBreaks> = null;
+
     attendanceService.getCurrentEmployeeId().then(empId => {
-      if (empId) {
-        subscription = realtimeService.subscribeToMyBreaks(empId, () => {
-          fetchBreaks();
-        });
-      }
+      if (cancelled || !empId) return;
+      subscription = realtimeService.subscribeToMyBreaks(empId, () => {
+        fetchBreaks();
+      });
     });
 
     return () => {
+      cancelled = true;
       if (subscription) realtimeService.unsubscribe(subscription);
+      subscription = null;
     };
   }, [user]);
 
