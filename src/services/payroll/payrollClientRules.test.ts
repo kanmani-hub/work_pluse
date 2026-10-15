@@ -315,3 +315,9 @@ describe('Loss of Pay (LOP): classification result → deduction', () => {
     expect(/^\d{4}-\d{2}-\d{2}$/.test(call[4])).toBe(true);
   });
 });
+
+// Missing clock-out payroll adjustments (PROPOSED_missing_clock_out_workflow.sql): none in these scenarios.
+// Without this the automock returns undefined, which payroll correctly treats as "could not be loaded".
+beforeEach(() => {
+  (payrollDataService._fetchPayrollAdjustments as any).mockResolvedValue({ data: [], error: null, notSetUp: false });
+});

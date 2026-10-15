@@ -1,5 +1,6 @@
 import React from 'react';
 import { Lock } from 'lucide-react';
+import { earningAdjustmentItems } from '../services/payroll/payrollRules';
 
 interface PayslipDocumentProps {
   currentPayslip: any;
@@ -44,6 +45,12 @@ const PayslipDocument: React.FC<PayslipDocumentProps> = ({ currentPayslip }) => 
             <span style={{ color: 'var(--success)', fontWeight: 500 }}>Approved Overtime:</span>
             <span style={{ fontWeight: 600, color: 'var(--success)' }}>+₹{currentPayslip ? Number(currentPayslip.payroll?.overtime_amount || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}) : '0.00'}</span>
           </div>
+          {earningAdjustmentItems(currentPayslip?.payroll).map((e, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ color: 'var(--success)', fontWeight: 500 }}>{e.name}:</span>
+              <span style={{ fontWeight: 600, color: 'var(--success)' }}>+₹{e.amount.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}</span>
+            </div>
+          ))}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '2px dashed var(--border-color)', paddingTop: '1rem', marginTop: '0.5rem' }}>
             <span style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)' }}>Net Salary:</span>
             <span style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--success)' }}>₹{currentPayslip ? Number(currentPayslip.payroll?.net_salary).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}) : '0.00'}</span>

@@ -267,3 +267,9 @@ describe('Saved payroll settings drive the daily rate (changing a setting change
     }
   });
 });
+
+// Missing clock-out payroll adjustments (PROPOSED_missing_clock_out_workflow.sql): none in these scenarios.
+// Without this the automock returns undefined, which payroll correctly treats as "could not be loaded".
+beforeEach(() => {
+  (payrollDataService._fetchPayrollAdjustments as any).mockResolvedValue({ data: [], error: null, notSetUp: false });
+});

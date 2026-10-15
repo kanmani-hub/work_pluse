@@ -427,3 +427,9 @@ describe('Policy 2026-10-09: unresolved review flags block approval; Admins reso
     }
   });
 });
+
+// Missing clock-out payroll adjustments (PROPOSED_missing_clock_out_workflow.sql): none in these scenarios.
+// Without this the automock returns undefined, which payroll correctly treats as "could not be loaded".
+beforeEach(() => {
+  (payrollDataService._fetchPayrollAdjustments as any).mockResolvedValue({ data: [], error: null, notSetUp: false });
+});

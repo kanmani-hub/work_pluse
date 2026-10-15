@@ -7,6 +7,7 @@ import { formatDay } from '../../services/notifications/notificationRules';
 import { formatShiftClock } from '../../services/attendance/employeeDashboardRules';
 import { companyDateStr, COMPANY_TIMEZONE } from '../../utils/companyDate';
 import RecordsModal from '../../components/common/RecordsModal';
+import MissingClockOutAdminPanel from '../../components/attendance/MissingClockOutAdminPanel';
 import { clickableCardProps } from '../../services/common/cardDetails';
 import { overtimeCards, type OvertimeCard } from '../../services/overtime/overtimeCardRules';
 
@@ -111,6 +112,8 @@ const AdminOvertime: React.FC = () => {
       )}
       {toast && <div className="card" role="status" style={{ borderLeft: '4px solid var(--success)', color: 'var(--success)' }}>{toast}</div>}
 
+      <MissingClockOutAdminPanel onChanged={load} />
+
       <div className="tracking-kpi-grid">
         <div className="tracking-kpi-card" {...clickableCardProps('Pending review', () => setOpenCard('pending'))}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Pending review</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{kpi.pending}</div></div>
         <div className="tracking-kpi-card" {...clickableCardProps('Approved this month', () => setOpenCard('approved'))}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Approved this month</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{formatHours(kpi.approvedHours)}</div></div>
@@ -149,12 +152,14 @@ const AdminOvertime: React.FC = () => {
                     <td>{formatHours(Number(r.eligible_overtime_hours))}</td>
                     <td>{formatHours(Number(r.requested_overtime_hours))}</td>
                     <td style={{ fontWeight: 600 }}>{formatHours(r.status === 'APPROVED' ? Number(r.approved_overtime_hours) : 0)}</td>
-                    <td><span className={`badge ${STATUS_BADGE[r.status] || 'badge-gray'}`}>{r.status}</span></td>
+                    <td><span className={`badge ${STATUS_BADGE[r.status] || 'badge-gray'}`}>{r.status}</span>{r.request_type === 'MISSING_CLOCK_OUT' && <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Clock-out correction</div>}</td>
                     <td style={{ maxWidth: '200px', overflowWrap: 'anywhere', fontSize: '0.8125rem' }}>{r.employee_reason}</td>
                     <td style={{ maxWidth: '200px', overflowWrap: 'anywhere', fontSize: '0.8125rem' }}>{r.admin_remarks || '—'}</td>
                     <td style={{ fontSize: '0.75rem' }}>{fmtTs(r.created_at)}</td>
                     <td style={{ fontSize: '0.75rem' }}>{fmtTs(r.reviewed_at)}</td>
-                    <td>{r.status === 'PENDING' && (
+                    <td>{r.status === 'PENDING' && r.request_type === 'MISSING_CLOCK_OUT' && (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Review under Missing Clock-Outs</span>
+                    )}{r.status === 'PENDING' && r.request_type !== 'MISSING_CLOCK_OUT' && (
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button className="btn btn-primary" style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem' }} onClick={() => openApprove(r)}><CheckCircle2 size={14} /> Approve</button>
                         <button className="btn btn-outline" style={{ padding: '0.25rem 0.625rem', fontSize: '0.75rem', color: 'var(--danger)' }} onClick={() => openReject(r)}><XCircle size={14} /> Reject</button>

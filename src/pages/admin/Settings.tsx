@@ -720,6 +720,37 @@ const AdminSettings: React.FC = () => {
           </div>
         </div>
       )}
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>Missing Clock-Out</h3>
+      <div className="help-text" style={{ marginBottom: '0.75rem' }}>
+        A clock-in without a clock-out after shift end + the auto clock-out grace period is a missing clock-out. No clock-out time is assumed.
+        The employee submits a correction (and overtime, if any) for admin approval. These rules are enforced by the database once
+        <code> PROPOSED_missing_clock_out_workflow.sql</code> is applied.
+      </div>
+      <div className="form-grid">
+        <div>
+          <label className="form-label">Maximum additional working time (hours)</label>
+          <input type="number" min="0" step="0.25" className="form-control" value={settings.payroll.missingClockOutMaxAdditionalHours ?? 3}
+            onChange={e => handleChangePayroll('missingClockOutMaxAdditionalHours', e.target.value === '' ? null : parseFloat(e.target.value))}/>
+          <div className="help-text">Time claimed beyond this is shown to the admin as excess; it is never silently dropped.</div>
+        </div>
+      </div>
+      <div className="toggle-row" style={{ marginTop: '1rem' }}>
+        <div>
+          <div style={{ fontWeight: 600 }}>Deduct for a rejected missing clock-out</div>
+          <div className="help-text">A fixed amount per case, applied only when an admin rejects the correction (or records it without one). A pending case is never deducted: it is settled in a later payroll.</div>
+        </div>
+        <input type="checkbox" className="toggle" checked={!!settings.payroll.enableMissingClockOutDeduction} onChange={e => handleChangePayroll('enableMissingClockOutDeduction', e.target.checked)}/>
+      </div>
+      {settings.payroll.enableMissingClockOutDeduction && (
+        <div className="form-grid" style={{ marginTop: '0.5rem' }}>
+          <div>
+            <label className="form-label">Deduction per case (₹)</label>
+            <input type="number" min="0" className="form-control" value={settings.payroll.missingClockOutDeductionAmount ?? 0}
+              onChange={e => handleChangePayroll('missingClockOutDeductionAmount', e.target.value === '' ? null : parseFloat(e.target.value))}/>
+          </div>
+        </div>
+      )}
     </div>
   );
 

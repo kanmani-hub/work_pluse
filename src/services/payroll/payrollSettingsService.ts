@@ -65,6 +65,12 @@ export interface PayrollSettings {
   overtimeRateType: 'multiplier' | 'fixed';
   overtimeMultiplier: number;
   overtimeFixedRate: number;
+
+  // Missing clock-out (policy 2026-10-14). The limit caps additional working time for this workflow;
+  // the deduction is a separate, fixed amount per REJECTED case (never derived from the missing clock-out).
+  missingClockOutMaxAdditionalHours: number;
+  enableMissingClockOutDeduction: boolean;
+  missingClockOutDeductionAmount: number;
 }
 
 const DEFAULT_SETTINGS: PayrollSettings = {
@@ -116,6 +122,10 @@ const DEFAULT_SETTINGS: PayrollSettings = {
   overtimeRateType: 'multiplier',
   overtimeMultiplier: 1.5,
   overtimeFixedRate: 0,
+
+  missingClockOutMaxAdditionalHours: 3,
+  enableMissingClockOutDeduction: false,   // HR switches it on and sets the amount
+  missingClockOutDeductionAmount: 0,
 };
 
 export const payrollSettingsService = {

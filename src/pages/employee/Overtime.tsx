@@ -8,6 +8,7 @@ import { formatDay } from '../../services/notifications/notificationRules';
 import { formatShiftClock, formatCompanyTime } from '../../services/attendance/employeeDashboardRules';
 import { companyDateStr } from '../../utils/companyDate';
 import RecordsModal from '../../components/common/RecordsModal';
+import MissingClockOutEmployeePanel from '../../components/attendance/MissingClockOutEmployeePanel';
 import { clickableCardProps } from '../../services/common/cardDetails';
 import { myOvertimeCards, type MyOvertimeCard } from '../../services/common/myRequestCards';
 
@@ -159,6 +160,8 @@ const EmployeeOvertime: React.FC = () => {
       )}
       {toast && <div className="card" role="status" style={{ borderLeft: '4px solid var(--success)', color: 'var(--success)' }}>{toast}</div>}
 
+      <MissingClockOutEmployeePanel onChanged={load} />
+
       <div className="tracking-kpi-grid">
         <div className="tracking-kpi-card" {...clickableCardProps('Pending requests', () => setOpenCard('pending'))}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Pending requests</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{kpi.pending}</div></div>
         <div className="tracking-kpi-card" {...clickableCardProps('Approved this month', () => setOpenCard('approved'))}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Approved this month</div><div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{formatHours(Math.round(kpi.approvedHours * 100) / 100)}</div></div>
@@ -211,7 +214,7 @@ const EmployeeOvertime: React.FC = () => {
                     <td>{formatHours(Number(r.eligible_overtime_hours))}</td>
                     <td>{formatHours(Number(r.requested_overtime_hours))}</td>
                     <td style={{ fontWeight: 600 }}>{formatHours(r.status === 'APPROVED' ? Number(r.approved_overtime_hours) : 0)}</td>
-                    <td><span className={`badge ${STATUS_BADGE[r.status] || 'badge-gray'}`}>{r.status}</span></td>
+                    <td><span className={`badge ${STATUS_BADGE[r.status] || 'badge-gray'}`}>{r.status}</span>{r.request_type === 'MISSING_CLOCK_OUT' && <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Clock-out correction</div>}</td>
                     <td style={{ maxWidth: '220px', overflowWrap: 'anywhere' }}>{r.employee_reason}</td>
                     <td style={{ maxWidth: '220px', overflowWrap: 'anywhere' }}>{r.admin_remarks || '—'}</td>
                     <td style={{ fontSize: '0.75rem' }}>{r.created_at ? new Date(r.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) : '—'}</td>

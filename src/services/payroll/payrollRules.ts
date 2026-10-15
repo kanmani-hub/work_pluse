@@ -142,6 +142,23 @@ export function parsePayrollSnapshot(remarks: unknown): any | null {
   try { const v = JSON.parse(remarks); return v && typeof v === 'object' ? v : null; } catch { return null; }
 }
 
+/**
+ * Earning lines other than gross salary and approved overtime (e.g. a refunded missing clock-out
+ * deduction). They are part of net pay but not of gross_salary, so every payslip view must list them.
+ * Reads payroll_items when loaded, otherwise the stored calculation snapshot.
+ */
+export function earningAdjustmentItems(payroll: any): { name: string; amount: number }[] {
+  const standard = ['Gross Salary', 'Approved Overtime'];
+  const fromItems = (Array.isArray(payroll?.payroll_items) ? payroll.payroll_items : [])
+    .filter((i: any) => i?.item_type === 'EARNING' && !standard.includes(i.item_name) && Number(i.amount) > 0)
+    .map((i: any) => ({ name: String(i.item_name), amount: Number(i.amount) }));
+  if (fromItems.length > 0) return fromItems;
+  const snap = parsePayrollSnapshot(payroll?.remarks) || parsePayrollSnapshot(payroll?.notes);
+  return (Array.isArray(snap?.earningAdjustments) ? snap.earningAdjustments : [])
+    .filter((e: any) => Number(e?.amount) > 0)
+    .map((e: any) => ({ name: String(e.name), amount: Number(e.amount) }));
+}
+
 /** Unresolved attendance review flags stored with a payroll calculation. */
 export function unresolvedReviewItems(remarks: unknown): { date: string; type?: string; reason: string }[] {
   const snap = parsePayrollSnapshot(remarks);

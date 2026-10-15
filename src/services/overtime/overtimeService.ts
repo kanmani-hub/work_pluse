@@ -162,6 +162,8 @@ export const overtimeService = {
     const { data, error } = await table()
       .select('*, employee:employee_id(first_name, last_name, employee_code), shift:shift_id(name, start_time, end_time, crosses_midnight)')
       .order('created_at', { ascending: false });
+    // Includes missing clock-out corrections (request_type MISSING_CLOCK_OUT): their approved hours are
+    // approved overtime too, but they are decided only under Missing Clock-Outs (see reviewRequest).
     return { data, error: friendly(error, 'Unable to load overtime requests.') };
   },
 
@@ -176,6 +178,9 @@ export const overtimeService = {
     const { data: req, error: loadErr } = await table().select('*').eq('id', id).maybeSingle();
     if (loadErr) return { error: friendly(loadErr, 'Unable to load the request.') };
     if (!req) return { error: new Error('Overtime request not found.') };
+    // A missing clock-out correction also closes the attendance: only its own (atomic) workflow may decide it
+    if (req.request_type === 'MISSING_CLOCK_OUT') return { error: new Error('This is a missing clock-out correction. Review it under Missing Clock-Outs.') };
+    if (req.employee_id === adminId) return { error: new Error('You cannot review your own request.') };
     if (req.status !== 'PENDING') return { error: new Error(`This request has already been ${String(req.status).toLowerCase()}.`) };
 
     let approved: number | null = null;

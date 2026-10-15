@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { payrollService } from '../../services/payroll/payrollService';
+import { earningAdjustmentItems } from '../../services/payroll/payrollRules';
 import PayslipDocument from '../../components/PayslipDocument';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -102,6 +103,9 @@ const EmployeePayslip: React.FC = () => {
     return items;
   };
 
+  // Earning adjustments (e.g. a refunded missing clock-out deduction): separate lines, never part of gross salary
+  const getEarningAdjustments = () => earningAdjustmentItems(currentPayroll);
+
   // Get attendance/leave/permission summary
   const getAttendanceSummary = () => {
     const summary = getDataSummary();
@@ -150,6 +154,7 @@ const EmployeePayslip: React.FC = () => {
     const monthYear = `${getMonthName(currentPayroll.payroll_month)} ${currentPayroll.payroll_year}`;
     const paymentInfo = getPaymentInfo();
     const deductions = getDeductionItems();
+    const earningAdjustments = getEarningAdjustments();
     const totalDeductions = Number(currentPayroll.total_deductions);
     
     const html = `
@@ -193,6 +198,7 @@ const EmployeePayslip: React.FC = () => {
     <tr><td>Base Salary</td><td class="right">₹${Number(currentPayroll.basic_salary).toLocaleString('en-IN', {maximumFractionDigits:2})}</td></tr>
     ${Number(currentPayroll.total_allowances) > 0 ? `<tr><td>Allowances</td><td class="right">₹${Number(currentPayroll.total_allowances).toLocaleString('en-IN', {maximumFractionDigits:2})}</td></tr>` : ''}
     <tr><td>Overtime Pay</td><td class="right">₹${Number(currentPayroll.overtime_amount).toLocaleString('en-IN', {maximumFractionDigits:2})}</td></tr>
+    ${earningAdjustments.map(e => `<tr><td>${e.name}</td><td class="right">₹${e.amount.toLocaleString('en-IN', {maximumFractionDigits:2})}</td></tr>`).join('')}
     <tr class="total-row"><td>Gross Earnings</td><td class="right">₹${Number(currentPayroll.gross_salary).toLocaleString('en-IN', {maximumFractionDigits:2})}</td></tr>
   </table>
 
@@ -328,6 +334,12 @@ const EmployeePayslip: React.FC = () => {
                     <span style={{ color: 'var(--text-secondary)' }}>Overtime Pay</span>
                     <span style={{ fontWeight: 500 }}>₹{Number(currentPayroll.overtime_amount).toLocaleString('en-IN', {maximumFractionDigits:2})}</span>
                   </div>
+                  {getEarningAdjustments().map((e, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--text-secondary)' }}>{e.name}</span>
+                      <span style={{ fontWeight: 500, color: 'var(--success)' }}>₹{e.amount.toLocaleString('en-IN', {maximumFractionDigits:2})}</span>
+                    </div>
+                  ))}
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.5rem', paddingTop: '0.75rem', borderTop: '1px dashed var(--border-color)', fontWeight: 600, fontSize: '1rem' }}>
                     <span>Gross Earnings</span>
                     <span>₹{Number(currentPayroll.gross_salary).toLocaleString('en-IN', {maximumFractionDigits:2})}</span>

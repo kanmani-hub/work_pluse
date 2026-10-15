@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useGlobalSettings } from '../../services/settings/globalSettingsService';
 import { useNavigate } from 'react-router-dom';
+import MissingClockOutEmployeePanel from '../../components/attendance/MissingClockOutEmployeePanel';
 import { 
   Clock, Calendar, MapPin, Coffee, LogOut, CheckCircle2, 
   AlertTriangle, FileText, Home, ShieldAlert, ShieldCheck,
@@ -586,6 +587,9 @@ const EmployeeDashboard: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {/* Missing clock-out alert (nothing is assumed: the employee submits a correction for approval) */}
+      <MissingClockOutEmployeePanel compact onOpenFull={() => navigate('/employee/overtime')} />
 
       {/* Main Grid: Shift & Clock Card vs Quick Actions */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))', gap: '1.5rem' }}>

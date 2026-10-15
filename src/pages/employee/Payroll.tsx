@@ -9,6 +9,7 @@ import { payrollService } from '../../services/payroll/payrollService';
 import { payrollAuditService } from '../../services/payroll/payrollAuditService';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { useAuth } from '../../context/AuthContext';
+import { earningAdjustmentItems } from '../../services/payroll/payrollRules';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -97,6 +98,8 @@ const EmployeePayroll: React.FC = () => {
 
   const currentSummary = parseDataSummary(currentPayroll) || {};
   const deductionItems = currentSummary?.deductionBreakdown || [];
+  // e.g. a refunded missing clock-out deduction: part of net pay, not of gross salary
+  const earningAdjustments = currentPayroll ? earningAdjustmentItems(currentPayroll) : [];
   const currentMonthLabel = currentPayroll ? `${getMonthName(currentPayroll.payroll_month)} ${currentPayroll.payroll_year}` : 'No Data';
 
   return (
@@ -168,9 +171,16 @@ const EmployeePayroll: React.FC = () => {
                 </div>
               )}
 
+              {earningAdjustments.map((e, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--gray-600)' }}>{e.name}</span>
+                  <span style={{ fontWeight: 500 }}>₹{e.amount.toLocaleString('en-IN', {maximumFractionDigits:2})}</span>
+                </div>
+              ))}
+
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.5rem', paddingTop: '0.75rem', borderTop: '1px dashed var(--border-color)', fontSize: '1rem', fontWeight: 700 }}>
                 <span>TOTAL EARNINGS</span>
-                <span>₹{(Number(currentPayroll.gross_salary) + Number(currentPayroll.overtime_amount)).toLocaleString('en-IN', {maximumFractionDigits:2})}</span>
+                <span>₹{(Number(currentPayroll.gross_salary) + Number(currentPayroll.overtime_amount) + earningAdjustments.reduce((t, e) => t + e.amount, 0)).toLocaleString('en-IN', {maximumFractionDigits:2})}</span>
               </div>
             </div>
           </div>

@@ -12,6 +12,13 @@ import type { PayrollEmployeeData } from './payrollDataService';
 import { overtimePayAmount, statusChangeError, paymentBlockReason, canRecordPayment, validatePaymentAmount, validatePaymentDate, paymentDateToTimestamp, paymentRpcErrorMessage, WFH_DEDUCTION_POLICY_APPROVED, approvalBlockReason, resolutionMap, resolutionError, parsePayrollSnapshot } from './payrollRules';
 import type { ReviewResolution, ReviewDecisionValue } from './payrollRules';
 import { companyDateStr } from '../../utils/companyDate';
+import { missingClockOutPayrollLines, isMissingClockOutSchemaError, staleMissingClockOutReason } from '../attendance/missingClockOutRules';
+
+/** Missing clock-out adjustment ids a calculated payroll included (stored with the calculation). */
+export function settledAdjustmentIds(remarks: unknown): string[] {
+  const ids = parsePayrollSnapshot(remarks)?.missingClockOutAdjustments?.ids;
+  return Array.isArray(ids) ? ids.filter((x: unknown) => typeof x === 'string' && x.length > 0) : [];
+}
 
 export const payrollService = {
   /**
@@ -327,15 +334,16 @@ export const payrollService = {
     const startDate = periodStart;
     const endDate = periodEnd;
 
-    const [daysResult, wfhResult, permissionResult, approvedOt] = await Promise.all([
+    const [daysResult, wfhResult, permissionResult, approvedOt, adjustmentsResult] = await Promise.all([
       payrollDataService._fetchPayrollDays(employeeId, startDate, endDate, appSettings, companyDateStr(), resolutionMap(opts?.resolutions)),
       payrollDataService._fetchWfh(employeeId, startDate, endDate),
       payrollDataService._fetchPermissions(employeeId, startDate, endDate),
       payrollDataService._fetchApprovedOvertime(employeeId, startDate, endDate),
+      payrollDataService._fetchPayrollAdjustments(employeeId, endDate),
     ]);
 
-    // A failed lookup is never treated as "no absences / no leave / no permissions": stop instead.
-    const lookups: [string, any][] = [['Attendance', daysResult], ['Approved WFH', wfhResult], ['Approved permissions', permissionResult]];
+    // A failed lookup is never treated as "no absences / no leave / no permissions / no adjustments": stop instead.
+    const lookups: [string, any][] = [['Attendance', daysResult], ['Approved WFH', wfhResult], ['Approved permissions', permissionResult], ['Payroll adjustments', adjustmentsResult]];
     for (const [what, res] of lookups) {
       if (!res) return { data: null, error: new Error(`${what} could not be loaded. Payroll was not calculated.`) };
       if (res.error) return { data: null, error: res.error instanceof Error ? res.error : new Error(String(res.error)) };
@@ -551,11 +559,26 @@ export const payrollService = {
       }
     }
 
-    // 7. Overtime
+    // 6b. Missing clock-out adjustments (unique reference per case; settled atomically on approval, so a
+    //     recalculation reads the same PENDING rows again and never adds anything twice)
+    const mco = missingClockOutPayrollLines(adjustmentsResult.data, periodEnd, { overtimePayEnabled: !!settings.enableOvertimePay });
+    let adjustmentEarnings = 0;
+    const earningAdjustmentItems: { name: string; amount: number }[] = [];
+    if (mco.deduction) {
+      const amount = payrollSettingsService.applyRounding(mco.deduction.amount, settings);
+      totalDeductions += amount;
+      deductionItems.push({ name: mco.deduction.name, amount });
+    }
+    if (mco.reversal) {
+      adjustmentEarnings = payrollSettingsService.applyRounding(mco.reversal.amount, settings);
+      earningAdjustmentItems.push({ name: mco.reversal.name, amount: adjustmentEarnings });
+    }
+
+    // 7. Overtime (approved requests of this period + overtime approved after an earlier month was locked)
     let overtime = 0;
     const otRaw = overtimePayAmount({
       enableOvertimePay: settings.enableOvertimePay,
-      approvedOvertimeMinutes: empData.attendance.totalOvertimeMinutes,
+      approvedOvertimeMinutes: empData.attendance.totalOvertimeMinutes + mco.deferredOvertimeMinutes,
       dailyRate,
       overtimeRateType: settings.overtimeRateType,
       overtimeMultiplier: settings.overtimeMultiplier,
@@ -566,7 +589,7 @@ export const payrollService = {
     // 8. Apply rounding
     totalDeductions = payrollSettingsService.applyRounding(totalDeductions, settings);
     
-    let netSalary = payrollSettingsService.applyRounding((grossSalary + overtime) - totalDeductions, settings);
+    let netSalary = payrollSettingsService.applyRounding((grossSalary + overtime + adjustmentEarnings) - totalDeductions, settings);
     if (netSalary < 0) netSalary = 0;
 
     return {
@@ -582,6 +605,13 @@ export const payrollService = {
         workingDays,
         dailyRate,
         deductionItems,
+        earningAdjustmentItems,
+        missingClockOutAdjustments: {
+          ids: mco.ids,
+          references: mco.references,
+          deferredOvertimeHours: mco.deferredOvertimeHours,
+          notSetUp: adjustmentsResult.notSetUp,
+        },
         salary,
         settings,
         // The app settings this calculation used (break allowance, grace period) — for display
@@ -598,7 +628,7 @@ export const payrollService = {
     
     const {
       basic, grossSalary, totalAllowances, totalDeductions, lopDeduction, overtime, netSalary,
-      empData, workingDays, dailyRate, deductionItems, salary, settings
+      empData, workingDays, dailyRate, deductionItems, earningAdjustmentItems, missingClockOutAdjustments, salary, settings
     } = calc.data as any;
 
     // 9. Build attendance/leave/permission summary JSON to store in payroll
@@ -615,6 +645,9 @@ export const payrollService = {
         wfhDeductionApplied: WFH_DEDUCTION_POLICY_APPROVED && !!settings.enableWfhDeduction,
       },
       deductionBreakdown: deductionItems,
+      earningAdjustments: earningAdjustmentItems || [],
+      // Missing clock-out adjustments this calculation included; settled when this payroll is approved
+      missingClockOutAdjustments: missingClockOutAdjustments || { ids: [], references: [], deferredOvertimeHours: 0 },
       // Admin decisions on attendance review flags (who / when / why), carried across recalculation
       reviewResolutions: resolutions,
     });
@@ -665,6 +698,9 @@ export const payrollService = {
     const items: any[] = [];
     if (grossSalary > 0) items.push({ payroll_id: payroll.id, item_type: 'EARNING', item_name: 'Gross Salary', amount: grossSalary });
     if (overtime > 0) items.push({ payroll_id: payroll.id, item_type: 'EARNING', item_name: 'Approved Overtime', amount: overtime });
+    for (const e of earningAdjustmentItems || []) {
+      items.push({ payroll_id: payroll.id, item_type: 'EARNING', item_name: e.name, amount: e.amount });
+    }
     
     // Add individual deduction items
     for (const d of deductionItems) {
@@ -689,7 +725,7 @@ export const payrollService = {
     const adminId = await salaryService.getCurrentEmployeeId();
     if (!adminId) return { error: new Error('Unauthorized') };
 
-    const { data: existing } = await supabase.from('payroll').select('status, remarks').eq('id', id).single<any>();
+    const { data: existing } = await supabase.from('payroll').select('status, remarks, employee_id, period_start, period_end, calculated_at').eq('id', id).single<any>();
     if (!existing) return { error: new Error('Not found') };
 
     // Unresolved attendance review flags block approval (single and bulk approval both come here)
@@ -704,6 +740,31 @@ export const payrollService = {
     // One forward path only; PAID only via markPayrollPaid (see payrollRules)
     const transitionErr = statusChangeError(existing.status, newStatus);
     if (transitionErr) return { error: new Error(transitionErr) };
+
+    // A correction approved after this payroll was calculated changed its attendance and overtime:
+    // approving the stale figures would lock the month and that overtime would never be paid.
+    if (newStatus === 'APPROVED') {
+      const stale = await this._staleMissingClockOutCheck(existing);
+      if (stale) return { error: new Error(stale) };
+    }
+
+    // A payroll that included missing clock-out adjustments is approved by one database function that
+    // also settles exactly those adjustments (all or nothing). If any of them changed since the
+    // calculation (cancelled by an approval, settled by another payroll) nothing is approved.
+    const adjustmentIds = settledAdjustmentIds(existing.remarks);
+    if (newStatus === 'APPROVED' && adjustmentIds.length > 0) {
+      const { error: rpcErr } = await (supabase as any).rpc('approve_payroll_with_adjustments', { p_payroll_id: id, p_adjustment_ids: adjustmentIds });
+      if (rpcErr) {
+        if (isMissingClockOutSchemaError(rpcErr)) return { error: new Error('Payroll adjustments are not set up in the database. Recalculate this payroll before approving.') };
+        return { error: new Error(rpcErr.message || 'Payroll could not be approved.') };
+      }
+      // the function wrote the audit log entry
+      const { data: info } = await supabase.from('payroll').select('employee_id, payroll_month, payroll_year').eq('id', id).single<any>();
+      if (info) {
+        await notificationService.notifyEmployee(info.employee_id, payrollStatusChanged({ id, status: newStatus, month: info.payroll_month, year: info.payroll_year }));
+      }
+      return { error: null };
+    }
 
     const payload: any = { status: newStatus };
     if (newStatus === 'APPROVED') {
@@ -745,6 +806,22 @@ export const payrollService = {
     }
 
     return { error };
+  },
+
+  /** Refusal message when a missing clock-out correction of the period was approved after calculation; null otherwise. */
+  async _staleMissingClockOutCheck(p: any): Promise<string | null> {
+    if (!p?.employee_id) return null;
+    const { data, error } = await (supabase.from('overtime_requests' as any) as any)
+      .select('work_date, reviewed_at')
+      .eq('employee_id', p.employee_id)
+      .eq('request_type', 'MISSING_CLOCK_OUT')
+      .eq('status', 'APPROVED');
+    if (error) {
+      // proposal not applied: there are no corrections to check
+      if (isMissingClockOutSchemaError(error) || error.code === '42P01' || error.code === 'PGRST205') return null;
+      return 'Missing clock-out corrections could not be checked, so the payroll was not approved. Please try again.';
+    }
+    return staleMissingClockOutReason(Array.isArray(data) ? data : [], p);
   },
 
   /**

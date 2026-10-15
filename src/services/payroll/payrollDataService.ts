@@ -12,6 +12,7 @@ import type { ClassifiedDay } from './attendanceClassification';
 import { companyDateStr } from '../../utils/companyDate';
 import { globalSettingsService } from '../settings/globalSettingsService';
 import { resolveAllowedBreakMinutes } from '../attendance/breakRules';
+import { isMissingClockOutSchemaError, type PayrollAdjustment } from '../attendance/missingClockOutRules';
 
 export interface PayrollAttendanceSummary {
   workingDays: number;     // from settings or calculated
@@ -206,6 +207,29 @@ export const payrollDataService = {
       return { minutes: approvedOvertimeMinutes(data || []), error: null };
     } catch (err: any) {
       return { minutes: 0, error: new Error(`Approved overtime could not be loaded: ${err?.message || err}`) };
+    }
+  },
+
+  /**
+   * Missing clock-out payroll adjustments not yet settled (deductions, reversals, deferred overtime) for
+   * work dates up to the period end. A read failure is returned as an error (payroll then refuses to
+   * calculate); only "the table does not exist yet" (proposal not applied) means there are none.
+   */
+  async _fetchPayrollAdjustments(employeeId: string, endDate: string): Promise<{ data: PayrollAdjustment[]; error: Error | null; notSetUp: boolean }> {
+    try {
+      const { data, error } = await (supabase.from('payroll_adjustments' as any) as any)
+        .select('id, reference, kind, status, work_date, amount, hours, attendance_id, overtime_request_id')
+        .eq('employee_id', employeeId)
+        .eq('status', 'PENDING')
+        .lte('work_date', String(endDate).slice(0, 10));
+      if (error) {
+        if (isMissingClockOutSchemaError(error)) return { data: [], error: null, notSetUp: true };
+        return { data: [], error: fail('Payroll adjustments', error), notSetUp: false };
+      }
+      if (!Array.isArray(data)) return { data: [], error: new Error('Payroll adjustments could not be loaded.'), notSetUp: false };
+      return { data: data as PayrollAdjustment[], error: null, notSetUp: false };
+    } catch (err: any) {
+      return { data: [], error: fail('Payroll adjustments', err), notSetUp: false };
     }
   },
 
