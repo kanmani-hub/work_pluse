@@ -6,16 +6,52 @@ export const auditService = {
     const { data, error } = await supabase
       .from('audit_logs')
       // Actor's role comes from employees.role_id → roles.name (audit_logs has no role column)
-      .select('*, employees(first_name, last_name, employee_code, role:role_id(name))')
+      .select('*, employees(id, first_name, last_name, employee_code, role:role_id(name))')
       .order('created_at', { ascending: false });
 
     return { data, error };
   },
 
+  /**
+   * Fetches all audit records in paginated batches of pageSize.
+   * Ensures complete datasets without hitting silent 1000-row PostgREST limits.
+   * If any batch fails, returns error immediately rather than silent incomplete data.
+   */
+  async getAllAuditLogs(pageSize = 1000) {
+    let allData: any[] = [];
+    let from = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('audit_logs')
+        .select('*, employees(id, first_name, last_name, employee_code, role:role_id(name))')
+        .order('created_at', { ascending: false })
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        return { data: null, error };
+      }
+
+      if (!data || data.length === 0) {
+        hasMore = false;
+      } else {
+        allData = allData.concat(data);
+        if (data.length < pageSize) {
+          hasMore = false;
+        } else {
+          from += pageSize;
+        }
+      }
+    }
+
+    return { data: allData, error: null };
+  },
+
   async getAuditLogById(id: string) {
     const { data, error } = await supabase
       .from('audit_logs')
-      .select('*, employees(first_name, last_name, employee_code)')
+      .select('*, employees(id, first_name, last_name, employee_code)')
       .eq('id', id)
       .single<any>();
 
