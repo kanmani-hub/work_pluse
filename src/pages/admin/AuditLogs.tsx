@@ -940,7 +940,3 @@ const AuditLogs: React.FC = () => {
 };
 
 export default AuditLogs;
-
-
-
-
