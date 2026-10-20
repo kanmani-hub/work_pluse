@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Search } from 'lucide-react';
-import { liveKpiPredicate, locationStatusLabel, isLocationStale, type LiveTrackingKpi } from '../../services/location/liveTrackingRules';
+import { liveKpiPredicate, locationStatusLabel, rowIsFresh, type LiveTrackingKpi } from '../../services/location/liveTrackingRules';
 import { computeWorkTimer } from '../../services/attendance/breakRules';
 import { COMPANY_TIMEZONE, companyDateStr } from '../../utils/companyDate';
 
@@ -44,12 +44,12 @@ const C: Record<string, Col> = {
   working: { label: 'Working Duration', render: (r, now) => (r.attendance ? hms(computeWorkTimer(r.attendance, r.breaks, now).workSeconds) : '--') },
   status: { label: 'Current Status', render: r => <span className={`badge ${r.status === 'On Break' ? 'badge-warning' : r.status === 'Outside Geofence' ? 'badge-danger' : 'badge-success'}`}>{String(r.status).toUpperCase()}</span> },
   locStatus: { label: 'Location Status', render: (r, now) => locationStatusLabel(r, now) },
-  lastGps: { label: 'Last GPS Update', render: (r, now) => (r.lastSeenAt ? <>{time(r.lastSeenAt)}<div style={{ fontSize: '0.7rem', color: isLocationStale(r, now) ? 'var(--warning)' : 'var(--text-secondary)' }}>{ago(r.lastSeenAt, now)}</div></> : '--') },
+  lastGps: { label: 'Last GPS Update', render: (r, now) => (r.lastSeenAt ? <>{time(r.lastSeenAt)}<div style={{ fontSize: '0.7rem', color: !rowIsFresh(r, now) ? 'var(--warning)' : 'var(--text-secondary)' }}>{ago(r.lastSeenAt, now)}</div></> : '--') },
   lat: { label: 'Latitude', render: r => coord(r.lat) },
   lng: { label: 'Longitude', render: r => coord(r.lng) },
   accuracy: { label: 'GPS Accuracy', render: r => (r.accuracy != null ? `±${Math.round(r.accuracy)} m` : '--') },
   distance: { label: 'Distance from Office', render: r => (r.distanceMeters != null ? `${Math.round(r.distanceMeters)} m` : '--') },
-  geofence: { label: 'Geofence Status', render: (r, now) => (r.workMode === 'WFH' ? 'Not applicable (WFH)' : !r.geofence ? '--' : `${r.geofence === 'INSIDE' ? 'Inside' : r.geofence === 'OUTSIDE' ? 'Outside' : r.geofence}${isLocationStale(r, now) ? ' (stale)' : ''}`) },
+  geofence: { label: 'Geofence Status', render: (r, now) => (r.workMode === 'WFH' ? 'Not applicable (WFH)' : !r.geofence ? '--' : `${r.geofence === 'INSIDE' ? 'Inside' : r.geofence === 'OUTSIDE' ? 'Outside' : r.geofence}${!rowIsFresh(r, now) ? ' (stale)' : ''}`) },
   outside: { label: 'Outside Geofence', render: r => <span className="badge badge-danger">OUTSIDE{r.officeRadius ? ` ${r.officeRadius} m RADIUS` : ''}</span> },
   leftAt: { label: 'Time Since Leaving', render: (r, now) => (r.leftGeofenceAt ? <>{ago(r.leftGeofenceAt, now)}<div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>left {time(r.leftGeofenceAt)}</div></> : '--') },
   breakStatus: { label: 'Break Status', render: r => (r.activeBreak ? (r.activeBreak.break_type === 'AUTO_GPS' ? 'On automatic break' : 'On break') : 'No active break') },

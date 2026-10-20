@@ -985,11 +985,39 @@ const AdminPayroll: React.FC = () => {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
                     {storedSummary.deductionBreakdown.map((d: any, i: number) => (
                       <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border-color)' }}>
-                        <span style={{ color: 'var(--text-secondary)' }}>{d.name}</span>
+                        <div>
+                          <span style={{ color: 'var(--text-secondary)' }}>{d.name}</span>
+                          {d.calculation_basis && <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>{d.calculation_basis}</div>}
+                        </div>
                         <span style={{ fontWeight: 600, color: 'var(--danger)' }}>₹{Number(d.amount).toLocaleString('en-IN', {maximumFractionDigits:2})}</span>
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Late Calculation Traceability Card */}
+              {storedSummary?.lateCalculation && (
+                <div className="card" style={{ boxShadow: 'none', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-surface-elevated)', padding: '0.875rem' }}>
+                  <h4 style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--primary-700)', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Late Login Deduction Traceability</span>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--text-secondary)' }}>Method: {storedSummary.lateCalculation.method === 'salary_based' ? 'Salary Per Minute' : storedSummary.lateCalculation.method}</span>
+                  </h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.5rem', fontSize: '0.8125rem' }}>
+                    <div><span className="info-label" style={{ fontSize: '0.75rem' }}>Late Occurrences:</span> <div className="info-val" style={{ fontWeight: 600 }}>{storedSummary.lateCalculation.totalOccurrences || att.lateLogins}</div></div>
+                    <div><span className="info-label" style={{ fontSize: '0.75rem' }}>Total Late Minutes:</span> <div className="info-val" style={{ fontWeight: 600 }}>{storedSummary.lateCalculation.totalLateMinutes || att.totalLateMinutes}m</div></div>
+                    <div><span className="info-label" style={{ fontSize: '0.75rem' }}>Exempt / Grace:</span> <div className="info-val" style={{ fontWeight: 600 }}>{storedSummary.lateCalculation.exemptOccurrences || 0} occ ({storedSummary.lateCalculation.exemptMinutes || 0}m)</div></div>
+                    <div><span className="info-label" style={{ fontSize: '0.75rem' }}>Chargeable Minutes:</span> <div className="info-val" style={{ fontWeight: 600, color: storedSummary.lateCalculation.chargeableMinutes > 0 ? 'var(--danger)' : undefined }}>{storedSummary.lateCalculation.chargeableMinutes || 0}m</div></div>
+                    <div><span className="info-label" style={{ fontSize: '0.75rem' }}>Salary Basis:</span> <div className="info-val" style={{ fontWeight: 600 }}>₹{Number(storedSummary.lateCalculation.monthlySalary || detailDrawer.gross_salary || 0).toLocaleString('en-IN')}</div></div>
+                    <div><span className="info-label" style={{ fontSize: '0.75rem' }}>Working Days:</span> <div className="info-val" style={{ fontWeight: 600 }}>{storedSummary.lateCalculation.workingDays || workingDays} days</div></div>
+                    <div><span className="info-label" style={{ fontSize: '0.75rem' }}>Salary per Minute:</span> <div className="info-val" style={{ fontWeight: 600, color: 'var(--primary-600)' }}>₹{Number(storedSummary.lateCalculation.salaryPerMinute || 0).toFixed(4)}</div></div>
+                    <div><span className="info-label" style={{ fontSize: '0.75rem' }}>Total Late Deduction:</span> <div className="info-val" style={{ fontWeight: 600, color: 'var(--danger)' }}>₹{Number(storedSummary.lateCalculation.deductionAmount || 0).toLocaleString('en-IN', {maximumFractionDigits:2})}</div></div>
+                  </div>
+                  {storedSummary.lateCalculation.formula && (
+                    <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px dashed var(--border-color)', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                      <strong>Formula:</strong> <span style={{ fontFamily: 'monospace' }}>{storedSummary.lateCalculation.formula}</span>
+                    </div>
+                  )}
                 </div>
               )}
 

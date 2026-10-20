@@ -89,6 +89,7 @@ describe('Late Deductions', () => {
     expect(lateRuleText({ enableLateLoginDeduction: false }, 1000).text).toMatch('turned off');
     expect(lateRuleText({ enableLateLoginDeduction: true, lateDeductionMethod: 'per_minute', latePerMinuteRate: 5 }, 1000).text).toBe('Per minute: late minutes × ₹5');
     expect(lateRuleText({ enableLateLoginDeduction: true, lateDeductionMethod: 'half_day' }, 1000).text).toBe('Half day: 50% of the daily rate (₹500)');
+    expect(lateRuleText({ enableLateLoginDeduction: true, lateDeductionMethod: 'salary_based' }, 960).text).toBe('Salary based: late minutes × (daily rate ÷ 480 = ₹2/min for 8h shift)');
   });
 });
 

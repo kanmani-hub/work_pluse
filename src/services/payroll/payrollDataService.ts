@@ -36,6 +36,8 @@ export interface PayrollAttendanceSummary {
   weeklyOffDays?: number;
   /** Days whose working-day / weekly-off status came from the employee's roster. */
   rosterDays?: number;
+  /** Late login records with attendance date, late minutes and scheduled required hours for traceable deduction. */
+  lateRecords?: { date: string; lateMinutes: number; requiredHours?: number | null }[];
   /** Early logout is recorded for information only (no deduction under the current policy). */
   earlyLogoutMinutes?: number;
   /** Unresolved days an Admin must review before approval; nothing was deducted for the uncertain part. */
@@ -79,7 +81,7 @@ export interface PayrollDaysResult {
 
 const EMPTY_ATTENDANCE: PayrollAttendanceSummary = {
   workingDays: 0, presentDays: 0, absentDays: 0, lateLogins: 0, totalLateMinutes: 0, totalBreakExcessMinutes: 0,
-  totalBreakOverrunMinutes: 0, totalOvertimeMinutes: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0,
+  totalBreakOverrunMinutes: 0, totalOvertimeMinutes: 0, earlyLogouts: 0, halfDays: 0, lopDays: 0, lateRecords: [],
 };
 const EMPTY_LEAVE: PayrollLeaveSummary = { approvedLeave: 0, lopLeave: 0, totalLeaveDays: 0 };
 const day10 = (d: string) => String(d).slice(0, 10);
@@ -94,16 +96,24 @@ export function payrollBreakAllowance(row: any, appSettings?: any): number | nul
   return resolveAllowedBreakMinutes(row?.shift_template?.break_duration_minutes, appSettings?.breakDurationMins);
 }
 
-/** Minute-based figures (late, break, overtime, early logout). These feed their own penalties, never LOP. */
 export function summarizeAttendanceMinutes(rows: any[], appSettings?: any) {
   const n = (v: any) => Number(v) || 0;
   const breakExcess = (a: any) => {
     const allowed = payrollBreakAllowance(a, appSettings);
     return allowed === null ? 0 : Math.max(0, n(a.break_minutes) - allowed);
   };
+  const lateRows = (rows || [])
+    .filter(a => n(a.late_minutes) > 0)
+    .sort((a, b) => String(a.attendance_date || '').localeCompare(String(b.attendance_date || '')));
+
   return {
-    lateLogins: rows.filter(a => n(a.late_minutes) > 0).length,
-    totalLateMinutes: rows.reduce((s, a) => s + n(a.late_minutes), 0),
+    lateLogins: lateRows.length,
+    totalLateMinutes: lateRows.reduce((s, a) => s + n(a.late_minutes), 0),
+    lateRecords: lateRows.map(a => ({
+      date: a.attendance_date,
+      lateMinutes: n(a.late_minutes),
+      requiredHours: n(a.required_hours) > 0 ? n(a.required_hours) : (n(a.shift_template?.required_hours) || 8),
+    })),
     totalBreakOverrunMinutes: rows.reduce((s, a) => s + n(a.break_overrun_minutes), 0),
     totalOvertimeMinutes: rows.reduce((s, a) => s + n(a.overtime_minutes), 0),
     // Excess per day = max(0, stored break minutes − that day's allowance), summed

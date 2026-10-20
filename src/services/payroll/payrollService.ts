@@ -13,6 +13,7 @@ import { overtimePayAmount, statusChangeError, paymentBlockReason, canRecordPaym
 import type { ReviewResolution, ReviewDecisionValue } from './payrollRules';
 import { companyDateStr } from '../../utils/companyDate';
 import { missingClockOutPayrollLines, isMissingClockOutSchemaError, staleMissingClockOutReason } from '../attendance/missingClockOutRules';
+import { calculateLateDeduction } from './payrollLateDeductionRules';
 
 /** Missing clock-out adjustment ids a calculated payroll included (stored with the calculation). */
 export function settledAdjustmentIds(remarks: unknown): string[] {
@@ -472,32 +473,58 @@ export const payrollService = {
     }
 
     // Late Login Deduction
+    let lateCalculation: any = null;
     if (settings.enableLateLoginDeduction) {
       const totalLateMins = empData.attendance.totalLateMinutes || 0;
       if (totalLateMins > 0) {
-        let lateDeduction = 0;
-        
-        if (settings.lateDeductionMethod === 'interval_based') {
-          const intervalMins = settings.lateIntervalMinutes || 15;
-          const intervalAmount = settings.lateIntervalAmount || 100;
-          lateDeduction = Math.floor(totalLateMins / intervalMins) * intervalAmount;
-        } else if (settings.lateDeductionMethod === 'fixed') {
-          lateDeduction = settings.lateFixedAmount || 0;
-        } else if (settings.lateDeductionMethod === 'per_minute') {
-          lateDeduction = totalLateMins * (settings.latePerMinuteRate || 0);
-        } else if (settings.lateDeductionMethod === 'half_day') {
-          if (settings.halfDayMethod === 'fixed') {
-            lateDeduction = settings.lateHalfDayAmount || settings.halfDayAmount || 0;
-          } else {
-            lateDeduction = dailyRate * 0.5;
-          }
-        }
-        
-        lateDeduction = payrollSettingsService.applyRounding(lateDeduction, settings);
+        const lateRes = calculateLateDeduction({
+          enableLateLoginDeduction: true,
+          lateDeductionMethod: settings.lateDeductionMethod,
+          monthlySalary: grossSalary,
+          workingDays,
+          totalLateMinutes: totalLateMins,
+          lateLogins: empData.attendance.lateLogins,
+          lateRecords: empData.attendance.lateRecords,
+          monthlyLateLoginLimit: settings.monthlyLateLoginLimit,
+          salaryRounding: settings.salaryRounding,
+          lateFixedAmount: settings.lateFixedAmount,
+          latePerMinuteRate: settings.latePerMinuteRate,
+          lateIntervalMinutes: settings.lateIntervalMinutes,
+          lateIntervalAmount: settings.lateIntervalAmount,
+          lateHalfDayAmount: settings.lateHalfDayAmount,
+          halfDayMethod: settings.halfDayMethod,
+          halfDayAmount: settings.halfDayAmount,
+        });
 
-        if (lateDeduction > 0) {
-          totalDeductions += lateDeduction;
-          deductionItems.push({ name: `Late Deduction (${totalLateMins}m)`, amount: lateDeduction });
+        lateCalculation = {
+          method: settings.lateDeductionMethod,
+          totalLateMinutes: lateRes.totalLateMinutes,
+          chargeableMinutes: lateRes.chargeableMinutes,
+          exemptMinutes: lateRes.exemptMinutes,
+          totalOccurrences: lateRes.totalLateOccurrences,
+          chargeableOccurrences: lateRes.chargeableOccurrences,
+          exemptOccurrences: lateRes.exemptOccurrences,
+          monthlySalary: grossSalary,
+          workingDays,
+          dailyRate: payrollSettingsService.applyRounding(dailyRate, settings),
+          salaryPerMinute: Number(lateRes.salaryPerMinute.toFixed(4)),
+          unroundedAmount: lateRes.unroundedAmount,
+          deductionAmount: lateRes.deductionAmount,
+          formula: lateRes.formulaDescription,
+        };
+
+        if (lateRes.deductionAmount > 0) {
+          totalDeductions += lateRes.deductionAmount;
+          let label = `Late Deduction (${totalLateMins}m)`;
+          if (settings.lateDeductionMethod === 'salary_based') {
+            label = lateRes.chargeableMinutes === totalLateMins
+              ? `Late Deduction (${lateRes.chargeableMinutes}m @ ₹${lateRes.salaryPerMinute.toFixed(2)}/m)`
+              : `Late Deduction (${lateRes.chargeableMinutes}m of ${totalLateMins}m)`;
+          }
+          deductionItems.push({
+            name: label,
+            amount: lateRes.deductionAmount,
+          });
         }
       }
     }
@@ -614,6 +641,7 @@ export const payrollService = {
         },
         salary,
         settings,
+        lateCalculation,
         // The app settings this calculation used (break allowance, grace period) — for display
         appSettings
       },
@@ -628,7 +656,7 @@ export const payrollService = {
     
     const {
       basic, grossSalary, totalAllowances, totalDeductions, lopDeduction, overtime, netSalary,
-      empData, workingDays, dailyRate, deductionItems, earningAdjustmentItems, missingClockOutAdjustments, salary, settings
+      empData, workingDays, dailyRate, deductionItems, earningAdjustmentItems, missingClockOutAdjustments, salary, settings, lateCalculation
     } = calc.data as any;
 
     // 9. Build attendance/leave/permission summary JSON to store in payroll
@@ -637,6 +665,7 @@ export const payrollService = {
       leave: empData.leave,
       wfh: empData.wfh,
       permission: empData.permission,
+      lateCalculation: lateCalculation || undefined,
       settings: {
         workingDaysBasis: settings.workingDaysBasis,
         configuredWorkingDays: settings.configuredWorkingDays,
@@ -704,7 +733,15 @@ export const payrollService = {
     
     // Add individual deduction items
     for (const d of deductionItems) {
-      items.push({ payroll_id: payroll.id, item_type: 'DEDUCTION', item_name: d.name, amount: d.amount });
+      items.push({
+        payroll_id: payroll.id,
+        item_type: 'DEDUCTION',
+        item_name: d.name,
+        amount: d.amount,
+        calculation_basis: d.name.includes('Late Deduction') && lateCalculation?.formula
+          ? lateCalculation.formula
+          : 'System calculated from settings and attendance',
+      });
     }
     // Standard deduction if any
     if (Number(salary.standard_deduction || 0) > 0) {

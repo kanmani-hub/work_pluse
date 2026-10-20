@@ -248,6 +248,13 @@ const AdminSettings: React.FC = () => {
         <div><div style={{ fontWeight: 600 }}>Require Geolocation</div><div className="help-text">Record GPS coordinates when punching in/out.</div></div>
         <input type="checkbox" className="toggle" checked={settings.app.requireGeolocation} onChange={e => handleChangeApp('requireGeolocation', e.target.checked)}/>
       </div>
+      <div className="form-grid" style={{ marginTop: '1rem' }}>
+        <div>
+          <label className="form-label" htmlFor="tracking-stale-minutes">Location shown as "not updating" after (minutes)</label>
+          <input id="tracking-stale-minutes" type="number" min={5} max={120} className="form-control" value={settings.app.trackingStaleMinutes ?? 15} onChange={e => handleChangeApp('trackingStaleMinutes', parseInt(e.target.value) || 15)} />
+          <div className="help-text">Break Management and Live Tracking only (5–120, default 15). Automatic break and geofence timing are not affected.</div>
+        </div>
+      </div>
       <div className="toggle-row" style={{ marginTop: '1rem' }}>
         <div><div style={{ fontWeight: 600 }}>Late Login Detection</div><div className="help-text">Automatically flag employees arriving after their shift starts.</div></div>
         <input type="checkbox" className="toggle" checked={settings.app.lateLoginDetection} onChange={e => handleChangeApp('lateLoginDetection', e.target.checked)}/>
@@ -548,13 +555,15 @@ const AdminSettings: React.FC = () => {
             <div>
               <label className="form-label">Monthly Late Login Limit</label>
               <input type="number" className="form-control" value={settings.payroll.monthlyLateLoginLimit !== null ? settings.payroll.monthlyLateLoginLimit : ''} onChange={e => handleChangePayroll('monthlyLateLoginLimit', e.target.value === '' ? null : parseInt(e.target.value))} aria-label="Monthly Late Login Limit" />
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Late login occurrences exempt each month (0 = none exempt).</div>
             </div>
             <div>
               <label className="form-label">Deduction Method</label>
               <select className="form-control" value={settings.payroll.lateDeductionMethod} onChange={e => handleChangePayroll('lateDeductionMethod', e.target.value)} aria-label="Deduction Method">
                 <option value="interval_based">Every 15 Minutes</option>
                 <option value="fixed">Fixed Amount</option>
-                <option value="per_minute">Per Late Minute</option>
+                <option value="per_minute">Per Late Minute (Flat Rate)</option>
+                <option value="salary_based">Salary Per Minute</option>
                 <option value="half_day">Half Day</option>
               </select>
             </div>
@@ -574,6 +583,26 @@ const AdminSettings: React.FC = () => {
             )}
             {settings.payroll.lateDeductionMethod === 'half_day' && (
               <div><label className="form-label">Half-Day Amount (₹)</label><input type="number" className="form-control" value={settings.payroll.lateHalfDayAmount !== null ? settings.payroll.lateHalfDayAmount : ''} onChange={e => handleChangePayroll('lateHalfDayAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Half-Day Amount (₹)" /></div>
+            )}
+            {settings.payroll.lateDeductionMethod === 'salary_based' && (
+              <div style={{ gridColumn: 'span 2', padding: '0.875rem', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
+                <div style={{ fontWeight: 600, color: 'var(--primary-600)', marginBottom: '0.35rem' }}>Salary Per Minute Calculation Policy</div>
+                <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  Deduction is calculated dynamically per employee from their monthly salary:
+                  <div style={{ fontFamily: 'monospace', padding: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', borderRadius: '4px', margin: '0.4rem 0' }}>
+                    Scheduled Working Minutes = Paid Working Days × Shift Hours × 60<br/>
+                    Salary per Minute = Applicable Monthly Salary ÷ Scheduled Working Minutes<br/>
+                    Late Deduction = Salary per Minute × Chargeable Late Minutes
+                  </div>
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                  <span>• <strong>Salary Basis:</strong> Monthly Gross Salary (Basic + Allowances, matching Daily Rate & LOP).</span>
+                  <span>• <strong>Denominator:</strong> Paid working days divisor from Settings ({settings.payroll.workingDaysBasis === 'configured' ? `${settings.payroll.configuredWorkingDays} days (configured)` : settings.payroll.workingDaysBasis}).</span>
+                  <span>• <strong>Shift Hours:</strong> Employee's assigned shift required hours (8h standard fallback).</span>
+                  <span>• <strong>Monthly Limit:</strong> First {settings.payroll.monthlyLateLoginLimit || 0} late occurrences in the month are exempt from deduction.</span>
+                  <span>• <strong>Grace Period:</strong> Governed by Attendance Settings; arrivals within grace period are not recorded as late.</span>
+                </div>
+              </div>
             )}
           </div>
         </div>

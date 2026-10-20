@@ -24,7 +24,7 @@ export type VerificationResult = 'INSIDE' | 'OUTSIDE' | 'UNKNOWN' | 'LOCATION_DE
  * ACTIVE = the last reading was a usable fix. The other states are GPS problems: they are
  * shown and recorded as diagnostics but never treated as being outside the office.
  */
-export type TrackingStatus = 'IDLE' | 'ACTIVE' | TrackingProblem;
+export type TrackingStatus = 'IDLE' | 'ACTIVE' | 'SYNC_FAILED' | TrackingProblem;
 export interface TrackingState { status: TrackingStatus; since: number | null; message: string | null }
 
 export interface LocationVerificationResponse {
@@ -33,6 +33,11 @@ export interface LocationVerificationResponse {
   distance?: number;
   radius?: number;
   error?: Error;
+  /**
+   * Set when a background reading could not be saved: 'EVENT' = nothing was stored (retry the whole
+   * reading), 'LIVE' = the check was stored but the live location was not (retry only the live part).
+   */
+  writeFailed?: 'EVENT' | 'LIVE';
 }
 
 export const locationService = {
@@ -95,7 +100,7 @@ export const locationService = {
    *   Phase 2 (fallback): Low accuracy with 10s timeout
    * Diagnostic logging uses safe prefixed tags for production debugging.
    */
-  getCurrentLocation(): Promise<GeolocationResult> {
+  getCurrentLocation(opts: { fresh?: boolean } = {}): Promise<GeolocationResult> {
     return new Promise((resolve) => {
       if (qaTimeService.isEnabled && this.qaMockLocation) {
           resolve({
@@ -172,10 +177,10 @@ export const locationService = {
                 status: result2.status, error: result2.message
               });
             },
-            { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+            { enableHighAccuracy: false, timeout: 10000, maximumAge: opts.fresh ? 0 : 60000 }
           );
         },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 }
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: opts.fresh ? 0 : 30000 }
       );
     });
   },
@@ -185,10 +190,10 @@ export const locationService = {
    */
   async verifyCurrentLocation(
     type: 'CLOCK_IN' | 'CLOCK_OUT' | 'LOCATION_CHECK',
-    opts: { geo?: GeolocationResult } = {},
+    opts: { geo?: GeolocationResult; skipEvent?: boolean } = {},
   ): Promise<LocationVerificationResponse> {
     const empId = await this.getCurrentEmployeeId();
-    if (!empId) return { eventId: null, result: 'ERROR', error: new Error('Unauthorized') };
+    if (!empId) return { eventId: null, result: 'ERROR', error: new Error('Unauthorized'), writeFailed: 'EVENT' };
 
     // 1. Resolve Office
     // @ts-ignore
@@ -203,7 +208,7 @@ export const locationService = {
       .eq('id', empId)
       .single() as any;
 
-    if (empErr) return { eventId: null, result: 'ERROR', error: new Error('Database error') };
+    if (empErr) return { eventId: null, result: 'ERROR', error: new Error('Database error'), writeFailed: 'EVENT' };
 
     // 2. Check if there's an approved WFH request today (company date)
     const localDateStr = companyDateStr();
@@ -216,7 +221,7 @@ export const locationService = {
       .maybeSingle() as any;
 
     // A failed WFH lookup is not "no WFH": without knowing, no geofence decision (and no auto break) is made
-    if (wfhErr) return { eventId: null, result: 'ERROR', error: new Error(`Your WFH status could not be checked (${wfhErr.message}). Please try again.`) };
+    if (wfhErr) return { eventId: null, result: 'ERROR', error: new Error(`Your WFH status could not be checked (${wfhErr.message}). Please try again.`), writeFailed: 'EVENT' };
 
     const isWfh = !!wfhData;
 
@@ -227,7 +232,10 @@ export const locationService = {
     const geo: GeolocationResult = rawGeo.status === 'SUCCESS' && !isPlausibleFix(rawGeo.latitude, rawGeo.longitude, rawGeo.accuracy)
       ? { latitude: null, longitude: null, accuracy: null, timestamp: rawGeo.timestamp, status: 'UNKNOWN_ERROR', error: 'Implausible GPS reading (invalid coordinates or accuracy)' }
       : rawGeo;
-    this._setTrackingState(geo.status === 'SUCCESS' ? 'ACTIVE' : geo.status, geo.status === 'SUCCESS' ? null : (geo.error ?? null));
+    // While earlier readings are still waiting to be saved, a good fix does not hide that state
+    if (!(geo.status === 'SUCCESS' && this._retryQueue.length > 0)) {
+      this._setTrackingState(geo.status === 'SUCCESS' ? 'ACTIVE' : geo.status, geo.status === 'SUCCESS' ? null : (geo.error ?? null));
+    }
 
     // 4/5. Accuracy + geofence via the shared rules (GPS failure never means OUTSIDE; WFH bypasses the office geofence)
     const office = employeeData?.offices;
@@ -279,10 +287,11 @@ export const locationService = {
       return buildResponse(null);
     }
 
-    // 7. Create verification event (records the explicit result, including DENIED / UNAVAILABLE / LOW_ACCURACY)
+    // 7. Create verification event (records the explicit result, including DENIED / UNAVAILABLE / LOW_ACCURACY).
+    //    A retry of a reading whose event was already stored only retries the live-location part.
     const nowIso = new Date().toISOString();
     // @ts-ignore
-    const { data: eventResult, error: insertErr } = await (supabase.from('location_verification_events') as any)
+    const { data: eventResult, error: insertErr } = opts.skipEvent ? { data: null, error: null } : await (supabase.from('location_verification_events') as any)
       .insert({
         employee_id: empId,
         attendance_id: attendanceId,
@@ -302,11 +311,12 @@ export const locationService = {
       .single();
 
     if (insertErr) {
-      return { eventId: null, result: 'ERROR', error: new Error(insertErr.message) };
+      return { eventId: null, result: 'ERROR', error: new Error(insertErr.message), writeFailed: 'EVENT' };
     }
+    let liveWriteFailed = false;
 
     // Audit only explicit clock-in/out verifications (not every 10-second background check)
-    if (isExplicitCheck(type)) import('../audit/auditService').then(({ auditService }) => {
+    if (isExplicitCheck(type) && eventResult) import('../audit/auditService').then(({ auditService }) => {
       let actionStr = 'LOCATION_VERIFICATION_FAILED';
       if (result === 'INSIDE' || result === 'WFH') actionStr = 'LOCATION_VERIFICATION_SUCCESS';
       else if (result === 'LOCATION_DENIED') actionStr = 'LOCATION_DENIED';
@@ -328,6 +338,12 @@ export const locationService = {
       const locContext = isWfh ? 'WFH' : 'OFFICE';
       const readingStatus = liveStatusFor(result);
       const readingAtMs = geo.timestamp ?? Date.now();
+      // Store WHEN the position was measured, not when it was saved: a reading replayed after a network
+      // outage keeps its own time (never reset to "now"). A device time ahead of this clock is capped
+      // at now (a future last_seen_at would never go stale). QA mode keeps its simulated clock as before.
+      const clientNowMs = Date.now();
+      const readingIso = !qaTimeService.isEnabled && Number.isFinite(readingAtMs) && readingAtMs <= clientNowMs + 120_000
+        ? new Date(Math.min(readingAtMs, clientNowMs)).toISOString() : nowIso;
 
       const { data: existingLiveLoc, error: liveLocErr } = await supabase
         .from('employee_live_locations')
@@ -338,7 +354,7 @@ export const locationService = {
       // A failed read is not "no live row": no geofence transition (and no auto break) from this reading
       if (liveLocErr) {
         console.error('[GEOFENCE] live location could not be read; reading not used for geofence decisions', liveLocErr.message);
-        return buildResponse(eventResult?.id || null);
+        return { ...buildResponse(eventResult?.id || null), writeFailed: 'LIVE' };
       }
 
       const historyRow = {
@@ -350,11 +366,19 @@ export const locationService = {
         distance_from_office_meters: distance ?? null,
         location_status: readingStatus,
         location_context: locContext,
-        recorded_at: nowIso,
+        recorded_at: readingIso,
         source: 'WEB'
       };
 
       if (existingLiveLoc) {
+        // Debounce state before this reading: restored if the write below fails, so a retried reading
+        // is never counted twice towards a geofence change.
+        const stabilityBefore = this._stability.get(empId);
+        const hadPendingSeen = this._lastSeenBeforePending.has(empId);
+        const pendingSeenBefore = this._lastSeenBeforePending.get(empId);
+        // last_seen_at never moves backwards (a late retry of an older reading)
+        const prevSeenMsLive = existingLiveLoc.last_seen_at ? new Date(existingLiveLoc.last_seen_at).getTime() : NaN;
+        const lastSeenIso = Number.isFinite(prevSeenMsLive) && prevSeenMsLive > new Date(readingIso).getTime() ? existingLiveLoc.last_seen_at : readingIso;
         // Confirmed side comes from the stored live row; the stability filter debounces jitter.
         const storedSide: GeofenceSide | null = existingLiveLoc.location_status === 'OUTSIDE_GEOFENCE' ? 'OUTSIDE' : existingLiveLoc.location_status === 'INSIDE_GEOFENCE' ? 'INSIDE' : null;
         let newStatus = readingStatus;
@@ -404,7 +428,7 @@ export const locationService = {
         // Compare-and-set on the status we read: if another tab/device changed it in the
         // meantime, this update matches no row and we do NOT emit a second ENTER/EXIT event.
         // @ts-ignore
-        const { data: updatedRows } = await (supabase.from('employee_live_locations') as any).update({
+        const { data: updatedRows, error: liveUpdateErr } = await (supabase.from('employee_live_locations') as any).update({
           latitude: geo.latitude,
           longitude: geo.longitude,
           accuracy_meters: geo.accuracy,
@@ -412,15 +436,27 @@ export const locationService = {
           location_status: newStatus,
           location_context: locContext,
           attendance_id: attendanceId,
-          last_seen_at: nowIso,
+          last_seen_at: lastSeenIso,
           source: 'WEB'
         }).eq('id', existingLiveLoc.id).eq('location_status', existingLiveLoc.location_status).select('id');
+        if (liveUpdateErr) {
+          // Not saved: the admin would see this employee as "not updating". Undo the debounce step and
+          // let the caller retry this reading (live part only).
+          console.error('[LIVE LOCATION] update failed; reading will be retried', liveUpdateErr.message);
+          liveWriteFailed = true;
+          if (stabilityBefore) this._stability.set(empId, stabilityBefore); else this._stability.delete(empId);
+          if (hadPendingSeen) this._lastSeenBeforePending.set(empId, pendingSeenBefore ?? null); else this._lastSeenBeforePending.delete(empId);
+          transition = null;
+        }
         if (transition && (!updatedRows || updatedRows.length === 0)) {
           transition = null; // already handled elsewhere: no duplicate event / auto-break
         }
 
-        const { error: histErr } = await (supabase.from('employee_location_history') as any).insert(historyRow);
-        if (histErr) console.error('[HISTORY INSERT ERROR]', histErr);
+        // (written with the retry instead when the live update failed, so it is not stored twice)
+        if (!liveWriteFailed) {
+          const { error: histErr } = await (supabase.from('employee_location_history') as any).insert(historyRow);
+          if (histErr) console.error('[HISTORY INSERT ERROR]', histErr);
+        }
 
         if (transition && transition.from !== null) {
           const transitionIso = new Date(transition.atMs).toISOString();
@@ -477,7 +513,7 @@ export const locationService = {
         }
       } else {
         // @ts-ignore
-        await (supabase.from('employee_live_locations') as any).insert({
+        const { error: liveInsertErr } = await (supabase.from('employee_live_locations') as any).insert({
           employee_id: empId,
           attendance_id: attendanceId,
           office_id: employeeData?.offices?.id || null,
@@ -488,9 +524,13 @@ export const locationService = {
           location_status: readingStatus,
           location_context: locContext,
           is_tracking: false,
-          last_seen_at: nowIso,
+          last_seen_at: readingIso,
           source: 'WEB'
         });
+        if (liveInsertErr) {
+          console.error('[LIVE LOCATION] insert failed; reading will be retried', liveInsertErr.message);
+          return { ...buildResponse(eventResult?.id || null), writeFailed: 'LIVE' };
+        }
 
         await (supabase.from('employee_location_history') as any).insert(historyRow);
 
@@ -534,7 +574,8 @@ export const locationService = {
       });
     }
 
-    return buildResponse(eventResult?.id || null);
+    const response = buildResponse(eventResult?.id || null);
+    return liveWriteFailed ? { ...response, writeFailed: 'LIVE' } : response;
   },
 
   // GPS watcher state for the employee screens (this device only; nothing here is a location)
@@ -597,6 +638,22 @@ export const locationService = {
   _lastResumeRefresh: 0,
   MAX_PENDING_READINGS: 30,
 
+  // ---- failed writes: retried with back-off (15 s, 30 s, 1 min … max 5 min), bounded, in reading order ----
+  _retryQueue: [] as { geo: GeolocationResult; skipEvent: boolean }[],
+  _retryTimer: null as ReturnType<typeof setTimeout> | null,
+  _retryAttempt: 0,
+  _retrying: false,
+  RETRY_BASE_MS: 15_000,
+  RETRY_MAX_MS: 300_000,
+
+  // ---- foreground heartbeat (browser watcher only): a watcher can go quiet while the page is open ----
+  _heartbeatTimer: null as ReturnType<typeof setInterval> | null,
+  _heartbeatBusy: false,
+  _lastPositionMs: 0,
+  _lastHeartbeatMs: 0,
+  HEARTBEAT_CHECK_MS: 30_000,
+  HEARTBEAT_STALE_MS: 60_000,
+
   /**
    * One entry point for every position, whatever produced it. Drops duplicates and out-of-order
    * deliveries (same or older device timestamp), throttles to the tracking interval, and keeps
@@ -604,6 +661,7 @@ export const locationService = {
    */
   async ingestReading(geo: GeolocationResult, opts: { force?: boolean } = {}) {
     if (geo.status !== 'SUCCESS') return;
+    this._lastPositionMs = Date.now();
     const ts = typeof geo.timestamp === 'number' && Number.isFinite(geo.timestamp) ? geo.timestamp : null;
     if (ts !== null && this._lastReadingMs !== null && ts <= this._lastReadingMs) return; // duplicate / out of order
     const now = Date.now();
@@ -618,7 +676,54 @@ export const locationService = {
       if (this._pendingReadings.length > this.MAX_PENDING_READINGS) this._pendingReadings.shift();
       return;
     }
-    await this.verifyCurrentLocation('LOCATION_CHECK', { geo }).catch(() => {});
+    const res = await this.verifyCurrentLocation('LOCATION_CHECK', { geo }).catch(() => ({ writeFailed: 'EVENT' as const }));
+    this._afterWrite(geo, res as Partial<LocationVerificationResponse>);
+  },
+
+  /** A reading that could not be saved is kept for a retry; a successful save clears the failed state. */
+  _afterWrite(geo: GeolocationResult, res: Partial<LocationVerificationResponse> | undefined) {
+    if (res?.writeFailed) {
+      this._retryQueue.push({ geo, skipEvent: res.writeFailed === 'LIVE' });
+      if (this._retryQueue.length > this.MAX_PENDING_READINGS) this._retryQueue.shift();
+      this._setTrackingState('SYNC_FAILED', 'Location updates could not be saved. Retrying automatically.');
+      this._scheduleRetry();
+    } else if (this._retryQueue.length === 0 && this._trackingState?.status === 'SYNC_FAILED') {
+      this._setTrackingState('ACTIVE', null);
+    }
+  },
+
+  _scheduleRetry() {
+    if (this._retryTimer || this._retryQueue.length === 0) return;
+    const delay = Math.min(this.RETRY_MAX_MS, this.RETRY_BASE_MS * 2 ** this._retryAttempt);
+    this._retryAttempt++;
+    this._retryTimer = setTimeout(() => { this._retryTimer = null; this.retryFailedWrites().catch(() => {}); }, delay);
+  },
+
+  /**
+   * Retry readings that could not be saved, oldest first. Each keeps its own measured time; a reading
+   * older than the accepted window is stored as history only and never moves the geofence.
+   * Stops at the first failure and waits for the next back-off step.
+   */
+  async retryFailedWrites() {
+    if (this._retrying || this._retryQueue.length === 0) return;
+    this._retrying = true;
+    try {
+      const queue = this._retryQueue.splice(0).sort((a, b) => (a.geo.timestamp ?? 0) - (b.geo.timestamp ?? 0));
+      for (let i = 0; i < queue.length; i++) {
+        const e = queue[i];
+        const res: Partial<LocationVerificationResponse> = await this.verifyCurrentLocation('LOCATION_CHECK', { geo: e.geo, skipEvent: e.skipEvent })
+          .catch(() => ({ writeFailed: 'EVENT' as const }));
+        if (res.writeFailed) {
+          this._retryQueue.unshift({ geo: e.geo, skipEvent: e.skipEvent || res.writeFailed === 'LIVE' }, ...queue.slice(i + 1));
+          this._scheduleRetry();
+          return;
+        }
+      }
+      this._retryAttempt = 0;
+      if (this._retryQueue.length === 0 && this._trackingState?.status === 'SYNC_FAILED') this._setTrackingState('ACTIVE', null);
+    } finally {
+      this._retrying = false;
+    }
   },
 
   /**
@@ -626,8 +731,42 @@ export const locationService = {
    * reading older than that is only stored as history and never moves the geofence.
    */
   async flushPendingReadings() {
+    // readings that failed to save earlier go first (they are older), then the offline queue
+    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
+    await this.retryFailedWrites();
     const queued = this._pendingReadings.splice(0).sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
-    for (const geo of queued) await this.verifyCurrentLocation('LOCATION_CHECK', { geo }).catch(() => {});
+    for (const geo of queued) {
+      const res = await this.verifyCurrentLocation('LOCATION_CHECK', { geo }).catch(() => ({ writeFailed: 'EVENT' as const }));
+      this._afterWrite(geo, res as Partial<LocationVerificationResponse>);
+    }
+  },
+
+  /**
+   * Foreground heartbeat (browser watcher only). Some browsers deliver no watcher callback while the
+   * device is not moving, or stop the watcher silently; then nothing refreshes the live location even
+   * though the app is open. When the page is visible and no position arrived for HEARTBEAT_STALE_MS,
+   * ask for ONE fresh fix (maximumAge 0 — a real new measurement, never a cached or invented one).
+   * Nothing runs while the page is hidden: a browser cannot track in the background.
+   */
+  async heartbeat() {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    const now = Date.now();
+    if (this._heartbeatBusy || now - this._lastPositionMs < this.HEARTBEAT_STALE_MS || now - this._lastHeartbeatMs < this.HEARTBEAT_STALE_MS) return;
+    this._heartbeatBusy = true;
+    this._lastHeartbeatMs = now;
+    try {
+      const geo = await this.getCurrentLocation({ fresh: true });
+      if (geo.status === 'SUCCESS') await this.ingestReading(geo, { force: true });
+      else await this.reportTrackingProblem(geo.status as TrackingProblem, geo.error || geo.status);
+    } finally {
+      this._heartbeatBusy = false;
+    }
+  },
+
+  _startHeartbeat() {
+    if (this._heartbeatTimer || typeof setInterval === 'undefined') return;
+    this._lastPositionMs = Date.now(); // the watcher gets one interval to deliver its first fix
+    this._heartbeatTimer = setInterval(() => { this.heartbeat().catch(() => {}); }, this.HEARTBEAT_CHECK_MS);
   },
 
   /**
@@ -698,6 +837,7 @@ export const locationService = {
 
   _startBrowserWatch() {
     if (this._watchId !== null || typeof navigator === 'undefined' || !navigator.geolocation) return;
+    this._startHeartbeat();
     this._watchId = navigator.geolocation.watchPosition(
       (position) => {
         // Verify + persist using THIS position (no second GPS request per update)
@@ -773,6 +913,11 @@ export const locationService = {
     this._nativePlugin = null;
     if (this._detachResume) { this._detachResume(); this._detachResume = null; }
     this._pendingReadings = [];
+    if (this._heartbeatTimer) { clearInterval(this._heartbeatTimer); this._heartbeatTimer = null; }
+    this._heartbeatBusy = false;
+    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
+    this._retryQueue = [];
+    this._retryAttempt = 0;
     this._setTrackingState('IDLE', null);
   }
 };

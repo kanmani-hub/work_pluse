@@ -16,6 +16,10 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import LeafletLiveMap from '../../components/tracking/LeafletLiveMap';
 import LiveActivityLogs from '../../components/tracking/LiveActivityLogs';
+import TrackingStatus from '../../components/tracking/TrackingStatus';
+import { formatTrackingTime, resolveStaleMinutes, type TrackingInfo } from '../../services/location/trackingStatus';
+import { useGlobalSettings } from '../../services/settings/globalSettingsService';
+import { COMPANY_TIMEZONE } from '../../utils/companyDate';
 type EmployeeStatus = 'Working' | 'On Break' | 'WFH' | 'Outside Geofence' | 'Location Unavailable' | 'Offline' | 'Clocked Out';
 type WorkMode = 'Office' | 'WFH' | 'Hybrid';
 
@@ -29,6 +33,8 @@ interface LiveEmployee {
   workMode: WorkMode;
   status: EmployeeStatus;
   locationStatus: string;
+  /** Shared tracking status (services/location/trackingStatus), same as Break Management */
+  tracking: TrackingInfo;
   distance: string;
   lastUpdated: string;
   workingSince: string;
@@ -57,8 +63,11 @@ const getStatusColor = (status: string) => {
 /** Adapt shared Live Tracking rows to the fields the existing list, drawer and map read. */
 function toDisplayRows(input: LiveTrackingInput, nowMs: number) {
   return buildLiveTrackingRows(input, nowMs).map((r: any) => {
-    const stale = !r.lastSeenAt || (nowMs - new Date(r.lastSeenAt).getTime()) / 60000 > 15;
-    const locationStatus = !r.lastSeenAt ? 'No location'
+    // Same tracking status as Break Management (services/location/trackingStatus)
+    const t = r.tracking;
+    const stale = t.state !== 'LIVE';
+    const locationStatus = t.state === 'NO_DATA' || (!r.lastSeenAt && t.state !== 'LOCATION_PROBLEM') ? 'No location'
+      : t.state === 'LOCATION_PROBLEM' ? (t.problem?.result === 'LOCATION_DENIED' ? 'Location off' : 'Location unavailable')
       : stale ? 'STALE / LAST KNOWN'
       : r.geofence === 'INSIDE' ? 'Inside Geofence' : r.geofence === 'OUTSIDE' ? 'Outside Geofence' : (r.geofence || 'Unknown');
     const dist = r.distanceMeters != null ? `${Math.round(r.distanceMeters)}m` : 'N/A';
@@ -69,7 +78,7 @@ function toDisplayRows(input: LiveTrackingInput, nowMs: number) {
       ...r,
       locationStatus,
       distance: stale && r.distanceMeters != null ? `Last known: ${dist}` : dist,
-      lastUpdated: r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) : '-',
+      lastUpdated: r.lastSeenAt ? formatTrackingTime(r.lastSeenAt, nowMs) : 'No location received',
       workingSince: r.clockInAt ? new Date(r.clockInAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '-',
       officeLat, officeLng,
       x: r.lng != null && officeLng != null ? 50 + ((r.lng - officeLng) * 10000) : 50,
@@ -79,6 +88,12 @@ function toDisplayRows(input: LiveTrackingInput, nowMs: number) {
 }
 
 const AdminLiveTracking: React.FC = () => {
+  // "Not updating" threshold (Settings → trackingStaleMinutes), shared with Break Management
+  const { settings } = useGlobalSettings();
+  const staleMinutes = resolveStaleMinutes(settings.app?.trackingStaleMinutes);
+  const staleRef = useRef(staleMinutes);
+  staleRef.current = staleMinutes;
+  const displayRows = (input: LiveTrackingInput, now: number) => toDisplayRows({ ...input, staleMinutes: staleRef.current }, now);
   const [activeTab, setActiveTab] = useState<'Live View' | 'History'>('Live View');
   
   // LIVE VIEW STATES
@@ -89,6 +104,8 @@ const AdminLiveTracking: React.FC = () => {
   const [employees, setEmployees] = useState<LiveEmployee[]>([]);
   // Last loaded Live Tracking inputs; realtime location updates rebuild rows from these (same rules as the KPIs)
   const inputRef = useRef<LiveTrackingInput | null>(null);
+  // re-evaluate the loaded rows when the configured threshold arrives or changes
+  useEffect(() => { if (inputRef.current) setEmployees(displayRows(inputRef.current, Date.now())); }, [staleMinutes]);
   const refetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [nowTick, setNowTick] = useState(Date.now());
   const [liveKpi, setLiveKpi] = useState<LiveTrackingKpi | null>(null);
@@ -132,7 +149,7 @@ const AdminLiveTracking: React.FC = () => {
         if (!input) return;
         const others = input.liveLocations.filter((l: any) => l.employee_id !== newData.employee_id);
         inputRef.current = { ...input, liveLocations: [...others, newData] };
-        setEmployees(toDisplayRows(inputRef.current, Date.now()));
+        setEmployees(displayRows(inputRef.current, Date.now()));
       }
     });
 
@@ -175,7 +192,7 @@ const AdminLiveTracking: React.FC = () => {
     const tick = setInterval(() => {
       const now = Date.now();
       setNowTick(now);
-      if (inputRef.current) setEmployees(toDisplayRows(inputRef.current, now));
+      if (inputRef.current) setEmployees(displayRows(inputRef.current, now));
     }, 60000);
 
     return () => {
@@ -207,7 +224,7 @@ const AdminLiveTracking: React.FC = () => {
     inputRef.current = input;
     const now = Date.now();
     setNowTick(now);
-    setEmployees(toDisplayRows(input, now));
+    setEmployees(displayRows(input, now));
     setLastUpdatedTime(new Date().toLocaleTimeString('en-US'));
     if (!silent) setLoading(false);
   };
@@ -298,7 +315,7 @@ const AdminLiveTracking: React.FC = () => {
     doc.text(`Date: ${hDate}`, 14, 22);
     
     const tableData = filteredHistory.map(rec => [
-      new Date(rec.recorded_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      new Date(rec.recorded_at).toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: COMPANY_TIMEZONE }),
       rec.employees ? `${rec.employees.first_name} ${rec.employees.last_name} (${rec.employees.employee_code})` : 'Unknown',
       rec.location_status,
       rec.location_context,
@@ -316,7 +333,7 @@ const AdminLiveTracking: React.FC = () => {
 
   const exportHistoryExcel = () => {
     const data = filteredHistory.map(rec => ({
-      Time: new Date(rec.recorded_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      Time: new Date(rec.recorded_at).toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: COMPANY_TIMEZONE }),
       Employee: rec.employees ? `${rec.employees.first_name} ${rec.employees.last_name}` : 'Unknown',
       'Employee ID': rec.employees?.employee_code || '',
       Status: rec.location_status,
@@ -545,10 +562,7 @@ const AdminLiveTracking: React.FC = () => {
                                 </span>
                               </td>
                               <td>
-                                <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
-                                  <MapPin size={14} color="var(--gray-400)" />
-                                  <span style={{ fontSize: "0.875rem", color: emp.locationStatus === 'STALE / LAST KNOWN' ? "var(--text-secondary)" : "inherit" }}>{emp.locationStatus}</span>
-                                </div>
+                                <TrackingStatus tracking={emp.tracking} nowMs={nowTick} staleMinutes={staleMinutes} />
                                 {emp.distance !== "N/A" && emp.distance !== "Unknown" && (
                                   <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", marginLeft: "1.25rem" }}>{emp.distance}</div>
                                 )}
@@ -638,7 +652,7 @@ const AdminLiveTracking: React.FC = () => {
                     {filteredHistory.map((rec: any) => (
                       <tr key={rec.id}>
                         <td style={{ whiteSpace: "nowrap", fontWeight: 500 }}>
-                          {new Date(rec.recorded_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                          {new Date(rec.recorded_at).toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: COMPANY_TIMEZONE })}
                         </td>
                         <td>
                           <div style={{ fontWeight: 600 }}>{rec.employees ? `${rec.employees.first_name} ${rec.employees.last_name}` : 'Unknown'}</div>
@@ -747,6 +761,7 @@ const AdminLiveTracking: React.FC = () => {
                   <div className="detail-item"><span className="detail-label">Distance</span><span className="detail-value">{selectedEmp.distance}</span></div>
                   <div className="detail-item"><span className="detail-label">Geofence Radius</span><span className="detail-value">{selectedEmp.officeRadius != null ? `${selectedEmp.officeRadius}m` : '-'}</span></div>
                   <div className="detail-item" style={{ gridColumn: "1 / -1" }}><span className="detail-label">Last Location Update</span><span className="detail-value">{selectedEmp.lastUpdated}</span></div>
+                  <div className="detail-item" style={{ gridColumn: "1 / -1" }}><span className="detail-label">Tracking</span><TrackingStatus tracking={selectedEmp.tracking} nowMs={nowTick} staleMinutes={staleMinutes} expanded /></div>
                 </div>
               </div>
             </div>

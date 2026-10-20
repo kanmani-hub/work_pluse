@@ -30,7 +30,7 @@ export interface PayrollSettings {
   // Late Login Rules
   enableLateLoginDeduction: boolean;
   monthlyLateLoginLimit: number;
-  lateDeductionMethod: 'per_minute' | 'fixed' | 'half_day' | 'interval_based';
+  lateDeductionMethod: 'per_minute' | 'fixed' | 'half_day' | 'interval_based' | 'salary_based';
   lateFixedAmount: number;
   latePerMinuteRate: number;
   lateHalfDayAmount: number;

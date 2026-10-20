@@ -97,7 +97,7 @@ test.describe('tracking status', () => {
     await status.locator('summary').click();
     await expect(detail).toBeVisible();
     await expect(detail).toContainText('more than 15 minutes');
-    await expect(detail).toContainText('cause is not known');
+    await expect(detail).toContainText('reason is not known');
   });
 
   test('a location row without a timestamp is "not updating", with no invented time', async ({ page }) => {
@@ -116,7 +116,7 @@ test.describe('tracking status', () => {
     await expect(perm.locator('.tracking-detail')).toContainText('permission was denied');
     const unav = row(page, 'unavailable').locator('details.tracking-status');
     await unav.locator('summary').click();
-    await expect(unav.locator('.tracking-detail')).toContainText('Location unavailable');
+    await expect(unav.locator('.tracking-detail')).toContainText('could not determine a location');
     await expect(unav.locator('.tracking-detail')).not.toContainText('permission');
   });
 });

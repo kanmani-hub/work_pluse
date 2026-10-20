@@ -78,7 +78,7 @@ describe('distinct states: current, stale, permission off, unavailable, no data,
     const s = trackingSummary(t({ state: 'STALE', lastSeenAt: minsBefore(40), locationStatus: 'OUTSIDE_GEOFENCE' }), NOW, fmt);
     expect(s).toMatchObject({ tone: 'stale', label: 'Not updating', ageMins: 40, location: 'Outside office' });
     expect(s.detail).toMatch(/more than 15 minutes/);
-    expect(s.detail).toMatch(/cause is not known/);
+    expect(s.detail).toMatch(/reason is not known/);
     expect(s.detail).not.toMatch(/GPS is (broken|off)\b/);
   });
 

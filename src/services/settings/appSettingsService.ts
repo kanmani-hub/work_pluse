@@ -38,6 +38,9 @@ export interface AppSettings {
   // Attendance
   requireFaceVerification: boolean;
   requireGeolocation: boolean;
+  /** Admin display only: a location older than this many minutes is shown as "not updating"
+   *  (Break Management, Live Tracking). Default 15; clamped 5–120 where it is used. */
+  trackingStaleMinutes: number;
   lateLoginDetection: boolean;
   earlyLogoutDetection: boolean;
   gracePeriodMins: number;
@@ -114,6 +117,7 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   publicHolidays: [],
   requireFaceVerification: true,
   requireGeolocation: true,
+  trackingStaleMinutes: 15,
   lateLoginDetection: true,
   earlyLogoutDetection: true,
   gracePeriodMins: 0,

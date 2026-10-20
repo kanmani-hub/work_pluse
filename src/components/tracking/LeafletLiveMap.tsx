@@ -21,6 +21,8 @@ export interface LeafletLiveEmployee {
   department: string;
   status: EmployeeStatus;
   locationStatus: string;
+  /** Shared tracking state (trackingStatus.ts); anything but LIVE is drawn as last known. */
+  tracking?: { state: string } | null;
   distance: string;
   lastUpdated: string;
   office: string;
@@ -58,7 +60,7 @@ const escapeHtml = (value: unknown): string =>
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] as string
   ));
 
-const isStale = (emp: LeafletLiveEmployee) => emp.locationStatus === STALE_LABEL;
+const isStale = (emp: LeafletLiveEmployee) => emp.locationStatus === STALE_LABEL || (!!emp.tracking && emp.tracking.state !== 'LIVE');
 
 // Same colours as the previous map and the page legend. A stale fix is always grey
 // ("Last Known"), so a last-known point is never drawn as in-office green or outside red.

@@ -20,6 +20,7 @@ import { selectCurrentAttendance } from '../attendance/currentAttendance';
 import { computeWorkTimer, findActiveBreak } from '../attendance/breakRules';
 import { shiftForDate } from '../attendance/adminAttendanceRules';
 import { normalizeRole } from '../../lib/roles';
+import { deriveTracking, freshnessTimes, isFresh, latestProblemByEmployee, trackingApplicability, TRACKING_STALE_MINUTES } from './trackingStatus';
 
 export const LIVE_STALE_MINUTES = 15; // existing Live Tracking threshold for "STALE / LAST KNOWN"
 
@@ -35,13 +36,20 @@ export interface LiveTrackingInput {
   wfhToday: any[];        // approved wfh_requests for today
   shiftAssignments: any[];
   geofenceEvents?: any[]; // today's geofence_events (ENTERED/EXITED), oldest first
+  /** Failed location checks since yesterday 00:00 IST (location_verification_events). */
+  locationProblems?: any[] | null;
+  /** false when employee_live_locations could not be loaded (tracking shown as "not loaded"). */
+  liveLoaded?: boolean;
+  /** Display threshold for "not updating" (Settings → trackingStaleMinutes); default 15. */
+  staleMinutes?: number;
 }
 
 const minutesSince = (iso: string | null | undefined, nowMs: number) => (iso ? (nowMs - new Date(iso).getTime()) / 60000 : null);
 
 export function isLocationStale(row: { lastSeenAt: string | null }, nowMs: number): boolean {
   const m = minutesSince(row.lastSeenAt, nowMs);
-  return m === null || m > LIVE_STALE_MINUTES;
+  // an unreadable timestamp (NaN) is not a fresh one
+  return m === null || !Number.isFinite(m) || m > LIVE_STALE_MINUTES;
 }
 
 export function buildLiveTrackingRows(input: LiveTrackingInput, nowMs: number) {
@@ -65,6 +73,8 @@ export function buildLiveTrackingRows(input: LiveTrackingInput, nowMs: number) {
     else if (g.event_type === 'ENTERED') leftAt.set(g.employee_id, null);
   });
 
+  const problems = latestProblemByEmployee(input.locationProblems);
+  const staleMinutes = input.staleMinutes ?? TRACKING_STALE_MINUTES;
   const rows: any[] = [];
   for (const employeeId of ids) {
     const live = liveByEmp.get(employeeId) ?? null;
@@ -75,9 +85,10 @@ export function buildLiveTrackingRows(input: LiveTrackingInput, nowMs: number) {
     const attBreaks = att ? breaksByAtt.get(att.id) || [] : [];
     const activeBreak = att && !att.clock_out_at ? findActiveBreak(attBreaks) : null;
     const wfhApproved = wfhSet.has(employeeId);
-    const lastSeenAtForStatus: string | null = live?.last_seen_at ?? null;
+    // Freshness from the earlier of device time (last_seen_at) and server time (updated_at) — shared rule
+    const { freshAt } = freshnessTimes(live);
     // A stale reading is not used for the work status (GPS failure is not "outside")
-    const freshLocationStatus = isLocationStale({ lastSeenAt: lastSeenAtForStatus }, nowMs) ? null : (live?.location_status ?? null);
+    const freshLocationStatus = isFresh(freshAt, nowMs, staleMinutes) ? (live?.location_status ?? null) : null;
     const status: LiveWorkStatus = deriveLiveWorkStatus(
       { location_status: freshLocationStatus, location_context: wfhApproved ? 'WFH' : 'OFFICE' },
       att, !!activeBreak,
@@ -87,7 +98,15 @@ export function buildLiveTrackingRows(input: LiveTrackingInput, nowMs: number) {
     const lastSeenAt: string | null = live?.last_seen_at ?? null;
     const geofence: 'INSIDE' | 'OUTSIDE' | 'WFH' | null =
       live?.location_status === 'INSIDE_GEOFENCE' ? 'INSIDE' : live?.location_status === 'OUTSIDE_GEOFENCE' ? 'OUTSIDE' : live?.location_status === 'WFH' ? 'WFH' : null;
-    const stale = isLocationStale({ lastSeenAt }, nowMs);
+    const stale = !isFresh(freshAt, nowMs, staleMinutes);
+    const tracking = deriveTracking({
+      applicable: trackingApplicability(att, att?.attendance_date ?? input.today, input.today),
+      loaded: input.liveLoaded !== false,
+      live,
+      problem: problems.get(employeeId) ?? null,
+      nowMs,
+      staleMinutes,
+    });
     const timer = att ? computeWorkTimer(att, attBreaks, nowMs) : null;
 
     // Last activity: the most recent real timestamp we hold for this employee
@@ -128,6 +147,9 @@ export function buildLiveTrackingRows(input: LiveTrackingInput, nowMs: number) {
       activeBreak,
       workSeconds: timer?.workSeconds ?? null,
       lastSeenAt,
+      freshAt,
+      staleMinutes,
+      tracking,
       accuracy: live?.accuracy_meters ?? null,
       distanceMeters: live?.distance_from_office_meters ?? null,
       geofence,
@@ -141,12 +163,15 @@ export function buildLiveTrackingRows(input: LiveTrackingInput, nowMs: number) {
 const WORKING: LiveWorkStatus[] = ['Working', 'On Break', 'WFH', 'Outside Geofence'];
 export const isCurrentlyWorking = (r: any) => WORKING.includes(r.status);
 
+/** Same freshness rule as the tracking status (earlier of device/server time, configured threshold). */
+export const rowIsFresh = (r: any, nowMs: number) => isFresh(r.freshAt !== undefined ? r.freshAt : r.lastSeenAt, nowMs, r.staleMinutes ?? TRACKING_STALE_MINUTES);
+
 /** KPI predicates: used for BOTH the card count and the detail modal rows. */
 export function liveKpiPredicate(kpi: LiveTrackingKpi, nowMs: number): (r: any) => boolean {
   switch (kpi) {
     case 'CURRENTLY_WORKING': return r => isCurrentlyWorking(r);
-    case 'IN_OFFICE': return r => isCurrentlyWorking(r) && r.workMode === 'Office' && r.geofence === 'INSIDE' && !isLocationStale(r, nowMs);
-    case 'OUTSIDE_GEOFENCE': return r => isCurrentlyWorking(r) && r.workMode === 'Office' && r.geofence === 'OUTSIDE' && !isLocationStale(r, nowMs);
+    case 'IN_OFFICE': return r => isCurrentlyWorking(r) && r.workMode === 'Office' && r.geofence === 'INSIDE' && rowIsFresh(r, nowMs);
+    case 'OUTSIDE_GEOFENCE': return r => isCurrentlyWorking(r) && r.workMode === 'Office' && r.geofence === 'OUTSIDE' && rowIsFresh(r, nowMs);
     case 'WFH': return r => r.wfhApproved;
   }
 }
@@ -161,5 +186,5 @@ export function locationStatusLabel(r: any, nowMs: number): string {
   if (r.workMode === 'WFH') return 'WFH';
   if (!r.lastSeenAt || !r.geofence) return 'No location';
   const side = r.geofence === 'INSIDE' ? 'Inside office' : r.geofence === 'OUTSIDE' ? 'Outside office' : 'WFH';
-  return isLocationStale(r, nowMs) ? `Stale (last known: ${side.toLowerCase()})` : side;
+  return rowIsFresh(r, nowMs) ? side : `Stale (last known: ${side.toLowerCase()})`;
 }

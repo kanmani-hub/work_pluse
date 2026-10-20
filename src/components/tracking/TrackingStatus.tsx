@@ -1,6 +1,7 @@
 import React from 'react';
 import { Radio, Clock, MapPinOff, LocateOff, CircleSlash, CircleHelp, ChevronDown, type LucideIcon } from 'lucide-react';
-import { formatAge, trackingSummary, type BreakReportTracking, type TrackingTone } from '../../services/attendance/breakReportRules';
+import './trackingStatus.css';
+import { formatAge, formatTrackingTime, trackingSummary, TRACKING_STALE_MINUTES, type TrackingInfo, type TrackingTone } from '../../services/location/trackingStatus';
 
 const ICON: Record<TrackingTone, LucideIcon> = {
   current: Radio,
@@ -13,27 +14,35 @@ const ICON: Record<TrackingTone, LucideIcon> = {
 };
 
 interface Props {
-  tracking: BreakReportTracking;
+  tracking: TrackingInfo;
   nowMs: number;
-  /** Formats an ISO time in company time (null → placeholder). */
-  formatTime: (iso: string | null) => string;
+  /** Display threshold for "not updating" (Settings → trackingStaleMinutes). */
+  staleMinutes?: number;
+  /** Optional time formatter; defaults to company time with the date when it is not today. */
+  formatTime?: (iso: string | null) => string;
   /** Render expanded (no disclosure), e.g. inside the details panel. */
   expanded?: boolean;
 }
 
 /**
- * Compact location-tracking status for Break Management: a short state chip, the last update time
+ * Compact location-tracking status (Break Management, Live Tracking): a short state chip, the last update time
  * with its age, and the last known location. The full explanation is behind a disclosure
  * (native <details>, keyboard and screen-reader accessible) instead of wrapping in the table.
  * The state is always written in words; colour and icon only repeat it.
  */
-const TrackingStatus: React.FC<Props> = ({ tracking, nowMs, formatTime, expanded = false }) => {
-  const s = trackingSummary(tracking, nowMs, formatTime);
+const TrackingStatus: React.FC<Props> = ({ tracking, nowMs, staleMinutes = TRACKING_STALE_MINUTES, formatTime, expanded = false }) => {
+  const fmt = formatTime ?? ((iso: string | null) => formatTrackingTime(iso, nowMs));
+  const s = trackingSummary(tracking, nowMs, fmt, staleMinutes);
   if (s.tone === 'not-applicable' && !expanded) {
-    return <span className="tracking-status tracking-status--na" title={s.detail}><span aria-hidden="true">—</span><span className="visually-hidden">Not tracked</span></span>;
+    // explicit empty state (not a bare dash): why tracking does not apply
+    return (
+      <span className="tracking-status tracking-status--na" data-tracking-tone="not-applicable" title={s.detail}>
+        <span className="tracking-na-label">Not tracked · {s.label.toLowerCase()}</span>
+      </span>
+    );
   }
   const Icon = ICON[s.tone];
-  const when = s.at ? `${formatTime(s.at)} · ${formatAge(s.ageMins)}` : null;
+  const when = s.at ? `${fmt(s.at)} · ${formatAge(s.ageMins)}` : null;
   const chip = (
     <span className={`tracking-chip tracking-chip--${s.tone}`}>
       <Icon size={13} aria-hidden={true} />

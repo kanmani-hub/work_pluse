@@ -538,7 +538,11 @@ export const breakService = {
    * - live locations + failed location checks: tracking freshness (today only)
    * Each part reports its own error; a failed part is shown as "could not be loaded", never as empty.
    */
-  async getBreakReportContext(dateStr: string, isToday: boolean): Promise<{
+  /**
+   * @param loadTracking true for the company's current day, and for yesterday (an overnight shift can
+   *   still be open after midnight); live locations and failed location checks are loaded only then.
+   */
+  async getBreakReportContext(dateStr: string, loadTracking: boolean): Promise<{
     employees: any[] | null; liveLocations: any[] | null; locationProblems: any[] | null; breakEndEvents: any[] | null; errors: string[];
   }> {
     const dayStartMs = new Date(`${dateStr}T00:00:00+05:30`).getTime();
@@ -546,10 +550,11 @@ export const breakService = {
     const none = Promise.resolve({ data: null, error: null } as any);
     const [employees, live, problems, endEvents] = await Promise.all([
       supabase.from('employees').select('id, employee_code, first_name, last_name, status, joining_date, departments(name), role:role_id(name)') as any,
-      isToday ? supabase.from('employee_live_locations').select('employee_id, location_status, location_context, last_seen_at') as any : none,
-      isToday
+      // updated_at = server time of the last write (trigger), used with last_seen_at for freshness
+      loadTracking ? supabase.from('employee_live_locations').select('employee_id, location_status, location_context, last_seen_at, updated_at') as any : none,
+      loadTracking
         ? (supabase.from('location_verification_events') as any)
-            .select('employee_id, result, verified_at')
+            .select('employee_id, result, verified_at, failure_reason')
             .gte('verified_at', dayStartIso)
             .in('result', ['LOCATION_DENIED', 'LOCATION_UNAVAILABLE', 'LOW_ACCURACY', 'ERROR'])
             .order('verified_at', { ascending: false })
@@ -571,8 +576,8 @@ export const breakService = {
     if (!employees.error && (employees.data || []).length >= 1000) errors.push('The employee list reached the 1000-row API limit and may be incomplete.');
     return {
       employees: employees.error ? null : (employees.data || []),
-      liveLocations: !isToday || live.error ? null : (live.data || []),
-      locationProblems: !isToday || problems.error ? null : (problems.data || []),
+      liveLocations: !loadTracking || live.error ? null : (live.data || []),
+      locationProblems: !loadTracking || problems.error ? null : (problems.data || []),
       breakEndEvents: endEvents.error ? null : (endEvents.data || []),
       errors,
     };

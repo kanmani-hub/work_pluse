@@ -4,10 +4,11 @@ import { breakService } from '../../services/attendance/breakService';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { FileText, Trash2, StopCircle, AlertCircle } from 'lucide-react';
 import { buildBreakReportRows, matchesReportFilter, REPORT_STATUS_LABEL, API_ROW_LIMIT, type BreakReportStatus, type BreakReportRow } from '../../services/attendance/breakReportRules';
-import { COMPANY_TIMEZONE, companyDateStr } from '../../utils/companyDate';
+import { COMPANY_TIMEZONE, companyDateStr, previousDateStr } from '../../utils/companyDate';
+import { resolveStaleMinutes } from '../../services/location/trackingStatus';
 import { useAuth } from '../../context/AuthContext';
 import { isAdminPortalRole } from '../../lib/roles';
-import TrackingStatus from '../../components/breaks/TrackingStatus';
+import TrackingStatus from '../../components/tracking/TrackingStatus';
 import './breakManagement.css';
 
 /** At this width and below the details panel opens as a dialog over the list (not beside it). */
@@ -48,8 +49,11 @@ const AdminBreaks: React.FC = () => {
   const [contextErrors, setContextErrors] = useState<string[]>([]);
   const isToday = filterDate === companyDateStr();
 
+  // Tracking applies to today, and to yesterday while an overnight shift is still open
+  const tracksDate = (d: string) => { const t = companyDateStr(); return d === t || d === previousDateStr(t); };
+  const staleMinutes = resolveStaleMinutes(appSettings?.trackingStaleMinutes);
   const loadContext = async () => {
-    const ctx = await breakService.getBreakReportContext(filterDate, filterDate === companyDateStr());
+    const ctx = await breakService.getBreakReportContext(filterDate, tracksDate(filterDate));
     setContext({ employees: ctx.employees, liveLocations: ctx.liveLocations, locationProblems: ctx.locationProblems, breakEndEvents: ctx.breakEndEvents });
     setContextErrors(ctx.errors);
   };
@@ -124,7 +128,7 @@ const AdminBreaks: React.FC = () => {
     const breaksChannel = realtimeService.subscribeToAdminBreaks(scheduleRefetch);
     const attendanceChannel = realtimeService.subscribeToAdminAttendance(scheduleRefetch);
     // Tracking freshness changes with time and is not pushed: reload it every minute for today
-    const trackingTimer = setInterval(() => { if (filterDate === companyDateStr()) loadContext(); }, 60000);
+    const trackingTimer = setInterval(() => { if (tracksDate(filterDate)) loadContext(); }, 60000);
     return () => {
       if (timer) clearTimeout(timer);
       clearInterval(trackingTimer);
@@ -144,10 +148,11 @@ const AdminBreaks: React.FC = () => {
     breakEndEvents: context.breakEndEvents,
     settingBreakMins: appSettings?.breakDurationMins,
     nowMs,
+    staleMinutes,
   }).map(r => ({
     ...r,
     isDeductionApplicable: (r.summary?.excessMins || 0) > 0 && !!payrollSettings?.enableBreakOverrunDeduction,
-  })), [breaks, context, filterDate, appSettings, payrollSettings, nowMs]);
+  })), [breaks, context, filterDate, appSettings, payrollSettings, nowMs, staleMinutes]);
 
   // Apply Filters
   const filteredSummary = reportRows.filter(r => matchesReportFilter(r.status, filterStatus));
@@ -360,7 +365,7 @@ const AdminBreaks: React.FC = () => {
                       </td>
                       <td role="cell" className="bt-status" data-label="Status">{statusBadge(r.status)}</td>
                       <td role="cell" className="bt-tracking" data-label="Tracking">
-                        <TrackingStatus tracking={r.tracking} nowMs={nowMs} formatTime={formatTime} />
+                        <TrackingStatus tracking={r.tracking} nowMs={nowMs} staleMinutes={staleMinutes} />
                       </td>
                       <td role="cell" className="bt-actions" data-label="Actions">
                         <div className="bt-action-group">
@@ -448,7 +453,7 @@ const AdminBreaks: React.FC = () => {
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Location tracking</div>
-                  <TrackingStatus tracking={d.tracking} nowMs={nowMs} formatTime={formatTime} expanded />
+                  <TrackingStatus tracking={d.tracking} nowMs={nowMs} staleMinutes={staleMinutes} expanded />
                 </div>
               </div>
             </div>

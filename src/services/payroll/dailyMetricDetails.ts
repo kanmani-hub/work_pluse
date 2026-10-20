@@ -58,6 +58,7 @@ export function lateRuleText(s: any, dailyRate?: number): { enabled: boolean; te
     case 'interval_based': return { enabled: true, text: `Interval based: floor(late minutes ÷ ${s.lateIntervalMinutes || 15}) × ${inr(s.lateIntervalAmount || 100)}` };
     case 'fixed': return { enabled: true, text: `Fixed: ${inr(s.lateFixedAmount || 0)} when there are any late minutes` };
     case 'per_minute': return { enabled: true, text: `Per minute: late minutes × ${inr(s.latePerMinuteRate || 0)}` };
+    case 'salary_based': return { enabled: true, text: rateText(dailyRate, d => `Salary based: late minutes × (daily rate ÷ 480 = ${inr(d / 480)}/min for 8h shift)`, "Salary based: late minutes × salary per minute") };
     case 'half_day': return { enabled: true, text: s.halfDayMethod === 'fixed' ? `Half day (fixed): ${inr(s.lateHalfDayAmount || s.halfDayAmount || 0)}` : rateText(dailyRate, d => `Half day: 50% of the daily rate (${inr(d * 0.5)})`, "Half day: 50% of the employee's daily rate") };
     default: return { enabled: true, text: `Method "${s.lateDeductionMethod}" is not recognised — no amount is calculated.` };
   }
@@ -93,6 +94,7 @@ export function lateFormula(s: any, minutes: number, dailyRate: number): string 
     case 'interval_based': { const iv = s.lateIntervalMinutes || 15; return `floor(${minutes} ÷ ${iv}) × ${inr(s.lateIntervalAmount || 100)}`; }
     case 'fixed': return `fixed ${inr(s.lateFixedAmount || 0)}`;
     case 'per_minute': return `${minutes} × ${inr(s.latePerMinuteRate || 0)}`;
+    case 'salary_based': return `${minutes}m × ${inr(dailyRate / 480)}/m`;
     case 'half_day': return s.halfDayMethod === 'fixed' ? `fixed ${inr(s.lateHalfDayAmount || s.halfDayAmount || 0)}` : `50% × ${inr(dailyRate)}`;
     default: return '—';
   }
