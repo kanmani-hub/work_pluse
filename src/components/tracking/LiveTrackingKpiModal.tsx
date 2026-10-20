@@ -52,7 +52,7 @@ const C: Record<string, Col> = {
   geofence: { label: 'Geofence Status', render: (r, now) => (r.workMode === 'WFH' ? 'Not applicable (WFH)' : !r.geofence ? '--' : `${r.geofence === 'INSIDE' ? 'Inside' : r.geofence === 'OUTSIDE' ? 'Outside' : r.geofence}${!rowIsFresh(r, now) ? ' (stale)' : ''}`) },
   outside: { label: 'Outside Geofence', render: r => <span className="badge badge-danger">OUTSIDE{r.officeRadius ? ` ${r.officeRadius} m RADIUS` : ''}</span> },
   leftAt: { label: 'Time Since Leaving', render: (r, now) => (r.leftGeofenceAt ? <>{ago(r.leftGeofenceAt, now)}<div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>left {time(r.leftGeofenceAt)}</div></> : '--') },
-  breakStatus: { label: 'Break Status', render: r => (r.activeBreak ? (r.activeBreak.break_type === 'AUTO_GPS' ? 'On automatic break' : 'On break') : 'No active break') },
+  breakStatus: { label: 'Break Status', render: r => (r.activeBreak ? (r.activeBreak.break_type === 'AUTO_GPS' || r.activeBreak.break_type === 'AUTO_TRACKING' ? 'On automatic break' : 'On break') : 'No active break') },
   breakDur: { label: 'Break Duration', render: (r, now) => (r.activeBreak ? hms(Math.floor((now - new Date(r.activeBreak.started_at).getTime()) / 1000)) : '--') },
   mode: { label: 'Work Mode', render: r => r.workMode },
   wfhStatus: { label: 'WFH Approval', render: r => (r.wfhApproved ? 'APPROVED' : '--') },

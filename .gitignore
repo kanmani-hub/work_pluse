@@ -10,9 +10,12 @@ dist-ssr/
 .env.*
 !.env.example
 !.env.qa.example
+!.env.staging.example
+!.env.local.example
 
 # Supabase local temporary files
 supabase/.temp/
+supabase/.branches/
 
 # Logs
 *.log

@@ -27,6 +27,9 @@ async function openBreaks(page: Page, role: Role = 'ADMIN') {
 }
 
 const row = (page: Page, tone: string) => page.locator('.break-table tr.bt-row', { has: page.locator(`[data-tracking-tone="${tone}"]`) }).first();
+// the live-tracked employee who is ON a break (the signed-in test employee is also live, without a break,
+// whenever the company date equals the runner's local date — so "first live row" alone depends on the clock)
+const liveOnBreak = (page: Page) => page.locator('.break-table tr.bt-row.bt-row--on_break', { has: page.locator('[data-tracking-tone="current"]') }).first();
 
 for (const vp of WIDTHS) {
   test.describe(`break management ${vp.width}x${vp.height}`, () => {
@@ -41,7 +44,7 @@ for (const vp of WIDTHS) {
       });
       expect(overflow, 'page scrolls sideways').toBeLessThanOrEqual(1);
 
-      const first = row(page, 'current');
+      const first = liveOnBreak(page);
       if (vp.width <= 767) {
         // phone cards: the same cells, each labelled with its column name
         const labels = await first.locator('td[data-label]').evaluateAll(tds => tds.map(td => td.getAttribute('data-label')));
@@ -91,7 +94,7 @@ test.describe('tracking status', () => {
     await openBreaks(page);
     const status = row(page, 'stale').locator('details.tracking-status');
     await expect(status.locator('.tracking-when')).toHaveText(/\d{2}:\d{2} [AP]M · (4\d) min ago/);
-    await expect(status.locator('.tracking-where')).toHaveText('Last known: Outside office');
+    await expect(status.locator('.tracking-where')).toHaveText('Last known location: Outside office');
     const detail = status.locator('.tracking-detail');
     await expect(detail).toBeHidden();
     await status.locator('summary').click();
@@ -143,7 +146,7 @@ test.describe('break actions', () => {
     let patches = 0;
     page.on('request', r => { if (r.method() === 'PATCH' && r.url().includes('/rest/v1/attendance_breaks')) patches++; });
     page.on('dialog', d => d.accept());
-    const btn = row(page, 'current').getByRole('button', { name: /End active break/ });
+    const btn = liveOnBreak(page).getByRole('button', { name: /End active break/ });
     await btn.dblclick();
     await expect(page.getByText('Active break successfully ended.')).toBeVisible();
     expect(patches).toBe(1);

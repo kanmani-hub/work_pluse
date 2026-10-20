@@ -136,6 +136,75 @@ export function autoBreakClosedAtClockOut(p: { breakId: string; attendanceId: st
     entity_type: 'attendance_breaks', entity_id: p.breakId, dedupe_key: `break:${p.breakId}:CLOCK_OUT`,
   };
 }
+
+// ---------- tracking enforcement & compliance (warning + auto break) ----------
+export function trackingWarningAutoBreak(p: { incidentId: string; reason: string; timestamp?: string }): EmployeeNotification {
+  return {
+    notification_type: 'AUTOMATIC_BREAK',
+    title: 'Tracking Unavailable — Automatic Break Started',
+    message: `Required location tracking became unavailable (${p.reason}). An automatic break has been started to maintain tracking compliance.`,
+    action_url: '/employee/dashboard',
+    priority: 'HIGH',
+    entity_type: 'attendance_breaks',
+    entity_id: p.incidentId,
+    dedupe_key: `tracking_enforcement:${p.incidentId}:START`,
+  };
+}
+
+export function offlineWarningQueued(p: { reason: string }): EmployeeNotification {
+  return {
+    notification_type: 'AUTOMATIC_BREAK',
+    title: 'Offline: Location Tracking Paused',
+    message: `Your device is offline (${p.reason}). Tracking state is marked as unverified until connection is restored.`,
+    action_url: '/employee/dashboard',
+    priority: 'HIGH',
+    entity_type: null,
+    entity_id: null,
+    dedupe_key: `offline_warning:${Date.now()}`,
+  };
+}
+
+export function trackingEnforcementAdminAlert(p: {
+  incidentId: string;
+  employeeName: string;
+  employeeCode: string;
+  reason: string;
+  actionTaken: string;
+}) {
+  return {
+    notification_type: 'AUTOMATIC_BREAK',
+    title: `Tracking Enforcement: ${p.employeeName}`,
+    message: `Required location tracking became unavailable for ${p.employeeName} (${p.employeeCode}): ${p.reason}. Action: ${p.actionTaken}. Incident ID: ${p.incidentId}.`,
+    priority: 'HIGH',
+    action_url: '/admin/live-tracking',
+    entity_type: 'attendance_breaks',
+    entity_id: p.incidentId,
+    metadata: {
+      incident_id: p.incidentId,
+      employee_code: p.employeeCode,
+      reason: p.reason,
+      action_taken: p.actionTaken,
+      dedupe_key: `admin:tracking_enforcement:${p.incidentId}`,
+    },
+  };
+}
+
+export function trackingRecoveredAdminAlert(p: { employeeName: string; employeeCode: string; timestamp: string }) {
+  return {
+    notification_type: 'ATTENDANCE',
+    title: `Tracking Resumed: ${p.employeeName}`,
+    message: `Location tracking for ${p.employeeName} (${p.employeeCode}) has resumed at ${p.timestamp}.`,
+    priority: 'NORMAL',
+    action_url: '/admin/live-tracking',
+    entity_type: 'employee_live_locations',
+    metadata: {
+      employee_code: p.employeeCode,
+      timestamp: p.timestamp,
+      dedupe_key: `admin:tracking_recovery:${p.employeeCode}:${p.timestamp.slice(0, 16)}`,
+    },
+  };
+}
+
 /** Only for confirmed transitions that did NOT already produce a break notification. */
 export function geofenceTransition(p: { eventId: string; to: 'INSIDE' | 'OUTSIDE' }): EmployeeNotification {
   return p.to === 'OUTSIDE'

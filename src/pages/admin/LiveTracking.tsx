@@ -77,7 +77,7 @@ function toDisplayRows(input: LiveTrackingInput, nowMs: number) {
     return {
       ...r,
       locationStatus,
-      distance: stale && r.distanceMeters != null ? `Last known: ${dist}` : dist,
+      distance: stale && r.distanceMeters != null ? `Last known distance: ${dist}` : dist,
       lastUpdated: r.lastSeenAt ? formatTrackingTime(r.lastSeenAt, nowMs) : 'No location received',
       workingSince: r.clockInAt ? new Date(r.clockInAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) : '-',
       officeLat, officeLng,
@@ -107,10 +107,20 @@ const AdminLiveTracking: React.FC = () => {
   // re-evaluate the loaded rows when the configured threshold arrives or changes
   useEffect(() => { if (inputRef.current) setEmployees(displayRows(inputRef.current, Date.now())); }, [staleMinutes]);
   const refetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // one load at a time; a request made while loading runs once afterwards
+  const fetchingRef = useRef(false);
+  const refetchPendingRef = useRef(false);
+  // Realtime feed for employee_live_locations: 'connecting' | 'live' | 'interrupted'
+  const [liveFeed, setLiveFeed] = useState<'connecting' | 'live' | 'interrupted'>('connecting');
+  const liveFeedRef = useRef<'connecting' | 'live' | 'interrupted'>('connecting');
+  const [loadErrors, setLoadErrors] = useState<string[]>([]);
+  const viewTriggerRef = useRef<HTMLElement | null>(null);
+  const drawerRef = useRef<HTMLDivElement | null>(null);
   const [nowTick, setNowTick] = useState(Date.now());
   const [liveKpi, setLiveKpi] = useState<LiveTrackingKpi | null>(null);
   const [activeOffices, setActiveOffices] = useState<any[]>([]);
-  const [lastUpdatedTime, setLastUpdatedTime] = useState(new Date().toLocaleTimeString('en-US'));
+  const companyClock = () => new Date().toLocaleTimeString('en-US', { timeZone: COMPANY_TIMEZONE });
+  const [lastUpdatedTime, setLastUpdatedTime] = useState(companyClock());
   
   // Live View Filters
   const [search, setSearch] = useState('');
@@ -147,9 +157,26 @@ const AdminLiveTracking: React.FC = () => {
 
         const input = inputRef.current;
         if (!input) return;
+        // ignore an event older than the row already loaded (events can arrive after a newer reload)
+        const current = input.liveLocations.find((l: any) => l.employee_id === newData.employee_id);
+        const t = (v: any) => (typeof v === 'string' ? Date.parse(v) : NaN);
+        if (current && t(current.updated_at) > t(newData.updated_at)) return;
         const others = input.liveLocations.filter((l: any) => l.employee_id !== newData.employee_id);
         inputRef.current = { ...input, liveLocations: [...others, newData] };
-        setEmployees(displayRows(inputRef.current, Date.now()));
+        const now = Date.now();
+        setNowTick(now);
+        setEmployees(displayRows(inputRef.current, now));
+        setLastUpdatedTime(companyClock());
+      }
+    }, (status) => {
+      if (status === 'SUBSCRIBED') {
+        // after an interruption, reload once so nothing sent in the gap is missed
+        if (liveFeedRef.current === 'interrupted') fetchLocations(true);
+        liveFeedRef.current = 'live';
+        setLiveFeed('live');
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        liveFeedRef.current = 'interrupted';
+        setLiveFeed('interrupted');
       }
     });
 
@@ -218,15 +245,27 @@ const AdminLiveTracking: React.FC = () => {
   };
 
   const fetchLocations = async (silent = false) => {
+    if (fetchingRef.current) { refetchPendingRef.current = true; return; }
+    fetchingRef.current = true;
     if (!silent) setLoading(true);
-    const { input, errors } = await loadLiveTrackingInput();
-    if (errors.length) console.error('[Live Tracking] load errors:', errors);
-    inputRef.current = input;
-    const now = Date.now();
-    setNowTick(now);
-    setEmployees(displayRows(input, now));
-    setLastUpdatedTime(new Date().toLocaleTimeString('en-US'));
-    if (!silent) setLoading(false);
+    try {
+      const { input, errors } = await loadLiveTrackingInput();
+      if (errors.length) console.error('[Live Tracking] load errors:', errors);
+      setLoadErrors(errors);
+      inputRef.current = input;
+      const now = Date.now();
+      setNowTick(now);
+      setEmployees(displayRows(input, now));
+      setLastUpdatedTime(companyClock());
+    } catch (e: any) {
+      // keep the rows already shown (their age keeps counting); say that the reload failed
+      console.error('[Live Tracking] load failed:', e);
+      setLoadErrors([e?.message || 'Network error']);
+    } finally {
+      fetchingRef.current = false;
+      if (!silent) setLoading(false);
+      if (refetchPendingRef.current) { refetchPendingRef.current = false; fetchLocations(true); }
+    }
   };
 
   const fetchHistory = async () => {
@@ -266,10 +305,50 @@ const AdminLiveTracking: React.FC = () => {
     setHistoryLoading(false);
   };
 
+  // Realtime stays the primary update path (no Refresh Now needed). "Auto Refresh" adds a quiet backup
+  // reload: every 60 s while the page is visible, and at once when the tab becomes visible again or the
+  // network comes back — realtime events are lost while a tab is suspended or offline, and a dropped
+  // channel would otherwise leave every row drifting to "Not updating" with no new data ever loaded.
   useEffect(() => {
-    // Auto-refresh is handled by Realtime now.
-    // Interval removed per user request: "Do not require Refresh Now for normal tracking... realtime works without refresh".
+    if (!autoRefresh || activeTab !== 'Live View') return;
+    const visible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden';
+    const reload = () => { if (visible()) fetchLocations(true); };
+    const poll = setInterval(reload, 60000);
+    const onVisibility = () => { if (visible()) reload(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('online', reload);
+    return () => {
+      clearInterval(poll);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('online', reload);
+    };
   }, [autoRefresh, activeTab]);
+
+  // Details drawer: a dialog — Escape closes it, focus moves into it and back to the View button
+  const openDetails = (emp: LiveEmployee, trigger?: HTMLElement | null) => {
+    viewTriggerRef.current = trigger ?? (document.activeElement as HTMLElement | null);
+    setSelectedEmp(emp);
+  };
+  const closeDetails = () => {
+    setSelectedEmp(null);
+    const t = viewTriggerRef.current;
+    viewTriggerRef.current = null;
+    if (t && t.isConnected) setTimeout(() => t.focus(), 0);
+  };
+  const drawerOpen = !!selectedEmp && activeTab === 'Live View';
+  useEffect(() => {
+    if (!drawerOpen) return;
+    drawerRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeDetails(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [drawerOpen]);
+  // keep the open drawer in step with reloads / realtime (same employee, newest data)
+  useEffect(() => {
+    if (!selectedEmp) return;
+    const fresh = employees.find(e => e.id === selectedEmp.id);
+    if (fresh && fresh !== selectedEmp) setSelectedEmp(fresh);
+  }, [employees]);
 
   const handleRefresh = () => {
     fetchLocations();
@@ -409,6 +488,17 @@ const AdminLiveTracking: React.FC = () => {
       {activeTab === "Live View" ? (
         <>
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+            {liveFeed === 'interrupted' && (
+              <div role="status" className="lt-feed-warning">
+                <AlertTriangle size={14} aria-hidden={true} />
+                Live updates interrupted{autoRefresh ? ' — reloading every minute' : ' — use Refresh Now'}
+              </div>
+            )}
+            {loadErrors.length > 0 && (
+              <div role="alert" className="lt-feed-warning">
+                <AlertTriangle size={14} aria-hidden={true} /> Some tracking data could not be loaded; statuses may be incomplete.
+              </div>
+            )}
             <div style={{ fontSize: "0.875rem", color: "var(--text-secondary)" }}>
               Last updated: <strong>{lastUpdatedTime}</strong>
             </div>
@@ -460,7 +550,7 @@ const AdminLiveTracking: React.FC = () => {
                   nowMs={nowTick}
                   expectedCount={kpiCounts[liveKpi]}
                   onClose={() => setLiveKpi(null)}
-                  onViewEmployee={(row) => { setLiveKpi(null); setSelectedEmp(row as any); }}
+                  onViewEmployee={(row) => { setLiveKpi(null); openDetails(row as any, null); }}
                 />
               )}
 
@@ -490,7 +580,7 @@ const AdminLiveTracking: React.FC = () => {
                     onSelectEmployee={(_employeeId, employeeCode) => {
                       // Reuse the page's existing selection: opens the employee drawer and the map pans to the marker
                       const emp = employees.find(e => e.empId === employeeCode);
-                      if (emp) setSelectedEmp(emp);
+                      if (emp) openDetails(emp);
                     }}
                   />
                 </div>
@@ -529,14 +619,14 @@ const AdminLiveTracking: React.FC = () => {
                     </div>
                   </div>
                   
-                  <div className="table-container" style={{ flex: 1, overflowY: "auto" }}>
+                  <div className="table-container lt-list-scroll" style={{ flex: 1, overflowY: "auto" }}>
                     {filteredEmployees.length === 0 ? (
                       <div style={{ padding: "3rem 1rem", textAlign: "center" }}>
                         <AlertCircle size={32} color="var(--gray-400)" style={{ margin: "0 auto 1rem auto" }} />
                         <h3 style={{ fontSize: "1rem", fontWeight: 600 }}>No employees found</h3>
                       </div>
                     ) : (
-                      <table className="table">
+                      <table className="table lt-table">
                         <thead style={{ position: "sticky", top: 0, backgroundColor: "var(--bg-surface)", zIndex: 10 }}>
                           <tr>
                             <th>Employee</th>
@@ -548,11 +638,11 @@ const AdminLiveTracking: React.FC = () => {
                         <tbody>
                           {filteredEmployees.map(emp => (
                             <tr key={emp.id} className={emp.status === "Outside Geofence" ? "row-alert" : ""}>
-                              <td>
+                              <td className="lt-col-emp" data-label="Employee">
                                 <div style={{ fontWeight: 500 }}>{emp.name}</div>
                                 <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>{emp.empId}</div>
                               </td>
-                              <td>
+                              <td className="lt-col-status" data-label="Status">
                                 <span className="badge" style={{ 
                                   backgroundColor: `${getStatusColor(emp.status)}20`, 
                                   color: getStatusColor(emp.status),
@@ -561,14 +651,15 @@ const AdminLiveTracking: React.FC = () => {
                                   {emp.status}
                                 </span>
                               </td>
-                              <td>
+                              <td className="lt-col-loc" data-label="Location">
                                 <TrackingStatus tracking={emp.tracking} nowMs={nowTick} staleMinutes={staleMinutes} />
                                 {emp.distance !== "N/A" && emp.distance !== "Unknown" && (
-                                  <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", marginLeft: "1.25rem" }}>{emp.distance}</div>
+                                  <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>{emp.distance}</div>
                                 )}
                               </td>
-                              <td>
-                                <button className="btn btn-outline" style={{ padding: "0.25rem 0.5rem", fontSize: "0.75rem" }} onClick={() => setSelectedEmp(emp)} disabled={emp.lat == null || emp.lng == null}>
+                              <td className="lt-col-action" data-label="Action">
+                                {/* always available: the details matter most when there is no current location */}
+                                <button type="button" className="btn btn-outline lt-view-btn" onClick={(e) => openDetails(emp, e.currentTarget)} aria-label={`View tracking details for ${emp.name}`} aria-haspopup="dialog">
                                   View
                                 </button>
                               </td>
@@ -686,15 +777,15 @@ const AdminLiveTracking: React.FC = () => {
         </div>
       )}
 
-      {selectedEmp && activeTab === "Live View" && (
-        <div className="drawer-overlay" onClick={() => setSelectedEmp(null)}>
-          <div className="drawer" onClick={e => e.stopPropagation()}>
+      {selectedEmp && drawerOpen && (
+        <div className="drawer-overlay" onClick={closeDetails}>
+          <div className="drawer" role="dialog" aria-modal="true" aria-labelledby="lt-drawer-title" tabIndex={-1} ref={drawerRef} onClick={e => e.stopPropagation()}>
             <div className="drawer-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div>
-                <h2 style={{ fontSize: "1.25rem", fontWeight: 600 }}>{selectedEmp.name}</h2>
+                <h2 id="lt-drawer-title" style={{ fontSize: "1.25rem", fontWeight: 600 }}>{selectedEmp.name}</h2>
                 <div style={{ fontSize: "0.875rem", color: "var(--text-secondary)" }}>{selectedEmp.empId} • {selectedEmp.department}</div>
               </div>
-              <button className="icon-button" onClick={() => setSelectedEmp(null)} aria-label="Close"><X size={20} /></button>
+              <button className="icon-button" onClick={closeDetails} aria-label="Close details"><X size={20} /></button>
             </div>
             
             <div className="drawer-body" style={{ padding: "1.5rem", display: "flex", flexDirection: "column", gap: "1.5rem" }}>
@@ -761,6 +852,11 @@ const AdminLiveTracking: React.FC = () => {
                   <div className="detail-item"><span className="detail-label">Distance</span><span className="detail-value">{selectedEmp.distance}</span></div>
                   <div className="detail-item"><span className="detail-label">Geofence Radius</span><span className="detail-value">{selectedEmp.officeRadius != null ? `${selectedEmp.officeRadius}m` : '-'}</span></div>
                   <div className="detail-item" style={{ gridColumn: "1 / -1" }}><span className="detail-label">Last Location Update</span><span className="detail-value">{selectedEmp.lastUpdated}</span></div>
+                  <div className="detail-item" style={{ gridColumn: "1 / -1" }}><span className="detail-label">{selectedEmp.tracking?.state === 'LIVE' ? 'Coordinates' : 'Last known coordinates'}</span>
+                    <span className="detail-value" data-testid="lt-coordinates">
+                      {selectedEmp.lat != null && selectedEmp.lng != null ? `${Number(selectedEmp.lat).toFixed(5)}, ${Number(selectedEmp.lng).toFixed(5)}` : 'No coordinates received'}
+                    </span>
+                  </div>
                   <div className="detail-item" style={{ gridColumn: "1 / -1" }}><span className="detail-label">Tracking</span><TrackingStatus tracking={selectedEmp.tracking} nowMs={nowTick} staleMinutes={staleMinutes} expanded /></div>
                 </div>
               </div>
@@ -800,6 +896,33 @@ const AdminLiveTracking: React.FC = () => {
         .drawer { background-color: var(--bg-surface); width: 100%; max-width: 450px; height: 100%; display: flex; flex-direction: column; box-shadow: -10px 0 30px rgba(0,0,0,0.5); animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; border-left: 1px solid var(--border-color); }
         .drawer-header { padding: 1.5rem; border-bottom: 1px solid var(--border-color); }
         .drawer-body { overflow-y: auto; }
+        .drawer:focus { outline: none; }
+        .lt-feed-warning { display: inline-flex; align-items: center; gap: 0.375rem; font-size: 0.8125rem; color: var(--warning); border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent); background: color-mix(in srgb, var(--warning) 10%, transparent); border-radius: var(--radius-md); padding: 0.25rem 0.5rem; }
+        /* Employee list: a normal table while its column is wide enough; stacked rows when the column is
+           narrow (phones, and the half-width list beside the map on laptops) instead of hiding View off to
+           the right. Older browsers without container queries keep the table, scrolling inside the card. */
+        .lt-list-scroll { container-type: inline-size; }
+        .lt-table { min-width: 0; }
+        .lt-table td { vertical-align: top; }
+        .lt-table .lt-col-status .badge { white-space: nowrap; }
+        @container (max-width: 560px) {
+          .lt-table { min-width: 0 !important; }
+          /* column names stay available to screen readers; each cell is also data-labelled */
+          .lt-table thead { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+          .lt-table, .lt-table tbody { display: block; width: 100%; }
+          .lt-table tbody tr {
+            display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start;
+            grid-template-areas: "emp action" "status action" "loc loc";
+            gap: 0.375rem 0.75rem; padding: 0.875rem 1rem; border-bottom: 1px solid var(--border-color);
+          }
+          .lt-table td { display: block; height: auto !important; padding: 0 !important; border: 0 !important; min-width: 0 !important; }
+          .lt-table .lt-col-emp { grid-area: emp; overflow-wrap: anywhere; }
+          .lt-table .lt-col-status { grid-area: status; }
+          .lt-table .lt-col-loc { grid-area: loc; }
+          .lt-table .lt-col-action { grid-area: action; }
+        }
+        .lt-view-btn { padding: 0.25rem 0.5rem; font-size: 0.75rem; min-height: 32px; }
+        @media (max-width: 767px), (pointer: coarse) { .lt-view-btn { min-height: 44px; min-width: 44px; } }
         
         .detail-section { margin-bottom: 1.5rem; }
         .ds-title { font-size: 0.875rem; font-weight: 600; color: var(--text-primary); border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; text-transform: uppercase; letter-spacing: 0.05em; }

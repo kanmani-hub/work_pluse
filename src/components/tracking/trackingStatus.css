@@ -15,8 +15,18 @@
 }
 .tracking-status > summary::-webkit-details-marker { display: none; }
 .tracking-status > summary:focus-visible { outline: 2px solid var(--primary-500); outline-offset: 2px; }
-.tracking-toggle { color: var(--text-secondary); transition: transform 0.15s ease; margin-left: auto; flex: 0 0 auto; }
-.tracking-status[open] .tracking-toggle { transform: rotate(180deg); }
+/* the disclosure arrow: a visible 24px target (whole summary row is clickable; 44px rows on touch) */
+.tracking-status > summary { position: relative; }
+.tracking-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; flex: 0 0 auto; margin-left: auto;
+  border-radius: 999px; border: 1px solid var(--border-color);
+  color: var(--text-secondary); background: transparent;
+}
+.tracking-toggle > svg { transition: transform 0.15s ease; }
+.tracking-status > summary:hover .tracking-toggle { background: color-mix(in srgb, var(--text-secondary) 12%, transparent); color: var(--text-primary); }
+.tracking-status[open] .tracking-toggle > svg { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .tracking-toggle > svg { transition: none; } }
 
 .tracking-chip {
   --tone: var(--text-secondary);
@@ -70,4 +80,5 @@
 
 @media (max-width: 767px), (pointer: coarse) {
   .tracking-status > summary { min-height: 44px; }
+  .tracking-toggle { width: 32px; height: 32px; }
 }

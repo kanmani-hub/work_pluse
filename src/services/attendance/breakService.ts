@@ -4,11 +4,13 @@ import { attendanceService } from './attendanceService';
 import { logBreakAudit } from './breakAudit';
 import { qaTimeService } from '../qa/qaTimeService';
 import { notificationService } from '../notifications/notificationService';
-import { autoBreakStarted, autoBreakEnded } from '../notifications/notificationRules';
+import { autoBreakStarted, autoBreakEnded, trackingWarningAutoBreak } from '../notifications/notificationRules';
 import { breakDurationMinutes, classifyOpenBreaks, completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes, statusAfterBreakEnds } from './breakRules';
+import { generateTrackingIncidentId, type TrackingViolationType } from '../location/trackingEnforcementRules';
 
 import { companyDateStr as companyDate } from '../../utils/companyDate';
 import { isReadingTimeAcceptable } from '../location/geofenceStability';
+import { isAdminPortalRole } from '../../lib/roles';
 
 type BreakTotals =
   | { ok: true; actual: number; allowed: number | null; overrun: number; statusAfterBreak: 'LATE' | 'WORKING' }
@@ -795,5 +797,375 @@ export const breakService = {
         actual: totals.actual, allowed: totals.allowed, overrun: totals.overrun, statusAfterBreak: totals.statusAfterBreak, reason: `EVENT_NOT_LOGGED: ${endEventRes.error.message}` };
     }
     return { action: 'ENDED', breakId: activeBreak.id, durationMinutes, complete: true, totalsUpdated: true, statusUpdated: true, eventLogged, auditLogged: allAudited, ...gap, actual: totals.actual, allowed: totals.allowed, overrun: totals.overrun, statusAfterBreak: totals.statusAfterBreak };
+  },
+
+  /**
+   * Handle tracking-enforcement automatic break initiation.
+   * Immediately starts an automatic break when a tracking violation is confirmed,
+   * sending warnings to the employee and admin in the same workflow.
+   * Enforces all concurrency and duplicate safeguards (at most one active break,
+   * idempotent, checks DB state directly).
+   */
+  async handleTrackingEnforcementBreak(params: {
+    employeeId: string;
+    violationType: TrackingViolationType;
+    reason: string;
+    incidentId?: string;
+    serverTimestamp?: string;
+  }): Promise<{
+    action: 'STARTED' | 'NONE' | 'ERROR';
+    breakId?: string;
+    incidentId?: string;
+    reason?: string;
+    warningSent?: boolean;
+    adminNotified?: boolean;
+    complete?: boolean;
+    auditLogged?: boolean;
+  }> {
+    const today = companyDate(new Date().toISOString());
+    const yesterday = companyDate(new Date(Date.now() - 86400000).toISOString());
+    const nowIso = params.serverTimestamp || new Date().toISOString();
+
+    // 1. Open attendance for today (or an overnight shift that started yesterday)
+    const { data: attendance, error: attendanceErr } = await supabase
+      .from('attendance')
+      .select('id, status, late_minutes, break_minutes, break_overrun_minutes, attendance_date, clock_in_at, clock_out_at, shift_template:shift_template_id(crosses_midnight), employee:employee_id(id, first_name, last_name, employee_code)')
+      .eq('employee_id', params.employeeId)
+      .is('clock_out_at', null)
+      .in('attendance_date', [today, yesterday])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle() as any;
+
+    if (attendanceErr) return { action: 'ERROR', reason: `ATTENDANCE_CHECK_FAILED: ${attendanceErr.message}` };
+    if (!attendance || !attendance.clock_in_at) return { action: 'NONE', reason: 'NOT_CLOCKED_IN' };
+    if (attendance.attendance_date !== today && !attendance.shift_template?.crosses_midnight) return { action: 'NONE', reason: 'STALE_OPEN_ATTENDANCE' };
+
+    // 2. Check WFH status
+    const { data: wfhData, error: wfhError } = await supabase
+      .from('wfh_requests')
+      .select('id')
+      .eq('employee_id', params.employeeId)
+      .eq('request_date', attendance.attendance_date)
+      .eq('status', 'APPROVED')
+      .maybeSingle();
+
+    if (wfhError) return { action: 'ERROR', reason: `WFH_CHECK_FAILED: ${wfhError.message}` };
+    if (wfhData) return { action: 'NONE', reason: 'WFH_EXEMPT' };
+
+    // 3. Concurrency check: check active breaks in DB
+    const openRes = await supabase
+      .from('attendance_breaks')
+      .select('id, started_at, break_type')
+      .eq('attendance_id', attendance.id)
+      .is('ended_at', null) as any;
+
+    const open = classifyOpenBreaks<any>(openRes?.data, openRes?.error);
+    if (open.kind === 'ERROR') return { action: 'ERROR', reason: `ACTIVE_BREAK_CHECK_FAILED: ${open.message}` };
+    if (open.kind === 'MULTIPLE') {
+      const auditLogged = await logBreakAudit({
+        action: 'MULTIPLE_ACTIVE_BREAKS_DETECTED',
+        module: 'ATTENDANCE',
+        entity_type: 'attendance',
+        entity_id: attendance.id,
+        description: `${open.count} open breaks found for one attendance; tracking enforcement break was not applied.`,
+      });
+      return { action: 'ERROR', reason: 'MULTIPLE_ACTIVE_BREAKS', auditLogged };
+    }
+
+    if (open.kind === 'ONE') {
+      // Break already active: repair status if needed and return idempotently
+      if (attendance.status !== 'ON_BREAK') {
+        // @ts-ignore
+        await supabase.from('attendance').update({ status: 'ON_BREAK' } as any).eq('id', attendance.id);
+      }
+      return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' };
+    }
+
+    // 4. Incident identifier
+    const incidentId = params.incidentId || generateTrackingIncidentId(params.employeeId, attendance.id, Date.now());
+
+    // 5. Attempt warning notifications (non-blocking for break creation)
+    let warningSent = false;
+    try {
+      const warning = trackingWarningAutoBreak({
+        incidentId,
+        reason: params.reason,
+        timestamp: nowIso,
+      });
+      const notifyRes = await notificationService.notifyEmployee(params.employeeId, warning, {
+        incident_id: incidentId,
+        violation_type: params.violationType,
+      });
+      warningSent = !notifyRes.error && !notifyRes.skipped;
+    } catch (e: any) {
+      console.error('[TRACKING ENFORCEMENT] Employee warning notification failed:', e);
+    }
+
+    // 6. Initiate automatic break immediately in the same workflow
+    // @ts-ignore
+    const { data: newBreak, error: breakErr } = await supabase
+      .from('attendance_breaks')
+      .insert({
+        attendance_id: attendance.id,
+        employee_id: params.employeeId,
+        break_type: 'AUTO_TRACKING',
+        started_at: nowIso,
+        ended_at: null,
+      } as any)
+      .select()
+      .single();
+
+    if (isUniqueViolation(breakErr)) {
+      return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' };
+    }
+    if (breakErr || !newBreak) {
+      return { action: 'ERROR', reason: breakErr?.message || 'FAILED_TO_CREATE_BREAK' };
+    }
+
+    // 7. Follow-up state updates
+    const followUp: string[] = [];
+    // @ts-ignore
+    const statusRes: any = await supabase.from('attendance').update({ status: 'ON_BREAK' } as any).eq('id', attendance.id);
+    if (statusRes?.error) followUp.push(`STATUS_NOT_UPDATED: ${statusRes.error.message}`);
+
+    const eventRes: any = await supabase.from('attendance_events').insert({
+      attendance_id: attendance.id,
+      employee_id: params.employeeId,
+      event_type: 'BREAK_START',
+      event_at: nowIso,
+      source: 'SYSTEM',
+      metadata: {
+        trigger: 'TRACKING_ENFORCEMENT',
+        break_type: 'AUTO_TRACKING',
+        break_id: (newBreak as any).id,
+        incident_id: incidentId,
+        violation_type: params.violationType,
+        reason: params.reason,
+      },
+    } as any);
+    if (eventRes?.error) followUp.push(`EVENT_NOT_LOGGED: ${eventRes.error.message}`);
+
+    // 8. Audit logging
+    const auditLogged = await logBreakAudit({
+      action: 'AUTOMATIC_BREAK_STARTED',
+      module: 'ATTENDANCE',
+      entity_type: 'attendance_breaks',
+      entity_id: (newBreak as any).id,
+      description: `Automatic tracking enforcement break started. Reason: ${params.reason}. Incident ID: ${incidentId}.`,
+      new_values: {
+        incident_id: incidentId,
+        break_type: 'AUTO_TRACKING',
+        started_at: nowIso,
+        violation_type: params.violationType,
+      },
+    });
+
+    // 9. Admin alert
+    let adminNotified = false;
+    try {
+      const empData = attendance.employee || {};
+      const empName = `${empData.first_name || 'Employee'} ${empData.last_name || ''}`.trim() || 'Employee';
+      const empCode = empData.employee_code || 'Unknown';
+      await notificationService.notifyAdmins({
+        notification_type: 'AUTOMATIC_BREAK',
+        title: `Tracking Enforcement: ${empName}`,
+        message: `Automatic break started for ${empName} (${empCode}) due to tracking violation: ${params.reason}. Incident ID: ${incidentId}.`,
+        priority: 'HIGH',
+        action_url: '/admin/live-tracking',
+        entity_type: 'attendance_breaks',
+        entity_id: (newBreak as any).id,
+        metadata: {
+          incident_id: incidentId,
+          break_id: (newBreak as any).id,
+          employee_id: params.employeeId,
+          violation_type: params.violationType,
+          reason: params.reason,
+        },
+      });
+      adminNotified = true;
+    } catch (e: any) {
+      console.error('[TRACKING ENFORCEMENT] Admin notification failed:', e);
+    }
+
+    if (followUp.length) {
+      console.error('[TRACKING ENFORCEMENT] Started with follow-up warnings:', (newBreak as any).id, followUp.join('; '));
+      return {
+        action: 'STARTED',
+        breakId: (newBreak as any).id,
+        incidentId,
+        warningSent,
+        adminNotified,
+        complete: false,
+        reason: followUp.join('; '),
+        auditLogged,
+      };
+    }
+
+    return {
+      action: 'STARTED',
+      breakId: (newBreak as any).id,
+      incidentId,
+      warningSent,
+      adminNotified,
+      complete: true,
+      auditLogged,
+    };
+  },
+
+  /**
+   * Correct an erroneous automatic break created by a false tracking incident.
+   * Cancels the break, zeroes duration, recalculates attendance totals, and logs an audit trail.
+   *
+   * Security & Scope Controls:
+   * 1. Requires authenticated session.
+   * 2. Authoritative role check against profiles and roles table (ADMIN or HR only).
+   * 3. Requires non-empty, trimmed correctionReason.
+   * 4. Enforces scope: breakId must match attendanceId.
+   * 5. Restricts eligible break types to AUTO_TRACKING or AUTO_GPS (prevents cancelling regular breaks).
+   * 6. Preserves audit trail and attendance total recalculation.
+   */
+  async correctTrackingEnforcementBreak(params: {
+    breakId: string;
+    attendanceId: string;
+    correctionReason: string;
+  }): Promise<{ success: boolean; error: Error | null; auditLogged?: boolean }> {
+    try {
+      // 1. Validate inputs
+      const reason = typeof params.correctionReason === 'string' ? params.correctionReason.trim() : '';
+      if (!reason) {
+        return { success: false, error: new Error('A valid, non-empty correction reason is required.') };
+      }
+      if (!params.breakId || !params.attendanceId) {
+        return { success: false, error: new Error('Break ID and Attendance ID are required.') };
+      }
+
+      // 2. Authoritative caller authentication and role verification
+      const { data: authData, error: authErr } = await supabase.auth.getUser();
+      if (authErr || !authData?.user) {
+        return { success: false, error: new Error('Unauthorized: Authentication required.') };
+      }
+
+      const { data: profile, error: profileErr } = await supabase
+        .from('profiles')
+        .select('role_id, is_active, employee_id')
+        .eq('auth_user_id', authData.user.id)
+        .maybeSingle() as any;
+
+      if (profileErr || !profile || !profile.is_active || !profile.role_id) {
+        return { success: false, error: new Error('Unauthorized: Unable to verify caller identity or inactive account.') };
+      }
+
+      const { data: roleData, error: roleErr } = await supabase
+        .from('roles')
+        .select('name')
+        .eq('id', profile.role_id)
+        .maybeSingle() as any;
+
+      const roleName = roleData?.name || '';
+      if (roleErr || !isAdminPortalRole(roleName)) {
+        return { success: false, error: new Error('Forbidden: Only Admin or HR roles are authorized to correct breaks.') };
+      }
+
+      // 3. Load break and verify scope (breakId + attendanceId)
+      const { data: bRecord, error: fetchErr } = await supabase
+        .from('attendance_breaks')
+        .select('*')
+        .eq('id', params.breakId)
+        .eq('attendance_id', params.attendanceId)
+        .maybeSingle() as any;
+
+      if (fetchErr) return { success: false, error: new Error(`Could not load break: ${fetchErr.message}`) };
+      if (!bRecord) return { success: false, error: new Error('Break record not found for the specified attendance.') };
+
+      // 4. Prevent correction of unrelated break types (REGULAR, LUNCH, TEA, PERSONAL)
+      const ELIGIBLE_BREAK_TYPES = ['AUTO_TRACKING', 'AUTO_GPS'];
+      if (!ELIGIBLE_BREAK_TYPES.includes(bRecord.break_type)) {
+        return {
+          success: false,
+          error: new Error(`Cannot correct break with type '${bRecord.break_type}'. Only automatic tracking breaks can be corrected.`),
+        };
+      }
+
+      // If trusted database RPC function exists, prefer database-level execution
+      if (typeof (supabase as any).rpc === 'function') {
+        try {
+          const { data: rpcData, error: rpcErr } = await (supabase.rpc as any)('correct_tracking_enforcement_break', {
+            p_break_id: params.breakId,
+            p_attendance_id: params.attendanceId,
+            p_reason: reason,
+          });
+          if (!rpcErr && rpcData?.success) {
+            const totalsError = await saveTotalsAfterAdminChange(params.attendanceId);
+            const auditLogged = await logBreakAudit({
+              action: 'TRACKING_BREAK_CORRECTED',
+              module: 'ATTENDANCE',
+              entity_type: 'attendance_breaks',
+              entity_id: params.breakId,
+              description: `Erroneous tracking enforcement break corrected by ${roleName}. Reason: ${reason}`,
+              old_values: bRecord,
+              new_values: { break_type: 'CANCELLED', duration_minutes: 0 },
+            });
+            if (totalsError) {
+              return { success: true, error: new Error(`Break corrected via RPC, but totals update reported: ${totalsError}`), auditLogged };
+            }
+            return { success: true, error: null, auditLogged };
+          }
+        } catch {
+          // Graceful fallback to application update if RPC is unavailable in current DB
+        }
+      }
+
+      // 5. Update to CANCELLED with 0 duration
+      const { data: updatedRows, error: updateErr } = await (supabase.from('attendance_breaks') as any)
+        .update({
+          break_type: 'CANCELLED',
+          duration_minutes: 0,
+          ended_at: bRecord.started_at,
+        })
+        .eq('id', params.breakId)
+        .select('id');
+
+      if (updateErr || !updatedRows || updatedRows.length === 0) {
+        return { success: false, error: new Error(`Failed to correct break: ${updateErr?.message || 'Record locked or updated'}`) };
+      }
+
+      // 6. Reconcile attendance totals
+      const totalsError = await saveTotalsAfterAdminChange(params.attendanceId);
+
+      // 7. Audit logging
+      const auditLogged = await logBreakAudit({
+        action: 'TRACKING_BREAK_CORRECTED',
+        module: 'ATTENDANCE',
+        entity_type: 'attendance_breaks',
+        entity_id: params.breakId,
+        description: `Erroneous tracking enforcement break corrected by ${roleName}. Reason: ${reason}`,
+        old_values: bRecord,
+        new_values: { break_type: 'CANCELLED', duration_minutes: 0 },
+      });
+
+      // 8. Attendance event
+      await (supabase.from('attendance_events') as any).insert({
+        attendance_id: params.attendanceId,
+        employee_id: bRecord.employee_id,
+        event_type: 'BREAK_CORRECTION',
+        event_at: new Date().toISOString(),
+        source: 'ADMIN',
+        metadata: {
+          break_id: params.breakId,
+          correction_reason: reason,
+          original_break_type: bRecord.break_type,
+          corrected_by_role: roleName,
+        },
+      });
+
+      if (totalsError) {
+        return { success: true, error: new Error(`Break corrected, but totals update reported: ${totalsError}`), auditLogged };
+      }
+
+      return { success: true, error: null, auditLogged };
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err : new Error(String(err)) };
+    }
   }
 };

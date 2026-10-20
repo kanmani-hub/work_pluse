@@ -117,6 +117,38 @@ const AdminBreaks: React.FC = () => {
     }
   };
 
+  const handleCorrectBreak = async (breakId: string, attendanceId: string) => {
+    const reason = window.prompt('Enter reason for correcting this tracking enforcement break:');
+    if (reason === null) return;
+    const trimmed = reason.trim();
+    if (!trimmed) {
+      setActionNotice({ type: 'error', text: 'A correction reason is required.' });
+      return;
+    }
+    setActionLoading(true);
+    setActionNotice(null);
+    try {
+      const { success, error } = await breakService.correctTrackingEnforcementBreak({
+        breakId,
+        attendanceId,
+        correctionReason: trimmed,
+      });
+      if (!success) {
+        setActionNotice({ type: 'error', text: `Failed to correct break: ${error?.message || 'Unknown error'}` });
+      } else if (error) {
+        setActionNotice({ type: 'error', text: error.message });
+        await fetchBreaks(true);
+      } else {
+        setActionNotice({ type: 'success', text: 'Tracking break corrected and totals recalculated.' });
+        await fetchBreaks();
+      }
+    } catch (e: any) {
+      setActionNotice({ type: 'error', text: e.message || 'Error correcting break' });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchBreaks();
     // Break start/end, clock-in/out and stored totals: refetch (debounced, no spinner)
@@ -490,8 +522,9 @@ const AdminBreaks: React.FC = () => {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', marginBottom: session.id ? '0.75rem' : '0' }}>
                     <div>
-                      {formatTime(session.started_at)} → {session.state === 'ACTIVE' ? 'Now' : formatTime(session.ended_at)}
+                      {session.started_at ? formatTime(session.started_at) : '—'} → {session.state === 'ACTIVE' ? 'Now' : formatTime(session.ended_at)}
                       {session.break_type === 'AUTO_GPS' && <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}> · automatic (GPS)</span>}
+                      {session.break_type === 'AUTO_TRACKING' && <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}> · automatic (tracking enforcement)</span>}
                       {session.id && session.id in d.gapReturns && (
                         <div style={{ fontSize: '0.7rem', color: 'var(--warning)' }}>
                           Return seen only after a tracking gap (last location before: {formatTime(d.gapReturns[session.id])}). The actual return may have been earlier.
@@ -515,6 +548,27 @@ const AdminBreaks: React.FC = () => {
                         >
                           <StopCircle size={13} aria-hidden={true} />
                           {endingBreakId === session.id ? 'Ending…' : 'End Now'}
+                        </button>
+                      )}
+                      {session.break_type === 'AUTO_TRACKING' && (
+                        <button
+                          type="button"
+                          className="btn btn-outline bt-action"
+                          style={{
+                            padding: '0.25rem 0.5rem',
+                            fontSize: '0.75rem',
+                            color: 'var(--primary)',
+                            borderColor: 'var(--primary)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.25rem'
+                          }}
+                          disabled={actionLoading}
+                          title="Correct erroneous tracking enforcement break with an auditable reason"
+                          onClick={() => handleCorrectBreak(session.id!, d.attendanceId!)}
+                        >
+                          <FileText size={13} />
+                          Correct Break
                         </button>
                       )}
                       <button

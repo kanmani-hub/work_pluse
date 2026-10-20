@@ -39,6 +39,20 @@ export const departmentService = {
     return { data: mapped, error: null, unassigned: unassignedEmployees.length, unassignedEmployees, unassignedError };
   },
 
+  /**
+   * Employees whose department_id is this department (all statuses, same set as the table's count),
+   * for Admin → Departments → View Details. Read-only.
+   */
+  async getDepartmentEmployees(departmentId: string): Promise<{ data: any[] | null; error: { message: string } | null }> {
+    const { data, error } = await supabase
+      .from('employees')
+      .select('id, first_name, last_name, employee_code, designation, status, office:office_id(name)')
+      .eq('department_id', departmentId)
+      .order('first_name');
+    if (error) console.error('Error fetching department employees:', error);
+    return { data: (data as any[] | null) ?? null, error: error ? { message: error.message } : null };
+  },
+
   async createDepartment(department: { name: string; description: string | null; is_active: boolean }) {
     const { data, error } = await supabase
       .from('departments')

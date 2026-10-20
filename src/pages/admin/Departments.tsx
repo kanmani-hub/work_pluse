@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Building2, Search, Plus, Filter, MoreVertical, X, CheckCircle2, 
@@ -9,6 +9,9 @@ import { departmentService } from '../../services/department/departmentService';
 import RecordsModal from '../../components/common/RecordsModal';
 import { clickableCardProps, EMPLOYEE_COLUMNS } from '../../services/common/cardDetails';
 import { departmentCards, type DepartmentCard } from '../../services/common/orgCardRules';
+import { toDepartmentEmployeeRows } from '../../services/department/departmentDetailRules';
+import DepartmentDetailPanel, { type DepartmentEmployeesState } from '../../components/departments/DepartmentDetailPanel';
+import PanelErrorBoundary from '../../components/common/PanelErrorBoundary';
 
 const AdminDepartments: React.FC = () => {
   const navigate = useNavigate();
@@ -28,6 +31,9 @@ const AdminDepartments: React.FC = () => {
   // Drawers & Modals
   const [showForm, setShowForm] = useState<string | boolean>(false); // false | true (add) | id (edit)
   const [showDetail, setShowDetail] = useState<any>(null);
+  // Employees of the department open in View Details (loaded on open; stale responses ignored)
+  const [detailEmployees, setDetailEmployees] = useState<DepartmentEmployeesState>({ status: 'loading' });
+  const detailRequest = useRef(0);
   const [deactivateModal, setDeactivateModal] = useState<any>(null);
 
   // Form State
@@ -67,10 +73,28 @@ const AdminDepartments: React.FC = () => {
     return matchesSearch && matchesStatus;
   });
 
+  const loadDetailEmployees = async (departmentId: string) => {
+    const req = ++detailRequest.current;
+    setDetailEmployees({ status: 'loading' });
+    try {
+      const { data, error } = await departmentService.getDepartmentEmployees(departmentId);
+      if (req !== detailRequest.current) return;
+      if (error || !data) setDetailEmployees({ status: 'error', message: error?.message || 'No data returned.' });
+      else setDetailEmployees({ status: 'ready', rows: toDepartmentEmployeeRows(data) });
+    } catch (e: any) {
+      if (req === detailRequest.current) setDetailEmployees({ status: 'error', message: e?.message || 'Network error.' });
+    }
+  };
+
+  const closeDetail = useCallback(() => {
+    detailRequest.current++;
+    setShowDetail(null);
+  }, []);
+
   const handleActionClick = (action: string, dept: any) => {
     setActiveMenu(null);
     switch(action) {
-      case 'view': setShowDetail(dept); break;
+      case 'view': setShowDetail(dept); loadDetailEmployees(dept.id); break;
       case 'edit': {
         let parsedDesc = { desc: '', code: '', manager: '' };
         if (dept.description) {
@@ -351,96 +375,32 @@ const AdminDepartments: React.FC = () => {
         </div>
       )}
 
-      {/* Department Detail Drawer */}
+      {/* Department Detail Drawer: a render error stays inside the panel instead of blanking the app */}
       {showDetail && (
-        <div className="drawer-overlay" onClick={() => setShowDetail(null)}>
-          <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
-            <div className="drawer-header" style={{ paddingBottom: '1.5rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', width: '100%' }}>
-                <div>
-                  <h2 style={{ fontSize: '1.5rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    {showDetail.name} 
-                    <span className="badge badge-gray" style={{ fontFamily: 'monospace' }}>{showDetail.code}</span>
-                  </h2>
-                  <div style={{ display: 'flex', gap: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-                    <span>Manager: <strong>{showDetail.manager}</strong></span>
-                    <span>Created: <strong>{showDetail.created}</strong></span>
-                  </div>
+        <PanelErrorBoundary
+          resetKey={showDetail.id}
+          fallback={() => (
+            <div className="drawer-overlay" onClick={closeDetail}>
+              <div className="drawer wide-drawer" role="alertdialog" aria-modal="true" aria-labelledby="department-detail-error" onClick={e => e.stopPropagation()}>
+                <div className="drawer-header">
+                  <h2 id="department-detail-error" style={{ fontSize: '1.25rem', fontWeight: 600 }}>Department details could not be displayed</h2>
+                  <button className="icon-button" onClick={closeDetail} aria-label="Close"><X size={20} /></button>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <span className={`badge ${showDetail.status === 'Active' ? 'badge-success' : 'badge-gray'}`}>{showDetail.status}</span>
-                  <button className="icon-button" onClick={() => setShowDetail(null)} aria-label="Close"><X size={20} /></button>
+                <div className="drawer-body">
+                  <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Something in this department's data could not be shown. The rest of the page still works; close this panel and try again.</p>
                 </div>
               </div>
             </div>
-            
-            <div className="drawer-body" style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-              
-              <div className="card" style={{ padding: '1rem' }}>
-                <h3 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--gray-700)', marginBottom: '0.5rem' }}>Description</h3>
-                <p style={{ fontSize: '0.875rem', color: 'var(--text-primary)' }}>
-                  {(() => {
-                    if (!showDetail.description) return 'No description provided.';
-                    try {
-                      const parsed = JSON.parse(showDetail.description);
-                      return parsed.desc || 'No description provided.';
-                    } catch (e) {
-                      return showDetail.description;
-                    }
-                  })()}
-                </p>
-              </div>
-
-              <div>
-                <h3 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  Employees in Department
-                  <span className="badge badge-primary">{showDetail.employees} Total</span>
-                </h3>
-                
-                {showDetail.employees > 0 ? (
-                  <div className="table-container" style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
-                    <table className="table" style={{ width: '100%' }}>
-                      <thead>
-                        <tr>
-                          <th>Employee</th>
-                          <th>Designation</th>
-                          <th>Office</th>
-                          <th>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {showDetail.employees === 0 ? (
-                          <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>No employees found in this department</td></tr>
-                        ) : (
-                          [].map((emp: any) => (
-                            <tr key={emp.id} style={{ cursor: 'pointer' }} onClick={() => navigate('/admin/employees')}>
-                              <td>
-                                <div style={{ fontWeight: 500 }}>{emp.name}</div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.id}</div>
-                              </td>
-                              <td style={{ fontSize: '0.875rem' }}>{emp.desig}</td>
-                              <td style={{ fontSize: '0.875rem' }}>{emp.office}</td>
-                              <td><span className={`badge ${emp.status === 'Active' ? 'badge-success' : 'badge-warning'}`}>{emp.status}</span></td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)', border: '1px dashed var(--gray-300)', borderRadius: 'var(--radius-md)' }}>
-                    No employees currently assigned to this department.
-                  </div>
-                )}
-                
-                <div style={{ marginTop: '1rem', textAlign: 'center' }}>
-                  <button onClick={() => navigate('/admin/employees')} className="btn btn-outline" style={{ fontSize: '0.875rem' }}>Manage in Employee Directory</button>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        </div>
+          )}
+        >
+          <DepartmentDetailPanel
+            department={showDetail}
+            employees={detailEmployees}
+            onClose={closeDetail}
+            onRetry={() => loadDetailEmployees(showDetail.id)}
+            onOpenEmployees={() => navigate('/admin/employees')}
+          />
+        </PanelErrorBoundary>
       )}
 
       {/* Deactivate Modal */}

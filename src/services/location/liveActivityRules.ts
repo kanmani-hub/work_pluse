@@ -67,15 +67,24 @@ export function fromAttendanceEvent(row: any): LiveActivityLog | null {
 
 export function fromBreak(row: any): LiveActivityLog[] {
   const p = who(row);
-  const auto = row.break_type === 'AUTO_GPS';
+  const isAutoGps = row.break_type === 'AUTO_GPS';
+  const isAutoTracking = row.break_type === 'AUTO_TRACKING';
   const out: LiveActivityLog[] = [];
   if (row.started_at) {
-    out.push({ id: `attendance_breaks:${row.id}:start`, ...p, activityType: 'BREAK_STARTED', message: auto ? `${p.employeeName} started automatic break` : `${p.employeeName} started a break`, timestamp: row.started_at, source: 'break', metadata: { breakId: row.id, breakType: row.break_type, attendanceId: row.attendance_id } });
+    const startMsg = isAutoTracking
+      ? `${p.employeeName} started automatic break (tracking enforcement)`
+      : isAutoGps
+      ? `${p.employeeName} started automatic break`
+      : `${p.employeeName} started a break`;
+    out.push({ id: `attendance_breaks:${row.id}:start`, ...p, activityType: 'BREAK_STARTED', message: startMsg, timestamp: row.started_at, source: 'break', metadata: { breakId: row.id, breakType: row.break_type, attendanceId: row.attendance_id } });
   }
   if (row.ended_at) {
     const mins = row.duration_minutes ?? null;
     const dur = mins !== null ? ` (${mins} min)` : '';
-    out.push({ id: `attendance_breaks:${row.id}:end`, ...p, activityType: 'BREAK_ENDED', message: auto ? `${p.employeeName} returned to office — break ended${dur}` : `${p.employeeName} ended break${dur}`, timestamp: row.ended_at, source: 'break', metadata: { breakId: row.id, breakType: row.break_type, durationMinutes: mins } });
+    const endMsg = isAutoGps
+      ? `${p.employeeName} returned to office — break ended${dur}`
+      : `${p.employeeName} ended break${dur}`;
+    out.push({ id: `attendance_breaks:${row.id}:end`, ...p, activityType: 'BREAK_ENDED', message: endMsg, timestamp: row.ended_at, source: 'break', metadata: { breakId: row.id, breakType: row.break_type, durationMinutes: mins } });
   }
   return out;
 }

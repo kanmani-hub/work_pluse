@@ -18,6 +18,8 @@
  *     replay) is not shown as fresh. When the two differ by more than CLOCK_DIFFERENCE_NOTE_MINUTES the
  *     details say so; the cause (late delivery or a slow device clock) is not guessed.
  *   - Missing or unreadable timestamps are never treated as fresh.
+ *   - A time more than FUTURE_TOLERANCE_MINUTES ahead of now is never treated as fresh either (a wrong
+ *     clock on the employee's device, or on the computer viewing the page): state STALE with timeAhead.
  *
  * The app cannot see WHY a phone stopped reporting (closed app, locked screen, browser suspended,
  * no network, location switched off): a stale status says that the cause is not known.
@@ -30,6 +32,8 @@ export const TRACKING_STALE_MINUTES = 15;
 export const MIN_STALE_MINUTES = 5;
 export const MAX_STALE_MINUTES = 120;
 export const CLOCK_DIFFERENCE_NOTE_MINUTES = 5;
+/** Small clock differences between devices are normal; beyond this a future time is not trusted. */
+export const FUTURE_TOLERANCE_MINUTES = 2;
 
 /** The admin-configurable display threshold, clamped to a sane range (invalid → default 15). */
 export function resolveStaleMinutes(setting: unknown): number {
@@ -52,6 +56,8 @@ export interface TrackingInfo {
   receivedAt?: string | null;
   /** The time freshness is measured from (earlier of the two above), or null. */
   freshAt?: string | null;
+  /** true when freshAt is more than FUTURE_TOLERANCE_MINUTES in the future (never shown as live). */
+  timeAhead?: boolean;
   locationStatus: string | null;
   problem: TrackingProblemInfo | null;
   notTrackedReason?: NotTrackedReason | null;
@@ -73,7 +79,15 @@ export function freshnessTimes(live: { last_seen_at?: unknown; updated_at?: unkn
 export function isFresh(freshAt: string | null | undefined, nowMs: number, staleMinutes = TRACKING_STALE_MINUTES): boolean {
   const t = ms(freshAt);
   if (!Number.isFinite(t) || !Number.isFinite(nowMs)) return false;
+  if (t - nowMs > FUTURE_TOLERANCE_MINUTES * 60000) return false;   // a future time cannot prove the location is current
   return (nowMs - t) / 60000 <= staleMinutes;
+}
+
+/** Whole minutes an ISO time lies beyond the future tolerance ahead of `nowMs`; 0 when it does not (or is invalid). */
+export function minutesAhead(iso: string | null | undefined, nowMs: number): number {
+  const t = ms(iso);
+  if (!Number.isFinite(t) || !Number.isFinite(nowMs) || t - nowMs <= FUTURE_TOLERANCE_MINUTES * 60000) return 0;
+  return Math.ceil((t - nowMs) / 60000);
 }
 
 /**
@@ -124,7 +138,9 @@ export function deriveTracking(input: {
   const problemIsNewer = !!problem && (!lastGood || ms(problem.at) > ms(lastGood));
   if (problemIsNewer) return { state: 'LOCATION_PROBLEM', lastSeenAt: deviceAt, receivedAt, freshAt, locationStatus, problem };
   if (!input.live) return { state: 'NO_DATA', lastSeenAt: null, receivedAt: null, freshAt: null, locationStatus: null, problem: null };
-  if (!isFresh(freshAt, input.nowMs, input.staleMinutes)) return { state: 'STALE', lastSeenAt: deviceAt, receivedAt, freshAt, locationStatus, problem: null };
+  if (!isFresh(freshAt, input.nowMs, input.staleMinutes)) {
+    return { state: 'STALE', lastSeenAt: deviceAt, receivedAt, freshAt, locationStatus, problem: null, timeAhead: minutesAhead(freshAt, input.nowMs) > 0 };
+  }
   return { state: 'LIVE', lastSeenAt: deviceAt, receivedAt, freshAt, locationStatus, problem: null };
 }
 
@@ -138,6 +154,10 @@ export interface TrackingSummary {
   /** Time the chip refers to (last usable reading, or the failed check), or null. */
   at: string | null;
   ageMins: number | null;
+  /** Minutes the time lies in the future (clock problem), otherwise absent. */
+  aheadMins?: number;
+  /** true when the location is current ("Location:"); false → "Last known location:". */
+  current?: boolean;
   location: string;
   detail: string;
 }
@@ -192,9 +212,14 @@ export function trackingSummary(t: TrackingInfo, nowMs: number, fmt: (iso: strin
     : '';
   switch (t.state) {
     case 'LIVE':
-      return { tone: 'current', label: 'Live', at: seen, ageMins: minutesAgo(seen, nowMs), location,
-        detail: `Location is updating. Last update ${seenText}. Last known location: ${location.toLowerCase()}.${clockNote}` };
+      return { tone: 'current', label: 'Live', at: seen, ageMins: minutesAgo(seen, nowMs), location, current: true,
+        detail: `Location is updating. Last update ${seenText}. Current location: ${location.toLowerCase()}.${clockNote}` };
     case 'STALE':
+      if (t.timeAhead) {
+        const ahead = minutesAhead(t.freshAt ?? seen, nowMs);
+        return { tone: 'stale', label: 'Time ahead', at: seen, ageMins: null, aheadMins: ahead, location,
+          detail: `The recorded update time${seen ? ` (${fmt(seen)})` : ''} is about ${ahead} min ahead of the current time, so it cannot be confirmed as current. The employee's device clock (or this computer's clock) may be wrong. Last known location: ${location.toLowerCase()}.` };
+      }
       return { tone: 'stale', label: 'Not updating', at: seen, ageMins: minutesAgo(seen, nowMs), location,
         detail: seen
           ? `No location update for more than ${staleMinutes} minutes. Last update ${seenText}. Last known location: ${location.toLowerCase()}. The device has not reported since then; the reason is not known (for example the app or browser was closed or in the background, the device was offline, or location was switched off).${clockNote}`

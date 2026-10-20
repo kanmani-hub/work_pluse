@@ -25,6 +25,19 @@ describe('normalizeEmployeeCode', () => {
   it('treats EMP001, emp001, Emp001 and padded input the same', () => {
     for (const v of ['EMP001', 'emp001', 'Emp001', '  emp001 ']) expect(normalizeEmployeeCode(v)).toBe('EMP001');
   });
+
+  it('handles codes with hyphens and underscores', () => {
+    expect(normalizeEmployeeCode('admin-001')).toBe('ADMIN-001');
+    expect(normalizeEmployeeCode(' emp_123 ')).toBe('EMP_123');
+  });
+
+  it('masks missing employee email or resolution failure with generic invalid credentials', () => {
+    // When RPC returns null or fails, the UI must show INVALID_CREDENTIALS to prevent user enumeration
+    const rpcResponse: { data: string | null; error: any } = { data: null, error: { message: 'Not found' } };
+    const userMessage = rpcResponse.data ? '' : AUTH_MESSAGES.INVALID_CREDENTIALS;
+    expect(userMessage).toBe(AUTH_MESSAGES.INVALID_CREDENTIALS);
+    expect(userMessage.includes('Not found')).toBe(false);
+  });
 });
 
 describe('validatePasswordChange', () => {

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   TRACKING_STALE_MINUTES, resolveStaleMinutes, freshnessTimes, isFresh, trackingApplicability, latestProblemByEmployee,
   deriveTracking, trackingSummary, formatTrackingTime, CLOCK_DIFFERENCE_NOTE_MINUTES,
+  FUTURE_TOLERANCE_MINUTES, minutesAhead,
 } from './trackingStatus';
 import { LIVE_STALE_MINUTES } from './liveTrackingRules';
 import { buildLiveTrackingRows } from './liveTrackingRules';
@@ -180,5 +181,59 @@ describe('Break Management and Live Tracking agree', () => {
     const liveRows = buildLiveTrackingRows({ today: TODAY, yesterday: YDAY, employees, liveLocations, attendance, breaks: [], wfhToday: [], shiftAssignments: [], locationProblems: [], staleMinutes: 45 }, NOW);
     expect(breakRows.find(r => r.employeeId === 'e2')!.tracking.state).toBe('LIVE');
     expect(liveRows.find((r: any) => r.employeeId === 'e2')!.tracking.state).toBe('LIVE');
+  });
+});
+
+describe('future, malformed and missing timestamps (Live Tracking)', () => {
+  const after = (m: number) => new Date(NOW + m * 60000).toISOString();
+  const derive = (live: any) => deriveTracking({ applicable: true, loaded: true, live, problem: null, nowMs: NOW });
+
+  it('a time slightly ahead (normal clock drift) still counts; beyond the tolerance it is never fresh', () => {
+    expect(FUTURE_TOLERANCE_MINUTES).toBe(2);
+    expect(isFresh(after(1), NOW)).toBe(true);
+    expect(isFresh(after(3), NOW)).toBe(false);
+    expect(isFresh(after(600), NOW)).toBe(false);
+    expect(minutesAhead(after(1), NOW)).toBe(0);
+    expect(minutesAhead(after(30), NOW)).toBe(30);
+    expect(minutesAhead('garbage', NOW)).toBe(0);
+  });
+
+  it('a future device time with no server time is "Time ahead", not live, and gives no invented age', () => {
+    const tr = derive({ last_seen_at: after(45), location_status: 'INSIDE_GEOFENCE' });
+    expect(tr).toMatchObject({ state: 'STALE', timeAhead: true });
+    const s = trackingSummary(tr, NOW, fmt);
+    expect(s).toMatchObject({ tone: 'stale', label: 'Time ahead', ageMins: null, aheadMins: 45 });
+    expect(s.current).toBeFalsy();
+    expect(s.detail).toMatch(/ahead of the current time/);
+    expect(s.detail).toMatch(/cannot be confirmed as current/);
+  });
+
+  it('with a server time, a fast device clock is capped by the (earlier) server time', () => {
+    const tr = derive({ last_seen_at: after(45), updated_at: before(3), location_status: 'INSIDE_GEOFENCE' });
+    expect(tr.state).toBe('LIVE');
+    expect(tr.timeAhead).toBeFalsy();
+  });
+
+  it('null, empty and malformed times are never live, and stale rows are not labelled as current', () => {
+    for (const v of [null, '', 'not-a-date', 12345, {}]) {
+      const tr = derive({ last_seen_at: v, updated_at: v, location_status: 'INSIDE_GEOFENCE' });
+      expect(tr.state, String(v)).toBe('STALE');
+      expect(trackingSummary(tr, NOW, fmt).current, String(v)).toBeFalsy();
+    }
+  });
+
+  it('only a live reading is "current" (UI says "Location:"; otherwise "Last known location:")', () => {
+    expect(trackingSummary(derive({ last_seen_at: before(2), updated_at: before(2), location_status: 'INSIDE_GEOFENCE' }), NOW, fmt))
+      .toMatchObject({ label: 'Live', current: true, location: 'Inside office' });
+    expect(trackingSummary(derive({ last_seen_at: before(90), updated_at: before(90), location_status: 'INSIDE_GEOFENCE' }), NOW, fmt).current).toBeFalsy();
+  });
+
+  it('Live Tracking work status never uses a future (unverifiable) reading for the geofence side', () => {
+    const employees = [{ id: 'e1', employee_code: 'E1', first_name: 'A', last_name: 'B', status: 'ACTIVE', role: { name: 'Employee' }, offices: null }];
+    const attendance = [{ id: 'a1', employee_id: 'e1', attendance_date: TODAY, status: 'WORKING', clock_in_at: ist(TODAY, '09:00'), clock_out_at: null }];
+    const liveLocations = [{ id: 'l1', employee_id: 'e1', last_seen_at: after(60), location_status: 'OUTSIDE_GEOFENCE', latitude: 13, longitude: 80 }];
+    const row: any = buildLiveTrackingRows({ today: TODAY, yesterday: YDAY, employees, liveLocations, attendance, breaks: [], wfhToday: [], shiftAssignments: [], locationProblems: [] }, NOW)[0];
+    expect(row.tracking.state).toBe('STALE');
+    expect(row.status).not.toBe('Outside Geofence');
   });
 });

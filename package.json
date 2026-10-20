@@ -5,13 +5,21 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:local": "vite --mode localdev",
+    "dev:staging": "vite --mode staging",
     "kanz": "vite",
+    "kanz:local": "vite --mode localdev",
+    "kanz:staging": "vite --mode staging",
     "build": "tsc -b && vite build",
+    "build:local": "tsc -b && vite build --mode localdev",
+    "build:staging": "tsc -b && vite build --mode staging",
     "lint": "oxlint",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:responsive": "playwright test -c playwright.responsive.config.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "preview:local": "vite preview --mode localdev",
+    "preview:staging": "vite preview --mode staging"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

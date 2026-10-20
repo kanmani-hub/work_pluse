@@ -42,7 +42,9 @@ const TrackingStatus: React.FC<Props> = ({ tracking, nowMs, staleMinutes = TRACK
     );
   }
   const Icon = ICON[s.tone];
-  const when = s.at ? `${fmt(s.at)} · ${formatAge(s.ageMins)}` : null;
+  const when = s.at ? `${fmt(s.at)} · ${s.aheadMins ? `${s.aheadMins} min ahead` : formatAge(s.ageMins)}` : null;
+  // "Location:" only while the reading is current; any older reading is a last known location
+  const whereLabel = s.current ? 'Location' : 'Last known location';
   const chip = (
     <span className={`tracking-chip tracking-chip--${s.tone}`}>
       <Icon size={13} aria-hidden={true} />
@@ -52,7 +54,7 @@ const TrackingStatus: React.FC<Props> = ({ tracking, nowMs, staleMinutes = TRACK
   const meta = (
     <span className="tracking-meta">
       {when && <span className="tracking-when"><time dateTime={s.at!}>{when}</time></span>}
-      {s.tone !== 'no-data' && s.tone !== 'unknown' && <span className="tracking-where">Last known: {s.location}</span>}
+      {s.tone !== 'no-data' && s.tone !== 'unknown' && <span className="tracking-where">{whereLabel}: {s.location}</span>}
     </span>
   );
 
@@ -67,9 +69,11 @@ const TrackingStatus: React.FC<Props> = ({ tracking, nowMs, staleMinutes = TRACK
   }
   return (
     <details className={`tracking-status tracking-status--${s.tone}`} data-tracking-tone={s.tone}>
-      <summary aria-label={`Tracking: ${s.label}${when ? `, ${when}` : ''}. Show details`}>
+      {/* native disclosure: Enter/Space toggle it and screen readers announce expanded/collapsed */}
+      <summary>
         {chip}
-        <ChevronDown className="tracking-toggle" size={14} aria-hidden={true} />
+        <span className="tracking-toggle" aria-hidden={true}><ChevronDown size={16} /></span>
+        <span className="visually-hidden">Tracking details</span>
         {meta}
       </summary>
       <p className="tracking-detail">{s.detail}</p>

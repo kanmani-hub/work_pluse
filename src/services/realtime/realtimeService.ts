@@ -89,11 +89,12 @@ export const realtimeService = {
   /**
    * Admin: Subscribe to live locations
    */
-  subscribeToLiveLocations(callback: (payload: any) => void) {
+  subscribeToLiveLocations(callback: (payload: any) => void, onStatus?: (status: string) => void) {
     return supabase
       .channel('admin:live_locations')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_live_locations' }, callback)
-      .subscribe();
+      // SUBSCRIBED / CHANNEL_ERROR / TIMED_OUT / CLOSED — lets the page show when live updates stop
+      .subscribe((status: string) => onStatus?.(status));
   },
 
   /**

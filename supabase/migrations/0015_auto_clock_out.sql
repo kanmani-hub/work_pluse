@@ -1,12 +1,18 @@
 -- Migration: 0015_auto_clock_out.sql
 
--- 1. Add clock_out_source column to distinguish AUTO vs MANUAL clock outs
+-- 1. Add clock_out_source, break_overrun_minutes, and overtime_minutes columns to attendance if not already present
 ALTER TABLE attendance 
-ADD COLUMN IF NOT EXISTS clock_out_source VARCHAR(50) DEFAULT 'MANUAL';
+ADD COLUMN IF NOT EXISTS clock_out_source VARCHAR(50) DEFAULT 'MANUAL',
+ADD COLUMN IF NOT EXISTS break_overrun_minutes INTEGER DEFAULT 0,
+ADD COLUMN IF NOT EXISTS overtime_minutes INTEGER DEFAULT 0;
 
 -- 2. Create the core function to process auto-clock-outs securely on the server side
 CREATE OR REPLACE FUNCTION process_auto_clock_out()
-RETURNS integer AS $$
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 DECLARE
     settings JSONB;
     v_auto_enabled BOOLEAN;
@@ -33,15 +39,19 @@ DECLARE
     v_required_mins INTEGER;
     v_overtime INTEGER;
     v_early_logout INTEGER;
-    v_new_status VARCHAR;
+    v_status VARCHAR;
     v_is_half_day BOOLEAN;
     
     processed_count INTEGER := 0;
 BEGIN
-    -- Get global app settings from the single config row
-    SELECT settings->'app' INTO settings FROM app_settings WHERE id = '00000000-0000-0000-0000-000000000001';
+    -- Safely get global app settings if table exists
+    IF to_regclass('public.app_settings') IS NOT NULL THEN
+        SELECT COALESCE(settings->'app', settings) INTO settings 
+        FROM app_settings 
+        WHERE id = '00000000-0000-0000-0000-000000000001';
+    END IF;
     
-    -- Parse settings
+    -- Parse settings with robust defaults
     v_auto_enabled := COALESCE((settings->>'autoClockOut')::BOOLEAN, true);
     IF NOT v_auto_enabled THEN
         RETURN 0;
@@ -77,13 +87,6 @@ BEGIN
         
         -- Check if we have passed the deadline
         IF NOW() >= v_deadline THEN
-        
-            -- The employee is forcibly clocked out at the deadline (or shift end if configured differently)
-            -- As per requirements, if they stayed open up to the deadline without clocking out,
-            -- we clock them out exactly at the deadline (or shift end). Let's use v_deadline as their exact clock-out time 
-            -- or shift end based on mode. Actually, typically auto clock out sets their clock out to their shift end.
-            -- Let's set it to deadline time to give them exactly the grace period, or shift end if they wanted that.
-            -- Wait, if it's "After Grace Period", use v_deadline.
             IF v_mode = 'at_shift_end' THEN
                 v_clock_out_time := v_shift_end_dt;
             ELSE
@@ -93,7 +96,7 @@ BEGIN
             -- 1. Close any open breaks
             UPDATE attendance_breaks
             SET ended_at = v_clock_out_time,
-                duration_minutes = EXTRACT(EPOCH FROM (v_clock_out_time - started_at)) / 60
+                duration_minutes = ROUND(EXTRACT(EPOCH FROM (v_clock_out_time - started_at)) / 60.0)::INTEGER
             WHERE attendance_id = rec.id AND ended_at IS NULL;
 
             -- 2. Calculate actual break minutes
@@ -163,17 +166,20 @@ BEGIN
     
     RETURN processed_count;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 -- 3. Schedule the cron job (Requires pg_cron extension)
--- Note: Superuser privileges are required to create extensions. 
--- In Supabase, you can enable pg_cron in Database -> Extensions.
--- Once enabled, the following will run every 15 minutes.
 DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_extension WHERE extname = 'pg_cron'
   ) THEN
+    -- Unschedule if already scheduled to prevent duplicate error
+    BEGIN
+      PERFORM cron.unschedule('auto-clock-out');
+    EXCEPTION WHEN OTHERS THEN
+      -- ignore if job does not exist
+    END;
     -- Schedule the auto clock out process every 15 minutes
     PERFORM cron.schedule('auto-clock-out', '*/15 * * * *', 'SELECT process_auto_clock_out()');
   END IF;
