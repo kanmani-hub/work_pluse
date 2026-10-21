@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  ShieldCheck, Download, RefreshCw, Filter, Search, Eye,
-  Activity, Users, Lock, AlertTriangle, CheckCircle2, X,
+  ShieldCheck, Download, RefreshCw, Filter, Search,
+  Users, Lock, AlertTriangle, CheckCircle2, X,
   FileText, Clock, ChevronRight, ChevronLeft, LayoutList, List,
   ChevronDown, RotateCcw, FileSpreadsheet
 } from 'lucide-react';
@@ -146,9 +146,12 @@ const AuditLogs: React.FC = () => {
     await fetchLogs();
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     setFilters({ ...DEFAULT_AUDIT_FILTERS });
     setCurrentPage(1);
+    if (logs.length === 0) {
+      await fetchLogs();
+    }
   };
 
   // Distinct employees available in the loaded logs for the employee filter
@@ -158,8 +161,14 @@ const AuditLogs: React.FC = () => {
       if (log.employees?.employee_code) {
         const name = `${log.employees.first_name || ''} ${log.employees.last_name || ''}`.trim();
         map.set(log.employees.employee_code, `${name} (${log.employees.employee_code})`);
+      } else if (log.employees?.id) {
+        const name = `${log.employees.first_name || ''} ${log.employees.last_name || ''}`.trim() || 'Employee';
+        map.set(log.employees.id, `${name} (${log.employees.id.substring(0, 8)})`);
       } else if (log.actor_employee_id) {
         map.set(log.actor_employee_id, log.user || log.actor_employee_id);
+      }
+      if (log.metadata?.employee_code && !map.has(log.metadata.employee_code)) {
+        map.set(log.metadata.employee_code, `Employee (${log.metadata.employee_code})`);
       }
     }
     return Array.from(map.entries()).map(([value, label]) => ({ value, label }));
@@ -181,6 +190,19 @@ const AuditLogs: React.FC = () => {
   const filteredLogs = useMemo(() => {
     return filterAuditLogs(rangeLogs, filters, today);
   }, [rangeLogs, filters, today]);
+
+  const isFiltered = useMemo(() => {
+    return (
+      filters.search.trim() !== '' ||
+      filters.module !== 'All' ||
+      filters.severity !== 'All' ||
+      filters.result !== 'All' ||
+      filters.role !== 'All' ||
+      filters.employee !== 'All' ||
+      filters.action !== 'All' ||
+      filters.dateRange !== DEFAULT_AUDIT_FILTERS.dateRange
+    );
+  }, [filters]);
 
   // 4. Pagination calculations
   const totalPages = Math.max(1, Math.ceil(filteredLogs.length / pageSize));
@@ -516,10 +538,14 @@ const AuditLogs: React.FC = () => {
           <option value="ATTENDANCE">Attendance</option>
           <option value="LEAVE">Leave</option>
           <option value="PAYROLL">Payroll</option>
+          <option value="OVERTIME">Overtime</option>
+          <option value="WFH">Work From Home</option>
+          <option value="PERMISSION">Permission</option>
           <option value="SECURITY">Security</option>
           <option value="SETTINGS">Settings</option>
           <option value="EMPLOYEE">Employees</option>
           <option value="REPORTS">Reports</option>
+          <option value="SETUP">Shifts & Roster</option>
         </select>
 
         {/* Severity Filter */}
@@ -647,7 +673,7 @@ const AuditLogs: React.FC = () => {
                 ? `No records matched "${filters.search.trim()}" with the current filters. Try adjusting your query or filters.` 
                 : 'Try changing your filter selections to see more audit events.'}
             </p>
-            {(filters.search || filters.module !== 'All' || filters.severity !== 'All' || filters.result !== 'All' || filters.role !== 'All' || filters.employee !== 'All' || filters.dateRange !== 'This Month') && (
+            {isFiltered && (
               <button onClick={handleReset} className="btn btn-outline" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem' }}>
                 <RotateCcw size={14} /> Clear all filters
               </button>

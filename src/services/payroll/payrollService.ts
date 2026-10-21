@@ -14,6 +14,7 @@ import type { ReviewResolution, ReviewDecisionValue } from './payrollRules';
 import { companyDateStr } from '../../utils/companyDate';
 import { missingClockOutPayrollLines, isMissingClockOutSchemaError, staleMissingClockOutReason } from '../attendance/missingClockOutRules';
 import { calculateLateDeduction } from './payrollLateDeductionRules';
+import { evaluateDailyImpact } from './payrollImpactRules';
 
 /** Missing clock-out adjustment ids a calculated payroll included (stored with the calculation). */
 export function settledAdjustmentIds(remarks: unknown): string[] {
@@ -149,21 +150,14 @@ export const payrollService = {
       
       if (!calc.error && calc.data) {
         const c = calc.data as any;
-        const totalLate = c.empData.attendance.totalLateMinutes;
-        const lateDed = c.deductionItems.find((d: any) => d.name.includes('Late Deduction'))?.amount || 0;
-        
-        const totalBreakOverrun = c.empData.attendance.totalBreakExcessMinutes;
-        const breakDed = c.deductionItems.find((d: any) => d.name.includes('Break Excess Deduction'))?.amount || 0;
+        const empOtRequests = otRequests.filter((o: any) => o.employee_id === emp.id);
 
-        const overtimeMins = c.empData.attendance.totalOvertimeMinutes;
-        const overtimePay = c.overtime;
-
-        const lopImpact = c.lopDeduction;
-
-        // Sum all other deductions excluding Late, Break, LOP, Standard
-        const otherDed = c.deductionItems
-          .filter((d: any) => !d.name.includes('Late Deduction') && !d.name.includes('Break Excess') && !d.name.includes('LOP Deduction'))
-          .reduce((sum: number, item: any) => sum + item.amount, 0);
+        const evaluated = evaluateDailyImpact({
+          attendance: att,
+          calculation: c,
+          overtimeRequests: empOtRequests,
+          overtimeRequestsError: otRequestsError,
+        });
 
         reports.push({
           employee: emp,
@@ -171,19 +165,30 @@ export const payrollService = {
           status: att.status,
           clockIn: att.clock_in_at,
           clockOut: att.clock_out_at,
-          lateMinutes: totalLate,
-          lateDeduction: lateDed,
-          breakOverrunMinutes: totalBreakOverrun,
-          breakDeduction: breakDed,
-          overtimeMinutes: overtimeMins,
-          overtimePay: overtimePay,
-          lopImpact: lopImpact,
-          otherDeductions: otherDed,
-          totalDailyImpact: lateDed + breakDed + lopImpact + otherDed,
+          lateMinutes: evaluated.lateMinutes,
+          lateDeduction: evaluated.lateDeduction,
+          breakOverrunMinutes: evaluated.breakOverrunMinutes,
+          breakDeduction: evaluated.breakDeduction,
+          overtimeMinutes: evaluated.overtimeMinutes,
+          overtimePay: evaluated.overtimePay,
+          lopImpact: evaluated.lopImpact,
+          otherDeductions: evaluated.otherDeductions,
+          totalDailyImpact: evaluated.totalDailyImpact,
+          totalDeductions: evaluated.totalDeductions,
+          totalAdditions: evaluated.totalAdditions,
+          netDailyImpact: evaluated.netDailyImpact,
+          impactStatus: evaluated.impactStatus,
+          clockOutStatus: evaluated.clockOutStatus,
+          lateStatus: evaluated.lateStatus,
+          breakStatus: evaluated.breakStatus,
+          overtimeStatus: evaluated.overtimeStatus,
+          lopStatus: evaluated.lopStatus,
+          pendingOvertimeHours: evaluated.pendingOvertimeHours,
+          isShiftInProgress: evaluated.isShiftInProgress,
           rawCalc: c,
           // Display details for the summary-card breakdowns (no effect on any amount)
           attendance: att,
-          overtimeRequests: otRequests.filter((o: any) => o.employee_id === emp.id),
+          overtimeRequests: empOtRequests,
           overtimeRequestsError: otRequestsError,
         });
       }

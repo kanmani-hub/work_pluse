@@ -71,10 +71,15 @@ export const auditService = {
     source?: string;
   }) {
     // Attempt to resolve actor from session
-    const actorId = await salaryService.getCurrentEmployeeId();
+    let actorId: string | null = null;
+    try {
+      actorId = await salaryService.getCurrentEmployeeId();
+    } catch {
+      actorId = null;
+    }
     
     // IP and User agent typically collected server-side in RPC, but we do basic mock client-side if needed
-    const userAgent = navigator.userAgent;
+    const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'Server/Node';
 
     const { data, error } = await supabase
       .from('audit_logs')

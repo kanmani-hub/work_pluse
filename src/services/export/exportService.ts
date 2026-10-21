@@ -134,8 +134,10 @@ export async function exportToPDF(
   filename: string,
   subtitle?: string
 ) {
-  const { default: jsPDF } = await import('jspdf');
-  const autoTable = (await import('jspdf-autotable')).default;
+  const jspdfModule: any = await import('jspdf');
+  const jsPDF = jspdfModule.default || jspdfModule;
+  const autotableModule: any = await import('jspdf-autotable');
+  const autoTable = autotableModule.default || autotableModule;
 
   const doc = new jsPDF({ orientation: columns.length > 6 ? 'landscape' : 'portrait' });
 
@@ -159,7 +161,7 @@ export async function exportToPDF(
     })
   );
 
-  autoTable(doc, {
+  const tableOptions = {
     head,
     body,
     startY: subtitle ? 30 : 24,
@@ -168,17 +170,23 @@ export async function exportToPDF(
     headStyles: { fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     margin: { left: 14, right: 14, bottom: 18 },
-  });
+  };
+
+  if (typeof autoTable === 'function') {
+    autoTable(doc, tableOptions);
+  } else if (typeof (doc as any).autoTable === 'function') {
+    (doc as any).autoTable(tableOptions);
+  }
 
   // Stamp header & footer on all pages (Page X of Y, export timestamp)
-  const totalPages = (doc as any).internal.getNumberOfPages();
+  const totalPages = (doc as any).internal?.getNumberOfPages?.() || 1;
   const timestampStr = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
 
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
     const pageSize = doc.internal.pageSize;
-    const pageHeight = pageSize.height || pageSize.getHeight();
-    const pageWidth = pageSize.width || pageSize.getWidth();
+    const pageHeight = pageSize.height || (pageSize.getHeight && pageSize.getHeight()) || 297;
+    const pageWidth = pageSize.width || (pageSize.getWidth && pageSize.getWidth()) || 210;
 
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
@@ -187,7 +195,9 @@ export async function exportToPDF(
   }
 
   const cleanFilename = `${filename.replace(/\.pdf$/i, '')}.pdf`;
-  doc.save(cleanFilename);
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    doc.save(cleanFilename);
+  }
 
   import('../audit/auditService').then(({ auditService }) => {
     auditService.recordAuditLog({

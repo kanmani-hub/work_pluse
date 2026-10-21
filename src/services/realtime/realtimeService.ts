@@ -153,6 +153,57 @@ export const realtimeService = {
   },
 
   /**
+   * Admin: Subscribe to all overtime request changes
+   */
+  subscribeToAdminOvertime(callback: (payload: any) => void) {
+    return supabase
+      .channel('admin:overtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'overtime_requests' }, callback)
+      .subscribe();
+  },
+
+  /**
+   * Admin: Subscribe to salary structure changes
+   */
+  subscribeToAdminSalary(callback: (payload: any) => void) {
+    return supabase
+      .channel('admin:salary_structures')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'salary_structures' }, callback)
+      .subscribe();
+  },
+
+  /**
+   * Admin: Subscribe to roster/shift assignment changes
+   */
+  subscribeToAdminRoster(callback: (payload: any) => void) {
+    return supabase
+      .channel('admin:roster_assignments')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'roster_assignments' }, callback)
+      .subscribe();
+  },
+
+  /**
+   * Admin: Subscribe to all changes that impact attendance and payroll calculations:
+   * payroll, attendance, breaks, overtime, salary, and roster shifts.
+   */
+  subscribeToPayrollImpactUpdates(callback: (payload: any) => void) {
+    const channels = [
+      this.subscribeToAdminPayroll(callback),
+      this.subscribeToAdminAttendance(callback),
+      this.subscribeToAdminBreaks(callback),
+      this.subscribeToAdminOvertime(callback),
+      this.subscribeToAdminSalary(callback),
+      this.subscribeToAdminRoster(callback),
+    ].filter(Boolean);
+
+    return {
+      unsubscribe: () => {
+        channels.forEach(ch => this.unsubscribe(ch));
+      }
+    };
+  },
+
+  /**
    * Employee: Subscribe to their own breaks
    */
   subscribeToMyBreaks(employeeId: string, callback: (payload: any) => void) {

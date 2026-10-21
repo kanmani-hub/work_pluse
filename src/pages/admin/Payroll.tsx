@@ -146,8 +146,8 @@ const AdminPayroll: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-    const channel = realtimeService.subscribeToAdminPayroll(() => fetchData());
-    return () => { realtimeService.unsubscribe(channel); };
+    const subscription = realtimeService.subscribeToPayrollImpactUpdates(() => fetchData());
+    return () => { subscription.unsubscribe(); };
   }, [fetchData]);
 
   const showToast = (msg: string) => {
@@ -781,17 +781,107 @@ const AdminPayroll: React.FC = () => {
                         <td>{r.shift}</td>
                         <td><span className={`badge badge-${r.status === 'COMPLETED' ? 'success' : r.status === 'WORKING' ? 'primary' : 'warning'}`}>{r.status}</span></td>
                         <td>{r.clockIn ? new Date(r.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
-                        <td>{r.clockOut ? new Date(r.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
-                        <td style={{ textAlign: 'right', color: r.lateMinutes > 0 ? 'var(--danger-700)' : 'inherit' }}>{r.lateMinutes || '-'}</td>
-                        <td style={{ textAlign: 'right', color: r.lateDeduction > 0 ? 'var(--danger)' : 'inherit' }}>{r.lateDeduction > 0 ? `₹${r.lateDeduction.toLocaleString('en-IN')}` : '₹0'}</td>
-                        <td style={{ textAlign: 'right', color: r.breakOverrunMinutes > 0 ? 'var(--warning-700)' : 'inherit' }}>{r.breakOverrunMinutes || '-'}</td>
-                        <td style={{ textAlign: 'right', color: r.breakDeduction > 0 ? 'var(--danger)' : 'inherit' }}>{r.breakDeduction > 0 ? `₹${r.breakDeduction.toLocaleString('en-IN')}` : '₹0'}</td>
-                        <td style={{ textAlign: 'right', color: r.overtimeMinutes > 0 ? 'var(--success-700)' : 'inherit' }}>{r.overtimeMinutes || '-'}</td>
-                        <td style={{ textAlign: 'right', color: r.overtimePay > 0 ? 'var(--success)' : 'inherit' }}>{r.overtimePay > 0 ? `₹${r.overtimePay.toLocaleString('en-IN')}` : '₹0'}</td>
-                        <td style={{ textAlign: 'right', color: r.lopImpact > 0 ? 'var(--danger)' : 'inherit' }}>{r.lopImpact > 0 ? `₹${r.lopImpact.toLocaleString('en-IN')}` : '₹0'}</td>
-                        <td style={{ textAlign: 'right', color: r.otherDeductions > 0 ? 'var(--danger)' : 'inherit' }}>{r.otherDeductions > 0 ? `₹${r.otherDeductions.toLocaleString('en-IN')}` : '₹0'}</td>
-                        <td style={{ textAlign: 'right', fontWeight: 600, color: r.totalDailyImpact > 0 ? 'var(--danger)' : 'var(--text-secondary)' }}>
-                          {r.totalDailyImpact > 0 ? `₹${r.totalDailyImpact.toLocaleString('en-IN')}` : '₹0'}
+                        <td>
+                          {r.clockOut ? (
+                            new Date(r.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                          ) : r.clockOutStatus === 'MISSING' ? (
+                            <span className="badge badge-warning" style={{ fontSize: '0.7rem' }}>Missing</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-secondary)' }}>In progress</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right', color: r.lateMinutes > 0 ? 'var(--danger-700)' : 'inherit' }}>
+                          {r.lateMinutes > 0 ? `${r.lateMinutes}m` : r.clockIn ? '0m' : '-'}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {r.lateStatus === 'DISABLED' ? (
+                            <span style={{ color: 'var(--text-secondary)' }} title="Late deduction is disabled in Settings">—</span>
+                          ) : r.lateDeduction > 0 ? (
+                            <span style={{ color: 'var(--danger)', fontWeight: 500 }}>₹{r.lateDeduction.toLocaleString('en-IN')}</span>
+                          ) : r.lateStatus === 'BELOW_THRESHOLD' ? (
+                            <span style={{ color: 'var(--text-secondary)' }} title="Below interval threshold">₹0</span>
+                          ) : r.lateStatus === 'EXEMPT' ? (
+                            <span style={{ color: 'var(--text-secondary)' }} title="Exempt by monthly limit">₹0 (Exempt)</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {r.breakStatus === 'DISABLED' ? (
+                            <span style={{ color: 'var(--text-secondary)' }} title="Break overrun detection is disabled">—</span>
+                          ) : r.breakStatus === 'PENDING' ? (
+                            <span style={{ color: 'var(--warning-700)' }} title="Break or shift in progress">Pending</span>
+                          ) : r.breakOverrunMinutes > 0 ? (
+                            <span style={{ color: 'var(--warning-700)' }}>{r.breakOverrunMinutes}m</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {r.breakStatus === 'DISABLED' ? (
+                            <span style={{ color: 'var(--text-secondary)' }} title="Break deduction is disabled">—</span>
+                          ) : r.breakStatus === 'PENDING' ? (
+                            <span style={{ color: 'var(--warning-700)' }} title="Pending shift or break completion">Pending</span>
+                          ) : r.breakDeduction > 0 ? (
+                            <span style={{ color: 'var(--danger)', fontWeight: 500 }}>₹{r.breakDeduction.toLocaleString('en-IN')}</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {r.overtimeStatus === 'DISABLED' ? (
+                            <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                          ) : r.overtimeStatus === 'UNAVAILABLE' ? (
+                            <span style={{ color: 'var(--danger)' }} title="Overtime requests could not be loaded">Unavailable</span>
+                          ) : r.overtimeStatus === 'PENDING' ? (
+                            <span style={{ color: 'var(--warning-700)' }} title={r.pendingOvertimeHours ? `${r.pendingOvertimeHours}h requested, awaiting admin approval` : 'Shift in progress'}>
+                              {r.pendingOvertimeHours ? `${r.pendingOvertimeHours}h (Pending)` : 'Pending'}
+                            </span>
+                          ) : r.overtimeMinutes > 0 ? (
+                            <span style={{ color: 'var(--success-700)' }}>{r.overtimeMinutes}m</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {r.overtimeStatus === 'DISABLED' ? (
+                            <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                          ) : r.overtimeStatus === 'UNAVAILABLE' ? (
+                            <span style={{ color: 'var(--danger)' }}>Unavailable</span>
+                          ) : r.overtimeStatus === 'PENDING' ? (
+                            <span style={{ color: 'var(--warning-700)' }}>Pending</span>
+                          ) : r.overtimePay > 0 ? (
+                            <span style={{ color: 'var(--success)', fontWeight: 500 }}>+₹{r.overtimePay.toLocaleString('en-IN')}</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {r.lopImpact > 0 ? (
+                            <span style={{ color: 'var(--danger)', fontWeight: 500 }}>₹{r.lopImpact.toLocaleString('en-IN')}</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          {r.otherDeductions > 0 ? (
+                            <span style={{ color: 'var(--danger)', fontWeight: 500 }}>₹{r.otherDeductions.toLocaleString('en-IN')}</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 600 }}>
+                          {r.impactStatus === 'UNAVAILABLE' ? (
+                            <span style={{ color: 'var(--danger)' }}>Unavailable</span>
+                          ) : r.impactStatus === 'PENDING' ? (
+                            <span style={{ color: 'var(--warning-700)' }}>Pending</span>
+                          ) : (r.netDailyImpact ?? (r.overtimePay - r.totalDailyImpact)) > 0 ? (
+                            <span style={{ color: 'var(--success)' }}>+₹{(r.netDailyImpact ?? (r.overtimePay - r.totalDailyImpact)).toLocaleString('en-IN')}</span>
+                          ) : (r.netDailyImpact ?? (r.overtimePay - r.totalDailyImpact)) < 0 ? (
+                            <span style={{ color: 'var(--danger)' }}>-₹{Math.abs(r.netDailyImpact ?? (r.overtimePay - r.totalDailyImpact)).toLocaleString('en-IN')}</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-secondary)' }}>₹0</span>
+                          )}
                         </td>
                         <td style={{ textAlign: 'right' }}>
                           <button onClick={() => setDailyDetailModal(r)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>Details</button>
@@ -1357,21 +1447,40 @@ const AdminPayroll: React.FC = () => {
                     <div style={{ color: 'var(--text-secondary)' }}>No deductions for this date.</div>
                   )}
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed var(--border-color)', paddingTop: '0.5rem', marginTop: '0.25rem', fontWeight: 600 }}>
-                    <span>Total Deduction Impact</span>
-                    <span style={{ color: 'var(--danger)' }}>₹{dailyDetailModal.totalDailyImpact.toLocaleString('en-IN')}</span>
+                    <span>Total Deductions</span>
+                    <span style={{ color: 'var(--danger)' }}>₹{(dailyDetailModal.totalDeductions ?? dailyDetailModal.totalDailyImpact).toLocaleString('en-IN')}</span>
                   </div>
                 </div>
               </div>
               
               {dailyDetailModal.overtimePay > 0 && (
                 <div className="card" style={{ padding: '1rem', borderColor: 'var(--success-200)', backgroundColor: 'var(--success-50)' }}>
-                  <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--success-700)', marginBottom: '0.75rem' }}>Earnings</h4>
+                  <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--success-700)', marginBottom: '0.75rem' }}>Approved Additions (Earnings)</h4>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
                     <span style={{ color: 'var(--success-700)' }}>Overtime Pay ({dailyDetailModal.overtimeMinutes}m)</span>
-                    <span style={{ fontWeight: 600, color: 'var(--success)' }}>₹{dailyDetailModal.overtimePay.toLocaleString('en-IN')}</span>
+                    <span style={{ fontWeight: 600, color: 'var(--success)' }}>+₹{dailyDetailModal.overtimePay.toLocaleString('en-IN')}</span>
                   </div>
                 </div>
               )}
+
+              <div className="card" style={{ padding: '1rem', backgroundColor: 'var(--bg-surface)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 600 }}>Total Impact</span>
+                  <span style={{ fontWeight: 700, fontSize: '1rem' }}>
+                    {dailyDetailModal.impactStatus === 'UNAVAILABLE' ? (
+                      <span style={{ color: 'var(--danger)' }}>Unavailable</span>
+                    ) : dailyDetailModal.impactStatus === 'PENDING' ? (
+                      <span style={{ color: 'var(--warning-700)' }}>Pending (Incomplete / Pending Approval)</span>
+                    ) : (dailyDetailModal.netDailyImpact ?? (dailyDetailModal.overtimePay - dailyDetailModal.totalDailyImpact)) > 0 ? (
+                      <span style={{ color: 'var(--success)' }}>+₹{(dailyDetailModal.netDailyImpact ?? (dailyDetailModal.overtimePay - dailyDetailModal.totalDailyImpact)).toLocaleString('en-IN')} (Net Addition)</span>
+                    ) : (dailyDetailModal.netDailyImpact ?? (dailyDetailModal.overtimePay - dailyDetailModal.totalDailyImpact)) < 0 ? (
+                      <span style={{ color: 'var(--danger)' }}>-₹{Math.abs(dailyDetailModal.netDailyImpact ?? (dailyDetailModal.overtimePay - dailyDetailModal.totalDailyImpact)).toLocaleString('en-IN')} (Net Deduction)</span>
+                    ) : (
+                      <span style={{ color: 'var(--text-secondary)' }}>₹0 (No Net Impact)</span>
+                    )}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -107,6 +107,7 @@ export function matchesAuditSearch(log: any, query: string): boolean {
   const fullName = `${actorFirst} ${actorLast}`.trim();
   if (fullName.toLowerCase().includes(q)) return true;
   if (actorFirst.toLowerCase().includes(q) || actorLast.toLowerCase().includes(q)) return true;
+  if (log.user && String(log.user).toLowerCase().includes(q)) return true;
 
   // If no actor record, actor is 'System'
   if (!log.employees && !log.actor_employee_id && 'system'.includes(q)) return true;
@@ -117,13 +118,21 @@ export function matchesAuditSearch(log: any, query: string): boolean {
 
   // 7. Employee Code / ID
   if (log.employees?.employee_code && String(log.employees.employee_code).toLowerCase().includes(q)) return true;
+  if (log.employees?.id && String(log.employees.id).toLowerCase().includes(q)) return true;
   if (log.actor_employee_id && String(log.actor_employee_id).toLowerCase().includes(q)) return true;
   if (log.entity_id && String(log.entity_id).toLowerCase().includes(q)) return true;
+  if (log.entity_type && String(log.entity_type).toLowerCase().includes(q)) return true;
 
-  // 8. Severity & Result
-  const severity = String(log.severity || log.metadata?.severity || '');
+  // Target employee in metadata
+  if (log.metadata?.employee_code && String(log.metadata.employee_code).toLowerCase().includes(q)) return true;
+  if (log.metadata?.target_employee_code && String(log.metadata.target_employee_code).toLowerCase().includes(q)) return true;
+  if (log.metadata?.employee_id && String(log.metadata.employee_id).toLowerCase().includes(q)) return true;
+  if (log.metadata?.target_employee_id && String(log.metadata.target_employee_id).toLowerCase().includes(q)) return true;
+
+  // 8. Severity & Result (with defaults)
+  const severity = String(log.severity || log.metadata?.severity || 'Info');
   if (severity.toLowerCase().includes(q)) return true;
-  const result = String(log.result || log.metadata?.result || '');
+  const result = String(log.result || log.metadata?.result || 'Success');
   if (result.toLowerCase().includes(q)) return true;
 
   // 9. Source & IP
@@ -140,6 +149,18 @@ export function matchesAuditSearch(log: any, query: string): boolean {
     }
   }
 
+  // 11. Old / New values
+  if (log.old_values && typeof log.old_values === 'object') {
+    try {
+      if (JSON.stringify(log.old_values).toLowerCase().includes(q)) return true;
+    } catch {}
+  }
+  if (log.new_values && typeof log.new_values === 'object') {
+    try {
+      if (JSON.stringify(log.new_values).toLowerCase().includes(q)) return true;
+    } catch {}
+  }
+
   return false;
 }
 
@@ -154,23 +175,27 @@ export function matchModuleFilter(logModule: string | undefined, filterModule: s
   if (logMod === filterMod) return true;
 
   if ((filterMod === 'AUTHENTICATION' || filterMod === 'AUTH') && (logMod === 'AUTH' || logMod === 'AUTHENTICATION')) return true;
+  if ((filterMod === 'ATTENDANCE' || filterMod === 'BREAKS' || filterMod === 'ATTENDANCE_BREAKS') && (logMod === 'ATTENDANCE' || logMod === 'ATTENDANCE_BREAKS' || logMod === 'BREAKS')) return true;
   if ((filterMod === 'EMPLOYEES' || filterMod === 'EMPLOYEE') && (logMod === 'EMPLOYEE' || logMod === 'EMPLOYEES')) return true;
   if ((filterMod === 'SETTINGS' || filterMod === 'SETTING') && (logMod === 'SETTINGS' || logMod === 'SETTING')) return true;
   if ((filterMod === 'REPORTS' || filterMod === 'REPORT') && (logMod === 'REPORTS' || logMod === 'REPORT')) return true;
+  if ((filterMod === 'SETUP' || filterMod === 'SHIFTS' || filterMod === 'SHIFT' || filterMod === 'ROSTER' || filterMod === 'ROSTERS') && (logMod === 'SETUP' || logMod === 'SHIFTS' || logMod === 'SHIFT' || logMod === 'ROSTER' || logMod === 'ROSTERS')) return true;
+  if ((filterMod === 'OVERTIME' || filterMod === 'OT') && (logMod === 'OVERTIME' || logMod === 'OT')) return true;
+  if ((filterMod === 'WFH' || filterMod === 'WORK_FROM_HOME') && (logMod === 'WFH' || logMod === 'WORK_FROM_HOME')) return true;
+  if ((filterMod === 'PERMISSIONS' || filterMod === 'PERMISSION') && (logMod === 'PERMISSION' || logMod === 'PERMISSIONS')) return true;
 
   return false;
 }
 
 export function matchSeverityFilter(logSeverity: string | undefined, filterSeverity: string): boolean {
   if (!filterSeverity || filterSeverity === 'All') return true;
-  if (!logSeverity) return false;
-  return logSeverity.trim().toLowerCase() === filterSeverity.trim().toLowerCase();
+  const s = (logSeverity || 'Info').trim().toLowerCase();
+  return s === filterSeverity.trim().toLowerCase();
 }
 
 export function matchResultFilter(logResult: string | undefined, filterResult: string): boolean {
   if (!filterResult || filterResult === 'All') return true;
-  if (!logResult) return false;
-  const r = logResult.trim().toUpperCase();
+  const r = (logResult || 'Success').trim().toUpperCase();
   const f = filterResult.trim().toUpperCase();
   if (r === f) return true;
   if ((f === 'FAILED' || f === 'FAILURE') && (r === 'FAILED' || r === 'FAILURE')) return true;
@@ -186,14 +211,34 @@ export function matchEmployeeFilter(log: any, filterEmployee: string): boolean {
     return !log.actor_employee_id && !log.employees;
   }
 
-  if (log.actor_employee_id && log.actor_employee_id.toLowerCase() === filterVal) return true;
-  if (log.employees?.employee_code && log.employees.employee_code.toLowerCase() === filterVal) return true;
+  // 1. Actor employee ID
+  if (log.actor_employee_id && String(log.actor_employee_id).toLowerCase() === filterVal) return true;
+  // 2. Employee object ID
+  if (log.employees?.id && String(log.employees.id).toLowerCase() === filterVal) return true;
+  // 3. Employee code
+  if (log.employees?.employee_code && String(log.employees.employee_code).toLowerCase() === filterVal) return true;
 
-  const fullName = `${log.employees?.first_name || ''} ${log.employees?.last_name || ''}`.trim().toLowerCase();
-  if (fullName && fullName === filterVal) return true;
+  // 4. Actor name
+  const actorFirst = log.employees?.first_name || '';
+  const actorLast = log.employees?.last_name || '';
+  const fullName = `${actorFirst} ${actorLast}`.trim().toLowerCase();
+  if (fullName && (fullName === filterVal || fullName.includes(filterVal))) return true;
 
+  // 5. Formatted user property
+  if (log.user && String(log.user).toLowerCase() === filterVal) return true;
+
+  // 6. Target employee metadata
   if (log.metadata?.target_employee_id && String(log.metadata.target_employee_id).toLowerCase() === filterVal) return true;
+  if (log.metadata?.employee_id && String(log.metadata.employee_id).toLowerCase() === filterVal) return true;
+  if (log.metadata?.target_employee_code && String(log.metadata.target_employee_code).toLowerCase() === filterVal) return true;
   if (log.metadata?.employee_code && String(log.metadata.employee_code).toLowerCase() === filterVal) return true;
+
+  // 7. Value payload employee IDs
+  if (log.new_values?.employee_id && String(log.new_values.employee_id).toLowerCase() === filterVal) return true;
+  if (log.old_values?.employee_id && String(log.old_values.employee_id).toLowerCase() === filterVal) return true;
+
+  // 8. Entity ID when entity relates to employee
+  if (log.entity_id && (log.entity_type === 'employees' || log.entity_type === 'employee') && String(log.entity_id).toLowerCase() === filterVal) return true;
 
   return false;
 }
@@ -228,14 +273,14 @@ export function filterAuditLogs(logs: any[], filters: AuditFilters, today: strin
       }
     }
 
-    // 5. Severity
-    const logSev = log.severity || log.metadata?.severity;
+    // 5. Severity (defaults to Info if not specified)
+    const logSev = log.severity || log.metadata?.severity || 'Info';
     if (!matchSeverityFilter(logSev, filters.severity)) {
       return false;
     }
 
-    // 6. Result
-    const logRes = log.result || log.metadata?.result;
+    // 6. Result (defaults to Success if not specified)
+    const logRes = log.result || log.metadata?.result || 'Success';
     if (!matchResultFilter(logRes, filters.result)) {
       return false;
     }
