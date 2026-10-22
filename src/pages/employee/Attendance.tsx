@@ -11,6 +11,8 @@ import { faceService } from '../../services/face/faceService';
 import { locationService } from '../../services/location/locationService';
 import { qaTimeService } from '../../services/qa/qaTimeService';
 import { computeWorkTimer } from '../../services/attendance/breakRules';
+import { isAutomaticBreak, autoBreakReasonLabel, recoveryInstruction, trackingStateView } from '../../services/attendance/automaticBreakRules';
+import { trackingEnforcementService } from '../../services/location/trackingEnforcementService';
 import { selectCurrentAttendance } from '../../services/attendance/currentAttendance';
 import { companyDateStr, previousDateStr, COMPANY_TIMEZONE } from '../../utils/companyDate';
 import { attendanceActionMessage } from '../../services/attendance/employeeDashboardRules';
@@ -39,6 +41,8 @@ const EmployeeAttendance: React.FC = () => {
   const [effectiveTime, setEffectiveTime] = useState(0);
   const [breakSeconds, setBreakSeconds] = useState(0);
   const [activeBreakInfo, setActiveBreakInfo] = useState<any>(null);
+  // Server-maintained tracking state (employee_tracking_state): what the automatic-break rules see
+  const [serverTracking, setServerTracking] = useState<any>(null);
 
   const [filterMode, setFilterMode] = useState('All');
   const [filterStatus, setFilterStatus] = useState('All');
@@ -88,7 +92,21 @@ const EmployeeAttendance: React.FC = () => {
 
     attendanceService.getCurrentEmployeeId().then(empId => {
       if (!empId || cancelled) return;
+      trackingEnforcementService.getMyTrackingState(empId).then(({ data }) => { if (!cancelled) setServerTracking(data); });
       channel = supabase.channel(`employee_attendance:${empId}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'employee_tracking_state', filter: `employee_id=eq.${empId}` },
+          (payload: any) => {
+            setServerTracking(payload.eventType === 'DELETE' ? null : payload.new ?? null);
+            fetchData(false);   // an automatic break may have started or ended on the server
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'attendance_breaks', filter: `employee_id=eq.${empId}` },
+          () => { fetchData(false); }
+        )
         .on(
           'postgres_changes',
           { event: '*', schema: 'public', table: 'attendance', filter: `employee_id=eq.${empId}` },
@@ -689,6 +707,16 @@ const EmployeeAttendance: React.FC = () => {
                 {todayAttendance.clock_out_at ? todayAttendance.hours : formatTimeSeconds(effectiveTime)}
               </div>
             </div>
+            {todayAttendance.clock_in_at && !todayAttendance.clock_out_at && serverTracking && serverTracking.attendance_id === todayAttendance.id && (() => {
+              const v = trackingStateView(serverTracking.state);
+              const color = v.tone === 'ok' || v.tone === 'restored' ? 'var(--success-600)' : v.tone === 'problem' || v.tone === 'stale' ? 'var(--danger)' : 'var(--warning)';
+              return (
+                <div style={{ marginTop: '0.75rem', fontSize: '0.8125rem', textAlign: 'center' }} title={v.detail}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Location tracking: </span>
+                  <strong style={{ color }}>{v.label}</strong>
+                </div>
+              );
+            })()}
   
             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem', justifyContent: 'center' }}>
               {todayAttendance.clock_in_at && !todayAttendance.clock_out_at && !activeBreakInfo && todayAttendance.originalStatus !== 'ON_BREAK' && (
@@ -703,9 +731,11 @@ const EmployeeAttendance: React.FC = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', width: '100%', textAlign: 'center' }}>
                   <div className="badge badge-warning" style={{ alignSelf: 'center' }}>ON BREAK</div>
                   <div style={{ fontSize: '0.875rem' }}>Break Duration: <strong>{formatTimeSeconds(activeBreakInfo?.seconds ?? 0)}</strong></div>
-                  {activeBreakInfo?.break_type === 'AUTO_GPS' ? (
+                  {isAutomaticBreak(activeBreakInfo) ? (
                     <>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Automatic break: you are outside the office. It ends when you return inside. If you are leaving for the day, you can clock out now — the break is closed at your clock-out time.</div>
+                      <div role="status" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                        Automatic break{autoBreakReasonLabel(activeBreakInfo) ? <> — <strong>{autoBreakReasonLabel(activeBreakInfo)}</strong></> : null}. {recoveryInstruction(activeBreakInfo)} If you are leaving for the day, you can clock out now — the break is closed at your clock-out time.
+                      </div>
                       <button onClick={handleClockOut} disabled={clockOutBusy} className="btn btn-danger" style={{ alignSelf: 'center', minWidth: '160px' }}>{clockOutBusy ? 'Clocking Out…' : 'Clock Out'}</button>
                     </>
                   ) : (

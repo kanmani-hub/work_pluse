@@ -47,7 +47,18 @@ vi.mock('../../lib/supabase', () => {
     return b;
   };
   const auth = { getUser: async () => ({ data: { user: { id: 'auth-A' } }, error: null }) };
-  return { supabase: { from, auth, __db: db } };
+  // close_auto_break_for_clock_out: the database closes the open automatic break at its own time
+  const rpc = vi.fn(async (fn: string, args: any) => {
+    if (fn !== 'close_auto_break_for_clock_out') return { data: null, error: { message: `unexpected rpc ${fn}` } };
+    db.rpcCalls = (db.rpcCalls || 0) + 1;
+    const b = (db.tables.attendance_breaks || []).find((x: any) => x.attendance_id === args.p_attendance_id && !x.ended_at && x.break_type !== 'CANCELLED');
+    if (!b) return { data: { action: 'NONE', reason: 'NO_OPEN_BREAK' }, error: null };
+    if (!['AUTO_GPS', 'AUTO_TRACKING'].includes(b.break_type)) return { data: { action: 'NONE', reason: 'MANUAL_BREAK_ACTIVE' }, error: null };
+    const end = new Date().toISOString();
+    b.ended_at = end; b.duration_minutes = Math.floor((Date.parse(end) - Date.parse(b.started_at)) / 60000);
+    return { data: { action: 'ENDED', break_id: b.id, ended_at: end, duration_minutes: b.duration_minutes }, error: null };
+  });
+  return { supabase: { from, auth, rpc, __db: db } };
 });
 
 const db = (supabase as any).__db;
@@ -65,7 +76,7 @@ function setup(breaks: any[]) {
       shift_template_id: 'day', status: 'ON_BREAK', late_minutes: 0, required_hours: 8, break_minutes: 0, break_overrun_minutes: 0 }],
     attendance_breaks: breaks, attendance_events: [],
   };
-  db.seq = 0; db.failSelect = []; db.selects = {};
+  db.seq = 0; db.rpcCalls = 0; db.failSelect = []; db.selects = {};
 }
 const att = () => db.tables.attendance[0];
 const open = () => db.tables.attendance_breaks.filter((b: any) => !b.ended_at);
@@ -109,13 +120,29 @@ describe('clock-out with open breaks', () => {
     expect(att().clock_out_at).toBeNull();
     expect(open()).toHaveLength(1);
   });
-  it('one open automatic break → closed at clock-out and counted once (unchanged behaviour)', async () => {
+  it('one open automatic break → closed by the server at clock-out and counted once', async () => {
     setup([brk('b0', 6 * H, 6 * H - 20 * 60e3, 'REGULAR'), brk('b1', 30 * 60e3, null)]);
     const r = await attendanceService.clockOut('att1');
     expect(r.error).toBeNull();
+    expect(db.rpcCalls).toBe(1);
     expect(open()).toHaveLength(0);
     expect(att().clock_out_at === null).toBe(false);
     expect(att().break_minutes).toBe(50);
+  });
+  it('an open tracking break (AUTO_TRACKING) does not block clock-out: the server closes it', async () => {
+    setup([brk('t1', 40 * 60e3, null, 'AUTO_TRACKING')]);
+    const r = await attendanceService.clockOut('att1');
+    expect(r.error).toBeNull();
+    expect(db.rpcCalls).toBe(1);
+    expect(open()).toHaveLength(0);
+    expect(att().break_minutes).toBe(40);
+  });
+  it('an open manual break still blocks clock-out (the server is not asked to close it)', async () => {
+    setup([brk('m1', 15 * 60e3, null, 'REGULAR')]);
+    const r = await attendanceService.clockOut('att1');
+    expect(r.error?.message).toMatch(/end your active break/);
+    expect(db.rpcCalls).toBe(0);
+    expect(att().clock_out_at).toBeNull();
   });
   it('no open break → normal clock-out', async () => {
     setup([brk('b0', 6 * H, 6 * H - 45 * 60e3, 'REGULAR')]);

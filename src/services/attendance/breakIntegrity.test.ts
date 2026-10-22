@@ -99,39 +99,6 @@ describe('classifyOpenBreaks (D1 rule)', () => {
   });
 });
 
-describe('D1: automatic break never inserts a second break after a failed or ambiguous check', () => {
-  it('normal exit: exactly one AUTO_GPS break is started', async () => {
-    setup([]);
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', new Date().toISOString());
-    expect(r.action).toBe('STARTED');
-    expect(open()).toHaveLength(1);
-  });
-  it('active-break lookup fails → ERROR, nothing inserted', async () => {
-    setup([brk('b1', H, null)]);
-    db.failSelect = [{ table: 'attendance_breaks', nth: 1 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', new Date().toISOString());
-    expect(r.action).toBe('ERROR');
-    expect(r.reason).toMatch(/ACTIVE_BREAK_CHECK_FAILED/);
-    expect(db.tables.attendance_breaks).toHaveLength(1);
-  });
-  it('two open breaks → ERROR MULTIPLE_ACTIVE_BREAKS on START and END, nothing inserted or closed', async () => {
-    setup([brk('b1', 2 * H, null), brk('b2', H, null)]);
-    const s: any = await breakService.handleAutoBreakTransition('empA', 'START', new Date().toISOString());
-    expect(s).toMatchObject({ action: 'ERROR', reason: 'MULTIPLE_ACTIVE_BREAKS', count: 2 });
-    const e: any = await breakService.handleAutoBreakTransition('empA', 'END', new Date().toISOString());
-    expect(e).toMatchObject({ action: 'ERROR', reason: 'MULTIPLE_ACTIVE_BREAKS' });
-    expect(db.tables.attendance_breaks).toHaveLength(2);
-    expect(open()).toHaveLength(2);
-  });
-  it('repeated exits while a break is active do not add breaks', async () => {
-    setup([brk('b1', H, null)]);
-    for (let i = 0; i < 3; i++) {
-      const r: any = await breakService.handleAutoBreakTransition('empA', 'START', new Date().toISOString());
-      expect(r).toMatchObject({ action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' });
-    }
-    expect(db.tables.attendance_breaks).toHaveLength(1);
-  });
-});
 
 describe('D1: manual break never inserts a second break after a failed or ambiguous check', () => {
   it('lookup fails → clear error, nothing inserted', async () => {
@@ -159,21 +126,6 @@ describe('D1: manual break never inserts a second break after a failed or ambigu
 describe('D2: a failed read never overwrites attendance break totals', () => {
   // 45 min completed earlier + a 30 min automatic break now = 75 min (allowed 60 → overrun 15)
   const earlier = () => brk('b0', 4 * H, 4 * H - 45 * 60e3, { break_type: 'REGULAR' });
-  it('normal automatic END: totals recalculated (75 min, overrun 15)', async () => {
-    setup([earlier(), brk('b1', 30 * 60e3, null)], { status: 'ON_BREAK', break_minutes: 45 });
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', new Date().toISOString());
-    expect(r).toMatchObject({ action: 'ENDED', totalsUpdated: true, actual: 75, overrun: 15 });
-    expect(att()).toMatchObject({ break_minutes: 75, break_overrun_minutes: 15, status: 'WORKING' });
-  });
-  it('automatic END but the breaks re-read fails: break closed, totals untouched, status no longer ON_BREAK', async () => {
-    setup([earlier(), brk('b1', 30 * 60e3, null)], { status: 'ON_BREAK', break_minutes: 45, break_overrun_minutes: 0 });
-    db.failSelect = [{ table: 'attendance_breaks', nth: 2 }]; // 1st = active-break lookup, 2nd = totals
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', new Date().toISOString());
-    expect(r).toMatchObject({ action: 'ENDED', totalsUpdated: false });
-    expect(r.reason).toMatch(/BREAK_TOTALS_NOT_UPDATED/);
-    expect(open()).toHaveLength(0);
-    expect(att()).toMatchObject({ break_minutes: 45, break_overrun_minutes: 0, status: 'WORKING' });
-  });
   it('manual END but the attendance re-read fails: totals and status untouched, error reported (no false success)', async () => {
     setup([earlier(), brk('b1', 30 * 60e3, null, { break_type: 'REGULAR' })], { status: 'ON_BREAK', break_minutes: 45, break_overrun_minutes: 0 });
     db.failSelect = [{ table: 'attendance', nth: 1 }];
@@ -183,40 +135,13 @@ describe('D2: a failed read never overwrites attendance break totals', () => {
     expect(open()).toHaveLength(0);
     expect(att()).toMatchObject({ break_minutes: 45, break_overrun_minutes: 0, status: 'ON_BREAK' });
   });
-  it('late arrival stays LATE when only the status can be restored', async () => {
-    setup([brk('b1', 30 * 60e3, null)], { status: 'ON_BREAK', late_minutes: 20, break_minutes: 10 });
-    db.failSelect = [{ table: 'attendance_breaks', nth: 2 }];
-    await breakService.handleAutoBreakTransition('empA', 'END', new Date().toISOString());
-    expect(att()).toMatchObject({ break_minutes: 10, status: 'LATE' });
-  });
 });
 
 const events = () => db.tables.attendance_events || [];
 const used = (mins: number) => brk('u1', 4 * H, 4 * H - mins * 60e3, { break_type: 'REGULAR' });
 
-describe('R2: automatic START and the approved-WFH check', () => {
-  const wfh = (status = 'APPROVED') => ({ id: 'w1', employee_id: 'empA', request_date: companyDateStr(), status });
-  it('WFH lookup fails → ERROR WFH_CHECK_FAILED, no break inserted', async () => {
-    setup([]); db.tables.wfh_requests = [wfh()];
-    db.failSelect = [{ table: 'wfh_requests', nth: 1 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', new Date().toISOString());
-    expect(r.action).toBe('ERROR');
-    expect(r.reason).toMatch(/WFH_CHECK_FAILED/);
-    expect(db.tables.attendance_breaks).toHaveLength(0);
-  });
-  it('approved WFH day → no automatic break', async () => {
-    setup([]); db.tables.wfh_requests = [wfh()];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', new Date().toISOString());
-    expect(r).toMatchObject({ action: 'NONE', reason: 'WFH' });
-    expect(db.tables.attendance_breaks).toHaveLength(0);
-  });
-  it('successful lookup with no approved WFH (only a pending one) → break started', async () => {
-    setup([]); db.tables.wfh_requests = [wfh('PENDING')];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', new Date().toISOString());
-    expect(r.action).toBe('STARTED');
-    expect(open()).toHaveLength(1);
-  });
-});
+// Automatic START / END rules (WFH incl. roster WFH, duplicates, failed checks, totals) are enforced by the
+// database since 20261021120000 and tested in supabase/tests/autobreak/run_autobreak_db_tests.mjs.
 
 describe('R3: manual START when the break allowance cannot be verified', () => {
   it('attendance read for the allowance fails → refused, nothing inserted', async () => {
@@ -291,19 +216,6 @@ describe('R4: totals are reported as updated only when the write succeeded', () 
     expect(r.data?.id).toBe('b1');
     expect(att()).toMatchObject({ break_minutes: 75, break_overrun_minutes: 15, status: 'WORKING' });
   });
-  it('automatic END, totals write fails → totalsUpdated false with the reason', async () => {
-    setup([earlier(), brk('b1', 30 * 60e3, null)], { status: 'ON_BREAK', break_minutes: 45 });
-    db.failWrite = [{ table: 'attendance', nth: 1 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', new Date().toISOString());
-    expect(r).toMatchObject({ action: 'ENDED', totalsUpdated: false, statusUpdated: false });
-    expect(r.reason).toMatch(/BREAK_TOTALS_NOT_UPDATED: attendance totals could not be saved/);
-    expect(open()).toHaveLength(0);
-    expect(att().break_minutes).toBe(45);
-    db.failWrite = [];
-    const again: any = await breakService.handleAutoBreakTransition('empA', 'END', new Date().toISOString());
-    expect(again).toMatchObject({ action: 'NONE', reason: 'NO_ACTIVE_AUTO_BREAK', reconciled: true });
-    expect(att()).toMatchObject({ break_minutes: 75, status: 'WORKING' });
-  });
 });
 
 describe('R5: START follow-up writes are checked; the break is kept and a retry repairs the status', () => {
@@ -340,18 +252,6 @@ describe('R5: START follow-up writes are checked; the break is kept and a retry 
     expect(r.error).toBeNull();
     expect(att().status).toBe('ON_BREAK');
     expect(events()).toHaveLength(1);
-  });
-  it('automatic START, status write fails → STARTED but not complete; the next exit repairs it', async () => {
-    setup([]);
-    db.failWrite = [{ table: 'attendance', nth: 1 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', new Date().toISOString());
-    expect(r).toMatchObject({ action: 'STARTED', complete: false });
-    expect(r.reason).toMatch(/STATUS_NOT_UPDATED/);
-    db.failWrite = [];
-    const again: any = await breakService.handleAutoBreakTransition('empA', 'START', new Date().toISOString());
-    expect(again).toMatchObject({ action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE', statusRepaired: true });
-    expect(open()).toHaveLength(1);
-    expect(att().status).toBe('ON_BREAK');
   });
 });
 
@@ -415,18 +315,6 @@ describe('settings cannot be loaded while a break ends', () => {
     await breakService.endBreak('att1');
     expect(db.writes.attendance).toBe(writes); // already consistent: nothing written again
   });
-  it('automatic END → totalsUpdated false with the reason, status restored; the next entry reconciles', async () => {
-    setup([earlier(), brk('b1', 30 * 60e3, null)], { status: 'ON_BREAK', break_minutes: 45 });
-    settingsDown();
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', new Date().toISOString());
-    expect(r).toMatchObject({ action: 'ENDED', totalsUpdated: false, statusUpdated: true });
-    expect(r.reason).toMatch(/BREAK_TOTALS_NOT_UPDATED: break totals could not be calculated \(settings offline\)/);
-    expect(att()).toMatchObject({ break_minutes: 45, status: 'WORKING' });
-    settingsUp();
-    const again: any = await breakService.handleAutoBreakTransition('empA', 'END', new Date().toISOString());
-    expect(again).toMatchObject({ action: 'NONE', reason: 'NO_ACTIVE_AUTO_BREAK', reconciled: true, repaired: true });
-    expect(att().break_minutes).toBe(75);
-  });
 });
 
 describe('audit logging failures are diagnostics, never break failures', () => {
@@ -447,21 +335,10 @@ describe('audit logging failures are diagnostics, never break failures', () => {
     expect(r.auditLogged).toBe(false);
     expect(att()).toMatchObject({ break_minutes: 20, status: 'WORKING' });
   });
-  it('automatic START and END, audit fails → STARTED / ENDED complete, auditLogged false', async () => {
-    setup([]); auditReturnsError();
-    // exit 10 min ago: transition times older than the 15-minute reading window are refused (TRANSITION_TIME_OUT_OF_WINDOW)
-    const s: any = await breakService.handleAutoBreakTransition('empA', 'START', new Date(Date.now() - 10 * 60e3).toISOString());
-    expect(s).toMatchObject({ action: 'STARTED', complete: true, auditLogged: false });
-    auditThrows();
-    const e: any = await breakService.handleAutoBreakTransition('empA', 'END', new Date().toISOString());
-    expect(e).toMatchObject({ action: 'ENDED', totalsUpdated: true, auditLogged: false });
-  });
   it('audit succeeds → auditLogged true', async () => {
     setup([]);
     const r = await breakService.startBreak('att1');
     expect(r.auditLogged).toBe(true);
-    const s: any = await breakService.handleAutoBreakTransition('empA', 'END', new Date().toISOString());
-    expect(s.action).toBe('NONE');
   });
 });
 

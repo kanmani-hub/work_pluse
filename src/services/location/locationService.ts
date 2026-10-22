@@ -7,6 +7,7 @@ import { classifyLocation, isUsableReading, shouldPersistCheck, isExplicitCheck,
 import { selectCurrentAttendance } from '../attendance/currentAttendance';
 import { companyDateStr, previousDateStr } from '../../utils/companyDate';
 import { loadNativeBackgroundPlugin, nativeErrorToProblem, nativeToGeo, NATIVE_WATCHER_OPTIONS, type NativeBackgroundPlugin } from './nativeBackgroundLocation';
+import { shouldSendTrackingEvent, trackingEventFor, type TrackingEvent } from '../attendance/automaticBreakRules';
 
 export interface GeolocationResult {
   latitude: number | null;
@@ -24,7 +25,7 @@ export type VerificationResult = 'INSIDE' | 'OUTSIDE' | 'UNKNOWN' | 'LOCATION_DE
  * ACTIVE = the last reading was a usable fix. The other states are GPS problems: they are
  * shown and recorded as diagnostics but never treated as being outside the office.
  */
-export type TrackingStatus = 'IDLE' | 'ACTIVE' | 'SYNC_FAILED' | TrackingProblem;
+export type TrackingStatus = 'IDLE' | 'ACTIVE' | 'SYNC_FAILED' | 'OFFLINE' | TrackingProblem;
 export interface TrackingState { status: TrackingStatus; since: number | null; message: string | null }
 
 export interface LocationVerificationResponse {
@@ -593,6 +594,8 @@ export const locationService = {
   },
 
   _setTrackingState(status: TrackingStatus, message: string | null) {
+    // a usable fix again: the next GPS problem is reported to the server at once (zero grace)
+    if (status === 'ACTIVE') this._lastTrackingEvent = null;
     if (this._trackingState?.status === status) return;
     this._trackingState = { status, since: Date.now(), message };
     this._trackingListeners.forEach(l => { try { l(this._trackingState!); } catch { /* listener errors never stop tracking */ } });
@@ -607,12 +610,60 @@ export const locationService = {
   async reportTrackingProblem(status: TrackingProblem, message: string) {
     this._setTrackingState(status, message);
     const nowMs = Date.now();
+    // The server decides whether this starts an automatic break (policy, WFH, shift, open break);
+    // a timeout is reported as a timeout and never starts one by itself.
+    await this._sendTrackingEvent(trackingEventFor(status), message, nowMs);
     if (!shouldRecordTrackingProblem(this._trackingProblem, status, nowMs)) return;
     this._trackingProblem = { status, recordedAtMs: nowMs };
     console.warn(`[GPS] tracking problem recorded: ${status}`);
     await this.verifyCurrentLocation('LOCATION_CHECK', {
       geo: { latitude: null, longitude: null, accuracy: null, timestamp: nowMs, status, error: message },
     }).catch(() => {});
+  },
+
+  // ---- automatic-break reporting: the device reports what it observes; the server decides ----
+  _lastTrackingEvent: null as { event: string; sentAtMs: number } | null,
+  _offlineSinceMs: null as number | null,
+
+  /** Report a tracking observation to the server (report_tracking_event). Never throws. */
+  async _sendTrackingEvent(event: TrackingEvent, message: string | null, nowMs: number, offlineSeconds?: number) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return; // cannot reach the server; the scheduled stale check covers this
+    if (event !== 'NETWORK_RECONNECTED' && !shouldSendTrackingEvent(this._lastTrackingEvent, event, nowMs)) return;
+    this._lastTrackingEvent = event === 'NETWORK_RECONNECTED' ? null : { event, sentAtMs: nowMs };
+    try {
+      const { trackingEnforcementService } = await import('./trackingEnforcementService');
+      const res = await trackingEnforcementService.reportEvent(event, { message, offlineSeconds });
+      if (res.action === 'ERROR') {
+        console.warn(`[GPS] tracking event ${event} not delivered: ${res.reason}`);
+        if (event !== 'NETWORK_RECONNECTED') this._lastTrackingEvent = null; // retry with the next report
+      } else if (res.action === 'STARTED') {
+        console.warn(`[GPS] automatic break started by the server (${res.reason})`);
+      }
+    } catch (e: any) {
+      this._lastTrackingEvent = null;
+      console.warn('[GPS] tracking event not delivered', e?.message);
+    }
+  },
+
+  /** Browser went offline: shown to the employee; nothing can be sent until the network is back. */
+  handleOffline() {
+    if (this._offlineSinceMs === null) this._offlineSinceMs = Date.now();
+    this._setTrackingState('OFFLINE', 'No internet connection. Locations are kept on this device and sent when the connection is back.');
+  },
+
+  /**
+   * Network back: tell the server how long the device was offline (distinguishes network loss from a
+   * closed app), then replay queued readings and take a FRESH location. Reconnecting alone never ends an
+   * automatic break: only a fresh location reaching the server does (database trigger).
+   */
+  async handleOnline() {
+    const since = this._offlineSinceMs;
+    this._offlineSinceMs = null;
+    if (this._trackingState?.status === 'OFFLINE') this._setTrackingState('IDLE', null);
+    const offlineSeconds = since !== null ? Math.max(0, Math.round((Date.now() - since) / 1000)) : 0;
+    await this._sendTrackingEvent('NETWORK_RECONNECTED', null, Date.now(), offlineSeconds);
+    this._lastResumeRefresh = 0; // always take a fresh reading after a reconnect
+    await this.handleResume();
   },
 
   _watchId: null as number | null,
@@ -789,12 +840,16 @@ export const locationService = {
   _attachResumeHandlers() {
     if (this._detachResume || typeof document === 'undefined' || typeof window === 'undefined') return;
     const onVisible = () => { if (document.visibilityState === 'visible') this.handleResume().catch(() => {}); };
-    const onOnline = () => { this.handleResume().catch(() => {}); };
+    const onOnline = () => { this.handleOnline().catch(() => {}); };
+    const onOffline = () => { this.handleOffline(); };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) this.handleOffline();
     this._detachResume = () => {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
     };
   },
 
@@ -918,6 +973,8 @@ export const locationService = {
     if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
     this._retryQueue = [];
     this._retryAttempt = 0;
+    this._lastTrackingEvent = null;
+    this._offlineSinceMs = null;
     this._setTrackingState('IDLE', null);
   }
 };

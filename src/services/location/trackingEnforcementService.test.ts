@@ -151,6 +151,7 @@ vi.mock('../../lib/supabase', () => {
     return {
       supabase: {
         from,
+        rpc: vi.fn(async () => ({ data: null, error: { message: 'function not found (simulated)' } })),
         channel: () => ({ on: () => ({ subscribe: () => {} }) }),
         auth,
         __db: db,
@@ -219,7 +220,14 @@ function setupDb(opts: {
   db.failWrite = [];
   db.writes = {};
   db.uniqueOnInsert = false;
-  trackingEnforcementService.clearState();
+}
+
+/** A tracking break as the database creates it (report_tracking_event / process_stale_tracking). */
+function seedAutoBreak(): { breakId: string } {
+  const id = `attendance_breaks-${++db.seq}`;
+  db.tables.attendance_breaks.push({ id, attendance_id: 'att-1', employee_id: 'emp-1', break_type: 'AUTO_TRACKING', source: 'SYSTEM',
+    reason: 'LOCATION_PERMISSION_DENIED', started_at: ago(10 * MIN), ended_at: null, duration_minutes: null });
+  return { breakId: id };
 }
 
 describe('WorkPulse HR — Tracking Warning and Automatic Break Policy', () => {
@@ -228,263 +236,58 @@ describe('WorkPulse HR — Tracking Warning and Automatic Break Policy', () => {
     setupDb();
   });
 
-  describe('Step 3: Warning and Immediate Automatic Break', () => {
-    it('detects confirmed permission denied, sends warning, and immediately initiates automatic break', async () => {
-      const res = await trackingEnforcementService.evaluateAndEnforce({
-        employeeId: 'emp-1',
-        geoStatus: 'LOCATION_DENIED',
-        failureReason: 'User denied location permission',
-        isOnline: true,
-      });
+  describe('device events are reported to the server; the browser never creates the break', () => {
+    const rpc = () => (supabase as any).rpc as any;
 
-      expect(res.decision.shouldTriggerAutomaticBreak).toBe(true);
-      expect(res.decision.violationType).toBe('LOCATION_PERMISSION_DENIED');
-      expect(res.breakResult?.action).toBe('STARTED');
-      expect(res.breakResult?.breakId).toBeDefined();
-      expect(res.breakResult?.incidentId).toContain('TRK-INC-');
-
-      // Verify notification sent to employee
-      expect(notificationService.notifyEmployee).toHaveBeenCalledTimes(1);
-      const empNotificationCall = (notificationService.notifyEmployee as any).mock.calls[0];
-      expect(empNotificationCall[0]).toBe('emp-1');
-      expect(empNotificationCall[1].title).toContain('Tracking Unavailable');
-      expect(empNotificationCall[1].notification_type).toBe('AUTOMATIC_BREAK');
-
-      // Verify admin alert sent
-      expect(notificationService.notifyAdmins).toHaveBeenCalledTimes(1);
-      const adminAlertCall = (notificationService.notifyAdmins as any).mock.calls[0];
-      expect(adminAlertCall[0].title).toContain('Tracking Enforcement: John Doe');
-
-      // Verify database records
-      const breaks = db.tables.attendance_breaks;
-      expect(breaks).toHaveLength(1);
-      expect(breaks[0]).toMatchObject({
-        attendance_id: 'att-1',
-        employee_id: 'emp-1',
-        break_type: 'AUTO_TRACKING',
-        ended_at: null,
-      });
-
-      // Verify attendance status set to ON_BREAK
-      const att = db.tables.attendance[0];
-      expect(att.status).toBe('ON_BREAK');
-
-      // Verify attendance_events logged
-      const events = db.tables.attendance_events;
-      expect(events).toHaveLength(1);
-      expect(events[0]).toMatchObject({
-        event_type: 'BREAK_START',
-        metadata: expect.objectContaining({
-          trigger: 'TRACKING_ENFORCEMENT',
-          break_type: 'AUTO_TRACKING',
-          violation_type: 'LOCATION_PERMISSION_DENIED',
-        }),
-      });
+    it('permission denied → report_tracking_event(LOCATION_DENIED); the server result is passed through', async () => {
+      rpc().mockResolvedValueOnce({ data: { action: 'STARTED', break_id: 'b-1', reason: 'LOCATION_PERMISSION_DENIED', state: 'PERMISSION_DENIED' }, error: null });
+      const res = await trackingEnforcementService.reportEvent('LOCATION_DENIED', { message: 'User denied Geolocation' });
+      expect(rpc()).toHaveBeenCalledWith('report_tracking_event', { p_event: 'LOCATION_DENIED', p_message: 'User denied Geolocation', p_offline_seconds: null });
+      expect(res).toEqual({ action: 'STARTED', breakId: 'b-1', reason: 'LOCATION_PERMISSION_DENIED', state: 'PERMISSION_DENIED' });
+      // nothing written from the browser
+      expect(db.tables.attendance_breaks).toHaveLength(0);
+      expect(notificationService.notifyEmployee).not.toHaveBeenCalled();
     });
 
-    it('detects GPS disabled, sends warning, and immediately starts automatic break', async () => {
-      const res = await trackingEnforcementService.evaluateAndEnforce({
-        employeeId: 'emp-1',
-        geoStatus: 'LOCATION_UNAVAILABLE',
-        failureReason: 'Location provider disabled in system settings',
-        isOnline: true,
-      });
-
-      expect(res.decision.shouldTriggerAutomaticBreak).toBe(true);
-      expect(res.decision.violationType).toBe('GPS_DISABLED');
-      expect(res.breakResult?.action).toBe('STARTED');
-
-      const breaks = db.tables.attendance_breaks;
-      expect(breaks).toHaveLength(1);
-      expect(breaks[0].break_type).toBe('AUTO_TRACKING');
-    });
-
-    it('detects stale location updates while clocked in and initiates enforcement break', async () => {
-      const lastSeen = ago(30 * MIN); // 30 mins ago (threshold 15 mins)
-      const res = await trackingEnforcementService.evaluateAndEnforce({
-        employeeId: 'emp-1',
-        geoStatus: 'SUCCESS',
-        lastSeenAt: lastSeen,
-        serverReceivedAt: lastSeen,
-        isOnline: true,
-      });
-
-      expect(res.decision.shouldTriggerAutomaticBreak).toBe(true);
-      expect(res.decision.violationType).toBe('TRACKING_STALE');
-      expect(res.breakResult?.action).toBe('STARTED');
-    });
-
-    it('does not block break creation if notification delivery fails', async () => {
-      (notificationService.notifyEmployee as any).mockRejectedValueOnce(new Error('Network error sending push'));
-      (notificationService.notifyAdmins as any).mockRejectedValueOnce(new Error('DB connection reset'));
-
-      const res = await trackingEnforcementService.evaluateAndEnforce({
-        employeeId: 'emp-1',
-        geoStatus: 'LOCATION_DENIED',
-        failureReason: 'Denied by user',
-        isOnline: true,
-      });
-
-      // Break is still started despite notification failure
-      expect(res.breakResult?.action).toBe('STARTED');
-      expect(res.breakResult?.warningSent).toBe(false);
-      expect(db.tables.attendance_breaks).toHaveLength(1);
-      expect(db.tables.attendance[0].status).toBe('ON_BREAK');
-    });
-  });
-
-  describe('Step 4: Concurrency and Duplicate Safeguards', () => {
-    it('is idempotent: subsequent enforcement calls do not create duplicate breaks', async () => {
-      // First call starts the break
-      const first = await trackingEnforcementService.evaluateAndEnforce({
-        employeeId: 'emp-1',
-        geoStatus: 'LOCATION_DENIED',
-        isOnline: true,
-      });
-      expect(first.breakResult?.action).toBe('STARTED');
-      expect(db.tables.attendance_breaks).toHaveLength(1);
-
-      // Second call while break is active
-      const second = await trackingEnforcementService.evaluateAndEnforce({
-        employeeId: 'emp-1',
-        geoStatus: 'LOCATION_DENIED',
-        isOnline: true,
-      });
-      expect(second.decision.shouldTriggerAutomaticBreak).toBe(false);
-      expect(second.decision.condition).toBe('ALREADY_ON_BREAK');
-      expect(second.breakResult).toBeUndefined();
-      expect(db.tables.attendance_breaks).toHaveLength(1); // exactly one break
-    });
-
-    it('prevents duplicate breaks when breakService is called directly while a break is active', async () => {
-      // Existing active break
-      db.tables.attendance_breaks = [
-        { id: 'brk-1', attendance_id: 'att-1', employee_id: 'emp-1', break_type: 'REGULAR', started_at: ago(10 * MIN), ended_at: null },
-      ];
-      db.tables.attendance[0].status = 'ON_BREAK';
-
-      const res = await breakService.handleTrackingEnforcementBreak({
-        employeeId: 'emp-1',
-        violationType: 'LOCATION_PERMISSION_DENIED',
-        reason: 'Location permission denied',
-      });
-
+    it('timeout and server "no break" decisions come back as NONE with the server reason', async () => {
+      rpc().mockResolvedValueOnce({ data: { action: 'NONE', reason: 'NOT_PROOF_OF_TRACKING_LOSS', state: 'GPS_TIMEOUT' }, error: null });
+      const res = await trackingEnforcementService.reportEvent('TIMEOUT');
       expect(res.action).toBe('NONE');
-      expect(res.reason).toBe('BREAK_ALREADY_ACTIVE');
-      expect(db.tables.attendance_breaks).toHaveLength(1); // no second break
-    });
-
-    it('gracefully handles database unique constraint violation (23505) under racing conditions', async () => {
-      db.uniqueOnInsert = true; // database refuses second open break
-
-      const res = await breakService.handleTrackingEnforcementBreak({
-        employeeId: 'emp-1',
-        violationType: 'LOCATION_PERMISSION_DENIED',
-        reason: 'Location permission denied',
-      });
-
-      expect(res.action).toBe('NONE');
-      expect(res.reason).toBe('BREAK_ALREADY_ACTIVE');
-    });
-
-    it('does not start a break if the employee has clocked out', async () => {
-      db.tables.attendance[0].clock_out_at = ago(5 * MIN);
-      db.tables.attendance[0].status = 'WORKING';
-
-      const res = await trackingEnforcementService.evaluateAndEnforce({
-        employeeId: 'emp-1',
-        geoStatus: 'LOCATION_DENIED',
-        isOnline: true,
-      });
-
-      expect(res.decision.shouldTriggerAutomaticBreak).toBe(false);
-      expect(res.decision.condition).toBe('CLOCKED_OUT');
+      expect(res.reason).toBe('NOT_PROOF_OF_TRACKING_LOSS');
       expect(db.tables.attendance_breaks).toHaveLength(0);
     });
 
-    it('does not start a break if the employee is on approved WFH', async () => {
-      db.tables.wfh_requests = [
-        { id: 'wfh-1', employee_id: 'emp-1', request_date: today(), status: 'APPROVED' },
-      ];
-
-      const res = await trackingEnforcementService.evaluateAndEnforce({
-        employeeId: 'emp-1',
-        geoStatus: 'LOCATION_DENIED',
-        isOnline: true,
-      });
-
-      expect(res.decision.shouldTriggerAutomaticBreak).toBe(false);
-      expect(res.decision.condition).toBe('WFH_EXEMPT');
-      expect(db.tables.attendance_breaks).toHaveLength(0);
-    });
-  });
-
-  describe('Step 5: Offline and Recovery Behavior', () => {
-    it('handles offline device without penalizing employee as noncompliant', async () => {
-      const res = await trackingEnforcementService.evaluateAndEnforce({
-        employeeId: 'emp-1',
-        geoStatus: 'LOCATION_UNAVAILABLE',
-        isOnline: false,
-      });
-
-      expect(res.decision.shouldTriggerAutomaticBreak).toBe(false);
-      expect(res.decision.isOffline).toBe(true);
-      expect(res.decision.isUnverified).toBe(true);
-      expect(res.decision.shouldQueueDeviceWarning).toBe(true);
-      expect(db.tables.attendance_breaks).toHaveLength(0);
-
-      // Verify offline warning queued
-      expect(notificationService.notifyEmployee).toHaveBeenCalledTimes(1);
-      const call = (notificationService.notifyEmployee as any).mock.calls[0];
-      expect(call[1].title).toContain('Offline: Location Tracking Paused');
+    it('network reconnect reports the offline duration (whole seconds, never negative)', async () => {
+      rpc().mockResolvedValueOnce({ data: { action: 'NONE', reason: 'WAITING_FOR_FRESH_LOCATION', state: 'WAITING_FOR_FIX' }, error: null });
+      await trackingEnforcementService.reportEvent('NETWORK_RECONNECTED', { offlineSeconds: 125.6 });
+      expect(rpc()).toHaveBeenCalledWith('report_tracking_event', { p_event: 'NETWORK_RECONNECTED', p_message: null, p_offline_seconds: 126 });
+      rpc().mockResolvedValueOnce({ data: { action: 'NONE' }, error: null });
+      await trackingEnforcementService.reportEvent('NETWORK_RECONNECTED', { offlineSeconds: -5 });
+      expect(rpc()).toHaveBeenLastCalledWith('report_tracking_event', { p_event: 'NETWORK_RECONNECTED', p_message: null, p_offline_seconds: 0 });
     });
 
-    it('does not treat transient timeouts as deliberate noncompliance', async () => {
-      const res = await trackingEnforcementService.evaluateAndEnforce({
-        employeeId: 'emp-1',
-        geoStatus: 'TIMEOUT',
-        failureReason: 'Timeout expired waiting for GPS fix',
-        isOnline: true,
-      });
-
-      expect(res.decision.shouldTriggerAutomaticBreak).toBe(false);
-      expect(res.decision.condition).toBe('TRANSIENT_TIMEOUT');
-      expect(db.tables.attendance_breaks).toHaveLength(0);
+    it('a refused or failed report is an ERROR, never a silent success', async () => {
+      rpc().mockResolvedValueOnce({ data: null, error: { message: 'permission denied for function report_tracking_event' } });
+      expect((await trackingEnforcementService.reportEvent('LOCATION_DENIED')).action).toBe('ERROR');
+      rpc().mockRejectedValueOnce(new Error('Failed to fetch'));
+      const res = await trackingEnforcementService.reportEvent('LOCATION_DENIED');
+      expect(res).toEqual({ action: 'ERROR', reason: 'Failed to fetch' });
+      rpc().mockResolvedValueOnce({ data: null, error: null });
+      expect((await trackingEnforcementService.reportEvent('LOCATION_DENIED')).reason).toBe('NO_RESULT_FROM_SERVER');
     });
 
-    it('records recovery timestamp in audit log and notifies admin without auto-closing break', async () => {
-      // 1. Initial violation occurs
-      await trackingEnforcementService.evaluateAndEnforce({
-        employeeId: 'emp-1',
-        geoStatus: 'LOCATION_DENIED',
-        isOnline: true,
-      });
-      expect(db.tables.attendance_breaks).toHaveLength(1);
-
-      // 2. Tracking resumes with a fresh usable fix
-      const recoveryTime = Date.now();
-      await trackingEnforcementService.handleTrackingRecovered('emp-1', recoveryTime);
-
-      // Admin was notified of recovery
-      expect(notificationService.notifyAdmins).toHaveBeenCalledTimes(2); // 1 start + 1 recovery
-      const recCall = (notificationService.notifyAdmins as any).mock.calls[1];
-      expect(recCall[0].title).toContain('Tracking Resumed: John Doe');
-
-      // The break was NOT silently deleted or closed
-      const brk = db.tables.attendance_breaks[0];
-      expect(brk.ended_at).toBeNull();
-      expect(brk.break_type).toBe('AUTO_TRACKING');
+    it('admin fallback evaluation calls process_stale_tracking', async () => {
+      rpc().mockResolvedValueOnce({ data: { checked: 3, started: 1 }, error: null });
+      const res = await trackingEnforcementService.runStaleEvaluation();
+      expect(rpc()).toHaveBeenCalledWith('process_stale_tracking');
+      expect(res.data).toEqual({ checked: 3, started: 1 });
     });
   });
 
   describe('Step 6: Payroll Safeguards and Auditable Break Correction', () => {
     it('allows admin to safely correct an erroneous tracking enforcement break without affecting payroll', async () => {
       // 1. Start an auto break
-      const startRes = await breakService.handleTrackingEnforcementBreak({
-        employeeId: 'emp-1',
-        violationType: 'LOCATION_PERMISSION_DENIED',
-        reason: 'False positive diagnostic trigger',
-      });
+      const startRes = seedAutoBreak();
       const breakId = startRes.breakId!;
 
       // 2. Admin corrects the erroneous break
@@ -519,11 +322,7 @@ describe('WorkPulse HR — Tracking Warning and Automatic Break Policy', () => {
         error: null,
       });
 
-      const startRes = await breakService.handleTrackingEnforcementBreak({
-        employeeId: 'emp-1',
-        violationType: 'GPS_DISABLED',
-        reason: 'GPS glitch test',
-      });
+      const startRes = seedAutoBreak();
 
       const correction = await breakService.correctTrackingEnforcementBreak({
         breakId: startRes.breakId!,
@@ -617,11 +416,7 @@ describe('WorkPulse HR — Tracking Warning and Automatic Break Policy', () => {
     });
 
     it('rejects correction if break record does not match the specified attendance ID', async () => {
-      const startRes = await breakService.handleTrackingEnforcementBreak({
-        employeeId: 'emp-1',
-        violationType: 'TRACKING_STALE',
-        reason: 'Stale break test',
-      });
+      const startRes = seedAutoBreak();
 
       const correction = await breakService.correctTrackingEnforcementBreak({
         breakId: startRes.breakId!,

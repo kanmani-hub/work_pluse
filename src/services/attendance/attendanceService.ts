@@ -1,5 +1,6 @@
 import { supabase } from '../../lib/supabase';
-import { completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes, findActiveBreak, closeActiveBreakAt, statusAfterBreakEnds, classifyOpenBreaks } from './breakRules';
+import { completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes, findActiveBreak, classifyOpenBreaks } from './breakRules';
+import { isAutomaticBreak } from './automaticBreakRules';
 import { logBreakAudit } from './breakAudit';
 import { selectCurrentAttendance } from './currentAttendance';
 import { companyDateStr, previousDateStr } from '../../utils/companyDate';
@@ -7,8 +8,6 @@ import type { Database } from '../../types/database';
 import { auditService } from '../audit/auditService';
 import { qaTimeService } from '../qa/qaTimeService';
 import { resolveClockInSession, computeClockOutTotals } from './clockRules';
-import { notificationService } from '../notifications/notificationService';
-import { autoBreakClosedAtClockOut } from '../notifications/notificationRules';
 
 export type AttendanceRow = Database['public']['Tables']['attendance']['Row'];
 export type AttendanceInsert = Database['public']['Tables']['attendance']['Insert'];
@@ -497,31 +496,24 @@ export const attendanceService = {
     }
 
     // An active MANUAL break must be ended by the employee first (existing rule).
-    // An active AUTOMATIC (GPS) break is closed at the clock-out time: the employee does not
-    // have to walk back into the office just to clock out, and no break stays open afterwards.
+    // An active AUTOMATIC break (geofence or tracking) is closed by the server at database time
+    // (close_auto_break_for_clock_out): the employee does not have to walk back into the office or
+    // restore tracking just to clock out, and no break stays open afterwards. The server also writes
+    // the BREAK_END event, the audit entry and the employee notification.
     const activeBreak = findActiveBreak(breaks);
-    if (activeBreak && activeBreak.break_type !== 'AUTO_GPS') {
+    if (activeBreak && !isAutomaticBreak(activeBreak)) {
       return { data: null, error: new Error('Please end your active break before clocking out.') };
     }
-    let closedAutoBreak: any = null;
+    let closedAutoBreak: { id: string; duration_minutes: number; ended_at: string } | null = null;
     if (activeBreak) {
-      const { breaks: withClosed, closed } = closeActiveBreakAt(breaks, nowIso);
-      const { data: closedRow, error: closeErr } = await (supabase.from('attendance_breaks') as any)
-        .update({ ended_at: closed!.ended_at, duration_minutes: closed!.duration_minutes })
-        .eq('id', activeBreak.id)
-        .is('ended_at', null) // only if still open (the return-to-office transition may have just closed it)
-        .select()
-        .maybeSingle();
-      if (closeErr) return { data: null, error: new Error(closeErr.message) };
-      if (closedRow) {
-        breaks = withClosed;
-        closedAutoBreak = closed;
-      } else {
-        // Closed concurrently: use the stored end time
-        const { data: fresh } = await supabase.from('attendance_breaks').select('*').eq('attendance_id', attendanceId) as any;
-        breaks = fresh || [];
-        if (findActiveBreak(breaks)) return { data: null, error: new Error('Please try again.') };
-      }
+      const { data: closeRes, error: closeErr } = await (supabase as any).rpc('close_auto_break_for_clock_out', { p_attendance_id: attendanceId });
+      if (closeErr) return { data: null, error: new Error(`Your automatic break could not be closed (${closeErr.message}). You are still clocked in; please try again.`) };
+      // Re-read: the server closed it (or a return / fresh location closed it a moment earlier)
+      const { data: fresh, error: freshErr } = await supabase.from('attendance_breaks').select('*').eq('attendance_id', attendanceId) as any;
+      if (freshErr || !Array.isArray(fresh)) return { data: null, error: new Error(`Your breaks could not be checked (${freshErr?.message || 'no data returned'}). You are still clocked in; please try again.`) };
+      breaks = fresh;
+      if (findActiveBreak(breaks)) return { data: null, error: new Error('Please try again.') };
+      if (closeRes?.action === 'ENDED') closedAutoBreak = { id: closeRes.break_id, duration_minutes: closeRes.duration_minutes, ended_at: closeRes.ended_at };
     }
 
     // Sum of the actual stored break durations (same rule as the break service and timers)
@@ -568,14 +560,7 @@ export const attendanceService = {
       .maybeSingle() as any;
 
     if (error || !updated) {
-      if (error && closedAutoBreak) {
-        // The automatic break was closed but the clock-out could not be saved: the employee is
-        // still clocked in and no longer on a break, so do not leave a stale ON_BREAK status.
-        await (supabase.from('attendance') as any)
-          .update({ status: statusAfterBreakEnds(existing) })
-          .eq('id', attendanceId)
-          .is('clock_out_at', null);
-      }
+      // (if an automatic break was closed above, the database already set the status back from ON_BREAK)
       if (error) return { data: null, error: new Error(error.message) };
       return { data: null, error: new Error('Attendance is already completed.') };
     }
@@ -589,27 +574,6 @@ export const attendanceService = {
       description: `Employee clocked out. Status: ${status}. Worked: ${effectiveWorkedMins}m. Extra time (not overtime): ${extraMins}m. Early logout: ${earlyLogoutMins}m.`,
       new_values: { status, worked_minutes: effectiveWorkedMins, break_minutes: actualBreakMins, overtime_minutes: overtimeMins }
     }).catch(e => console.error('[AUDIT] CLOCK_OUT failed:', e));
-
-    if (closedAutoBreak) {
-      // The automatic break ended because the employee clocked out (logged once: only the
-      // request that actually closed the break gets here)
-      await supabase.from('attendance_events').insert({
-        attendance_id: attendanceId,
-        employee_id: empId,
-        event_type: 'BREAK_END',
-        event_at: closedAutoBreak.ended_at,
-        source: 'SYSTEM',
-        metadata: { trigger: 'CLOCK_OUT', break_type: 'AUTO_GPS', break_id: closedAutoBreak.id, duration_minutes: closedAutoBreak.duration_minutes },
-      } as any);
-      auditService.recordAuditLog({
-        action: 'AUTOMATIC_BREAK_ENDED',
-        module: 'ATTENDANCE',
-        entity_type: 'attendance_breaks',
-        entity_id: closedAutoBreak.id,
-        description: `Automatic GPS break closed at clock-out. Duration: ${closedAutoBreak.duration_minutes}m.`,
-      }).catch(e => console.error('[AUDIT] AUTOMATIC_BREAK_ENDED failed:', e));
-      await notificationService.notifyEmployee(empId, autoBreakClosedAtClockOut({ breakId: closedAutoBreak.id, attendanceId }));
-    }
 
     // @ts-ignore
     await supabase.from('attendance_events').insert({

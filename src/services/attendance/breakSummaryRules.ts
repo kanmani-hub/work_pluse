@@ -35,6 +35,10 @@ export const BREAK_STATUS_LABEL: Record<BreakDayStatus, string> = {
 export interface BreakSession {
   id: string | null;
   break_type: string | null;
+  /** EMPLOYEE / SYSTEM / ADMIN and the automatic-break reason (null on rows created before they existed) */
+  source?: string | null;
+  reason?: string | null;
+  ended_reason?: string | null;
   started_at: string | null;
   ended_at: string | null;
   state: 'COMPLETED' | 'ACTIVE' | 'INVALID';
@@ -120,7 +124,7 @@ export function summarizeBreakDay(
 
   let openSeen = 0;
   const sessions: BreakSession[] = unique.map(b => {
-    const base = { id: b.id ?? null, break_type: b.break_type ?? null, started_at: b.started_at ?? null, ended_at: b.ended_at ?? null, storedMinutes: b.duration_minutes ?? null };
+    const base = { id: b.id ?? null, break_type: b.break_type ?? null, source: b.source ?? null, reason: b.reason ?? null, ended_reason: b.ended_reason ?? null, started_at: b.started_at ?? null, ended_at: b.ended_at ?? null, storedMinutes: b.duration_minutes ?? null };
     const invalid = (invalidReason: string): BreakSession => ({ ...base, state: 'INVALID', minutes: null, invalidReason });
     if (!validTime(b.started_at)) return invalid('Missing or invalid start time');
     if (b.ended_at !== null && b.ended_at !== undefined) {

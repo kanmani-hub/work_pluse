@@ -25,6 +25,7 @@ import {
   type TrackingInfo,
 } from '../location/trackingStatus';
 import { normalizeRole } from '../../lib/roles';
+import { trackingStateView } from './automaticBreakRules';
 
 export type BreakReportStatus = BreakDayStatus | 'NO_ATTENDANCE';
 // Tracking status lives in ../location/trackingStatus (shared with Live Tracking); re-exported here.
@@ -41,6 +42,8 @@ export interface BreakReportInput {
   liveLocations: any[] | null;       // null = not loaded (error, or not today)
   locationProblems: any[] | null;    // failed location checks for the date, any order
   breakEndEvents?: any[] | null;     // attendance_events BREAK_END (metadata.tracking_gap flags late returns)
+  /** employee_tracking_state rows (server-maintained; null = not loaded / not today) */
+  trackingStates?: any[] | null;
   settingBreakMins: number | null | undefined;
   nowMs: number;
   /** Display threshold for "not updating" (Settings → trackingStaleMinutes); default 15. */
@@ -67,6 +70,17 @@ export interface BreakReportRow {
   tracking: BreakReportTracking;
   /** break id → last location time before a return that was only seen after a tracking gap */
   gapReturns: Record<string, string | null>;
+  /** Server tracking state for THIS attendance (employee_tracking_state), or null */
+  serverTracking: any | null;
+  /** The server reports a tracking problem / stale location / waiting for a fresh location */
+  trackingInterrupted: boolean;
+}
+
+const INTERRUPTED_TONES = ['problem', 'stale', 'waiting'];
+/** Server tracking state matched to an attendance (a state row of another attendance is not shown). */
+export function serverTrackingFor(states: any[] | null | undefined, attendanceId: string | null): any | null {
+  if (!attendanceId) return null;
+  return (states || []).find((s: any) => s?.attendance_id === attendanceId) ?? null;
 }
 
 /** Supabase's default maximum rows per request; a response this long may be truncated. */
@@ -108,6 +122,7 @@ export function buildBreakReportRows(input: BreakReportInput): BreakReportRow[] 
     const ends = counted.map(s => s.ended_at).filter(Boolean) as string[];
     const storedBreakMins = typeof att.break_minutes === 'number' ? att.break_minutes : null;
     const settled = summary.activeCount === 0 && summary.invalidCount === 0 && !summary.breaksUnavailable;
+    const serverTracking = serverTrackingFor(input.trackingStates, att.id);
     rows.push({
       key: `att:${att.id}`,
       employeeId: att.employee_id,
@@ -124,6 +139,8 @@ export function buildBreakReportRows(input: BreakReportInput): BreakReportRow[] 
       storedDiffers: settled && storedBreakMins !== null && storedBreakMins !== summary.completedMins,
       tracking: trackingFor(input, att, liveByEmp.get(att.employee_id) ?? null, problems.get(att.employee_id) ?? null),
       gapReturns: Object.fromEntries(summary.sessions.filter(se => se.id && gapByBreak.has(se.id)).map(se => [se.id as string, gapByBreak.get(se.id as string) ?? null])),
+      serverTracking,
+      trackingInterrupted: !!serverTracking && !att.clock_out_at && INTERRUPTED_TONES.includes(trackingStateView(serverTracking.state).tone),
     });
   }
 
@@ -151,6 +168,8 @@ export function buildBreakReportRows(input: BreakReportInput): BreakReportRow[] 
       storedDiffers: false,
       tracking: { state: 'NOT_APPLICABLE', lastSeenAt: null, locationStatus: null, problem: null, notTrackedReason: input.date < input.today ? 'PAST_DATE' : 'NO_ATTENDANCE' },
       gapReturns: {},
+      serverTracking: null,
+      trackingInterrupted: false,
     }));
   return rows;
 }
@@ -159,6 +178,15 @@ export const REPORT_STATUS_LABEL: Record<BreakReportStatus, string> = {
   ON_BREAK: 'On Break', EXCESS: 'Excess Break', WITHIN: 'Within Limit', NO_BREAKS: 'No Breaks Recorded',
   UNVERIFIED: 'Unverified', NO_ATTENDANCE: 'No Attendance',
 };
+
+/**
+ * Status text for a row. Break status and tracking status stay separate, but "No Breaks Recorded" is not
+ * shown on its own while the server reports a tracking interruption (it would read as "all fine").
+ */
+export function reportStatusLabel(row: Pick<BreakReportRow, 'status' | 'trackingInterrupted'>): string {
+  if (row.status === 'NO_BREAKS' && row.trackingInterrupted) return 'No breaks · tracking interrupted';
+  return REPORT_STATUS_LABEL[row.status];
+}
 
 /** Page filter: NO_ATTENDANCE rows only appear under "All" and "No Attendance". */
 export function matchesReportFilter(status: BreakReportStatus, filter: string): boolean {

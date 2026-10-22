@@ -3,9 +3,12 @@ import { breakService } from './breakService';
 import { supabase } from '../../lib/supabase';
 import { notificationService } from '../notifications/notificationService';
 import { summarizeBreakDay } from './breakSummaryRules';
-import { companyDateStr, previousDateStr } from '../../utils/companyDate';
+import { companyDateStr } from '../../utils/companyDate';
 
-// Auto Break START on a confirmed geofence exit (no grace period). In-memory tables;
+// Auto Break START / END on a confirmed geofence exit / return. Since migration 20261021120000 the break
+// itself is created and closed by the database (geofence_auto_break, database time, server checks);
+// those rules are tested against PostgreSQL in supabase/tests/autobreak/run_autobreak_db_tests.mjs.
+// Here: the client calls the server correctly and never writes a break itself. In-memory tables;
 // failSelect / failWrite make the n-th read / write on a table fail like a PostgREST error;
 // uniqueOnInsert simulates the database refusing a second open break (23505).
 vi.mock('./attendanceService', () => ({ attendanceService: { getCurrentEmployeeId: vi.fn() } }));
@@ -53,7 +56,7 @@ vi.mock('../../lib/supabase', () => {
     };
     return b;
   };
-  return { supabase: { from, __db: db } };
+  return { supabase: { from, rpc: vi.fn(), __db: db } };
 });
 
 const db = (supabase as any).__db;
@@ -72,159 +75,67 @@ function setup(attendance: any[], breaks: any[] = [], wfh: any[] = []) {
   };
   db.seq = 0; db.failSelect = []; db.selects = {}; db.failWrite = []; db.writes = {}; db.uniqueOnInsert = false;
 }
-const breaksOf = (attId: string) => db.tables.attendance_breaks.filter((b: any) => b.attendance_id === attId);
-const att = (id: string) => db.tables.attendance.find((a: any) => a.id === id);
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('confirmed exit → Auto Break starts immediately', () => {
-  it('creates one AUTO_GPS break started at the exit time, attendance ON_BREAK, event logged', async () => {
+const rpc = () => (supabase as any).rpc as any;
+
+describe('geofence transitions are delegated to the server (geofence_auto_break)', () => {
+  it('START → calls the server with the transition; the result is mapped; the browser writes nothing', async () => {
     setup([attendanceRow('attA', 'empA')]);
-    const exitAt = ago(20_000);
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', exitAt);
-    expect(r).toMatchObject({ action: 'STARTED', complete: true });
-    expect(breaksOf('attA')).toHaveLength(1);
-    expect(breaksOf('attA')[0]).toMatchObject({ break_type: 'AUTO_GPS', started_at: exitAt, employee_id: 'empA' });
-    expect(att('attA').status).toBe('ON_BREAK');
-    expect(db.tables.attendance_events.map((e: any) => e.event_type)).toEqual(['BREAK_START']);
-    expect(notificationService.notifyEmployee).toHaveBeenCalledTimes(1);
-  });
-
-  it('several employees exiting get their own breaks on their own attendance', async () => {
-    setup([attendanceRow('attA', 'empA'), attendanceRow('attB', 'empB'), attendanceRow('attC', 'empC')]);
-    await breakService.handleAutoBreakTransition('empA', 'START', ago(30_000));
-    await breakService.handleAutoBreakTransition('empB', 'START', ago(10_000));
-    expect(breaksOf('attA')).toHaveLength(1);
-    expect(breaksOf('attB')).toHaveLength(1);
-    expect(breaksOf('attC')).toHaveLength(0);
-    expect(breaksOf('attA')[0].employee_id).toBe('empA');
-    expect(breaksOf('attB')[0].employee_id).toBe('empB');
-    expect(att('attC').status).toBe('WORKING');
-  });
-
-  it('an exit recorded before clock-in is clamped to the clock-in time', async () => {
-    const clockIn = ago(5 * MIN);
-    setup([attendanceRow('attA', 'empA', { clock_in_at: clockIn })]);
-    await breakService.handleAutoBreakTransition('empA', 'START', ago(10 * MIN));
-    expect(breaksOf('attA')[0].started_at).toBe(clockIn);
-  });
-
-  it("overnight shift: the break attaches to last night's open attendance", async () => {
-    setup([attendanceRow('attN', 'empA', { attendance_date: previousDateStr(today()), shift_template_id: 'night' })]);
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(MIN));
-    expect(r.action).toBe('STARTED');
-    expect(breaksOf('attN')).toHaveLength(1);
-  });
-
-  it("yesterday's day-shift attendance left open is not used (no break on a stale day)", async () => {
-    setup([attendanceRow('attOld', 'empA', { attendance_date: previousDateStr(today()) })]);
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(MIN));
-    expect(r).toMatchObject({ action: 'NONE', reason: 'STALE_OPEN_ATTENDANCE' });
-    expect(db.tables.attendance_breaks).toHaveLength(0);
-  });
-});
-
-describe('no invalid or duplicate breaks', () => {
-  it('not clocked in → no break', async () => {
-    setup([attendanceRow('attA', 'empA', { clock_out_at: ago(MIN) })]);
+    rpc().mockResolvedValueOnce({ data: { action: 'STARTED', break_id: 'srv-1', started_at: 'srv-time', reason: 'GEOFENCE_EXIT' }, error: null });
     const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000));
-    expect(r).toMatchObject({ action: 'NONE', reason: 'NOT_CLOCKED_IN' });
-    expect(db.tables.attendance_breaks).toHaveLength(0);
+    expect(rpc()).toHaveBeenCalledWith('geofence_auto_break', { p_transition: 'START', p_tracking_gap_last_seen: null });
+    expect(r).toEqual({ action: 'STARTED', breakId: 'srv-1', startedAt: 'srv-time', complete: true });
+    expect(db.writes).toEqual({});
+    expect(notificationService.notifyEmployee).not.toHaveBeenCalled();   // the server notifies once
   });
 
-  it('an existing open break is not duplicated (repeated exit events)', async () => {
+  it('END with a tracking gap passes the last-seen time; ENDED carries the server totals', async () => {
     setup([attendanceRow('attA', 'empA')]);
-    await breakService.handleAutoBreakTransition('empA', 'START', ago(20_000));
-    const again: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000));
-    expect(again).toMatchObject({ action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' });
-    expect(breaksOf('attA')).toHaveLength(1);
+    rpc().mockResolvedValueOnce({ data: { action: 'ENDED', break_id: 'srv-1', duration_minutes: 42, actual: 102, allowed: 60, overrun: 42, tracking_gap: true }, error: null });
+    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', ago(10_000), { trackingGap: { lastSeenAt: 'last-seen-iso' } });
+    expect(rpc()).toHaveBeenCalledWith('geofence_auto_break', { p_transition: 'END', p_tracking_gap_last_seen: 'last-seen-iso' });
+    expect(r).toMatchObject({ action: 'ENDED', breakId: 'srv-1', durationMinutes: 42, totalsUpdated: true, actual: 102, overrun: 42, trackingGap: true });
   });
 
-  it('an open manual break blocks an automatic one', async () => {
-    setup([attendanceRow('attA', 'empA', { status: 'ON_BREAK' })], [{ id: 'm1', attendance_id: 'attA', employee_id: 'empA', break_type: 'MANUAL', started_at: ago(5 * MIN), ended_at: null }]);
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000));
-    expect(r.reason).toBe('BREAK_ALREADY_ACTIVE');
-    expect(breaksOf('attA')).toHaveLength(1);
-  });
-
-  it('concurrent START refused by the database (23505) → reported as already active, nothing else written', async () => {
+  it('server "no break" decisions are passed through (WFH, already active, not clocked in, after shift end)', async () => {
     setup([attendanceRow('attA', 'empA')]);
-    db.uniqueOnInsert = true;
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000));
-    expect(r).toMatchObject({ action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' });
-    expect(att('attA').status).toBe('WORKING');
-    expect(db.tables.attendance_events).toHaveLength(0);
+    for (const reason of ['WFH', 'BREAK_ALREADY_ACTIVE', 'NOT_CLOCKED_IN', 'AFTER_SHIFT_END', 'NO_ACTIVE_AUTO_BREAK']) {
+      rpc().mockResolvedValueOnce({ data: { action: 'NONE', reason }, error: null });
+      const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000));
+      expect(r).toEqual({ action: 'NONE', reason });
+    }
+    expect(db.writes).toEqual({});
   });
 
-  it('approved WFH → no automatic break', async () => {
-    setup([attendanceRow('attA', 'empA')], [], [{ id: 'w1', employee_id: 'empA', request_date: today(), status: 'APPROVED' }]);
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000));
-    expect(r).toMatchObject({ action: 'NONE', reason: 'WFH' });
-    expect(db.tables.attendance_breaks).toHaveLength(0);
-  });
-});
-
-describe('failures never produce a false break or false success', () => {
-  it('attendance read fails → ERROR (not "not clocked in"), no break', async () => {
+  it('a WFH context known on the device skips the call for START', async () => {
     setup([attendanceRow('attA', 'empA')]);
-    db.failSelect = [{ table: 'attendance', nth: 1 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000));
-    expect(r.action).toBe('ERROR');
-    expect(r.reason).toMatch(/ATTENDANCE_CHECK_FAILED/);
-    expect(db.tables.attendance_breaks).toHaveLength(0);
+    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000), { isWfhContext: true });
+    expect(r).toEqual({ action: 'NONE', reason: 'WFH' });
+    expect(rpc()).not.toHaveBeenCalled();
   });
 
-  it('open-break check fails → ERROR, no break', async () => {
+  it('server refusal or unreachable server → ERROR (never a false break or false success)', async () => {
     setup([attendanceRow('attA', 'empA')]);
-    db.failSelect = [{ table: 'attendance_breaks', nth: 1 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000));
-    expect(r.action).toBe('ERROR');
-    expect(db.tables.attendance_breaks).toHaveLength(0);
-  });
-
-  it('WFH check fails → ERROR, no break (a failed check is not "no WFH")', async () => {
-    setup([attendanceRow('attA', 'empA')]);
-    db.failSelect = [{ table: 'wfh_requests', nth: 1 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000));
-    expect(r.action).toBe('ERROR');
-    expect(r.reason).toMatch(/WFH_CHECK_FAILED/);
-    expect(db.tables.attendance_breaks).toHaveLength(0);
-  });
-
-  it('break insert fails → ERROR, attendance untouched', async () => {
-    setup([attendanceRow('attA', 'empA')]);
-    db.failWrite = [{ table: 'attendance_breaks', nth: 1 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000));
-    expect(r.action).toBe('ERROR');
-    expect(att('attA').status).toBe('WORKING');
-    expect(notificationService.notifyEmployee).not.toHaveBeenCalled();
-  });
-
-  it('status write fails → break kept, reported as incomplete (not plain success)', async () => {
-    setup([attendanceRow('attA', 'empA')]);
-    db.failWrite = [{ table: 'attendance', nth: 1 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000));
-    expect(r).toMatchObject({ action: 'STARTED', complete: false });
-    expect(r.reason).toMatch(/STATUS_NOT_UPDATED/);
-    expect(breaksOf('attA')).toHaveLength(1);
-  });
-
-  it('event write fails → reported as incomplete', async () => {
-    setup([attendanceRow('attA', 'empA')]);
-    db.failWrite = [{ table: 'attendance_events', nth: 1 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000));
-    expect(r).toMatchObject({ action: 'STARTED', complete: false });
-    expect(r.reason).toMatch(/EVENT_NOT_LOGGED/);
+    rpc().mockResolvedValueOnce({ data: null, error: { message: 'permission denied' } });
+    expect((await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000))).action).toBe('ERROR');
+    rpc().mockRejectedValueOnce(new Error('Failed to fetch'));
+    expect((await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000))).action).toBe('ERROR');
+    rpc().mockResolvedValueOnce({ data: { action: 'STARTED' }, error: null });   // malformed
+    expect((await breakService.handleAutoBreakTransition('empA', 'START', ago(10_000))).action).toBe('ERROR');
+    expect(db.writes).toEqual({});
   });
 
   it.each([
     ['delayed by 20 minutes', () => ago(20 * MIN)],
     ['20 minutes in the future', () => new Date(Date.now() + 20 * MIN).toISOString()],
     ['unparseable', () => 'not-a-time'],
-  ])('transition time %s → ERROR, nothing written', async (_label, t) => {
+  ])('transition time %s → ERROR, the server is not called, nothing written', async (_label, t) => {
     setup([attendanceRow('attA', 'empA')]);
     const r: any = await breakService.handleAutoBreakTransition('empA', 'START', t());
     expect(r.action).toBe('ERROR');
+    expect(rpc()).not.toHaveBeenCalled();
     expect(db.writes).toEqual({});
   });
 });

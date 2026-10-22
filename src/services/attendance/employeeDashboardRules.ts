@@ -96,7 +96,7 @@ export interface LiveLocationLike {
 }
 
 export interface LocationDisplay {
-  gps: 'GPS Active' | 'Location Updating' | 'Location Permission Required' | 'Location Permission Denied' | 'GPS Unavailable' | 'Location Not Saved';
+  gps: 'GPS Active' | 'Location Updating' | 'Location Permission Required' | 'Location Permission Denied' | 'GPS Unavailable' | 'Location Not Saved' | 'No Internet Connection';
   geofence: 'IN OFFICE' | 'OUTSIDE GEOFENCE' | 'LOCATION UNKNOWN' | 'WFH';
   tone: 'success' | 'warning' | 'danger' | 'muted';
   lastSeenAt: string | null;
@@ -125,6 +125,8 @@ export function deriveLocationDisplay(input: {
   else if (permission === 'prompt') gps = 'Location Permission Required';
   // Readings are taken but could not be saved (network / server): retried automatically
   else if (trackingStatus === 'SYNC_FAILED') gps = 'Location Not Saved';
+  // The browser reports no network: locations are queued on the device, nothing reaches the server
+  else if (trackingStatus === 'OFFLINE') gps = 'No Internet Connection';
   else if (fresh) gps = 'GPS Active';
   // The watcher reports no fix (device location switched off / no signal): say so instead of "updating"
   else if (trackingStatus === 'LOCATION_UNAVAILABLE' || trackingStatus === 'TIMEOUT' || trackingStatus === 'UNKNOWN_ERROR') gps = 'GPS Unavailable';
@@ -139,7 +141,7 @@ export function deriveLocationDisplay(input: {
 
   const tone: LocationDisplay['tone'] =
     gps === 'Location Permission Denied' || gps === 'GPS Unavailable' ? 'danger'
-    : geofence === 'OUTSIDE GEOFENCE' || gps === 'Location Not Saved' ? 'warning'
+    : geofence === 'OUTSIDE GEOFENCE' || gps === 'Location Not Saved' || gps === 'No Internet Connection' ? 'warning'
     : gps === 'GPS Active' ? 'success'
     : 'muted';
 

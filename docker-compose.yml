@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # Redis 7 In-Memory Data Store & Cache
+  redis:
+    image: redis:7-alpine
+    container_name: workpulse-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - workpulse-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 2s
+
+  # WorkPulse Node.js + Redis Microservice
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: workpulse-microservice
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - "PORT=3001"
+      - "NODE_ENV=production"
+      - "REDIS_URL=redis://redis:6379"
+      - "REDIS_KEY_PREFIX=wp:"
+      - "CORS_ORIGIN=http://localhost:5173,http://localhost:5174,http://localhost:3000"
+      - "SUPABASE_URL=${SUPABASE_URL:-}"
+      - "SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}"
+      - "SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}"
+      - "CACHE_DEFAULT_TTL_SECONDS=300"
+      - "PAYROLL_CACHE_TTL_SECONDS=600"
+      - "GEO_BUFFER_FLUSH_INTERVAL_SECONDS=15"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - workpulse-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  workpulse-net:
+    driver: bridge

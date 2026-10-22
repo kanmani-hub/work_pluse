@@ -3,7 +3,9 @@ import { useGlobalSettings } from '../../services/settings/globalSettingsService
 import { breakService } from '../../services/attendance/breakService';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { FileText, Trash2, StopCircle, AlertCircle } from 'lucide-react';
-import { buildBreakReportRows, matchesReportFilter, REPORT_STATUS_LABEL, API_ROW_LIMIT, type BreakReportStatus, type BreakReportRow } from '../../services/attendance/breakReportRules';
+import { buildBreakReportRows, matchesReportFilter, reportStatusLabel, API_ROW_LIMIT, type BreakReportRow } from '../../services/attendance/breakReportRules';
+import { isAutomaticBreak, autoBreakReasonLabel, breakEndedReasonLabel, breakSourceLabel, trackingStateView } from '../../services/attendance/automaticBreakRules';
+import { trackingEnforcementService } from '../../services/location/trackingEnforcementService';
 import { COMPANY_TIMEZONE, companyDateStr, previousDateStr } from '../../utils/companyDate';
 import { resolveStaleMinutes } from '../../services/location/trackingStatus';
 import { useAuth } from '../../context/AuthContext';
@@ -45,7 +47,7 @@ const AdminBreaks: React.FC = () => {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   // Employees without attendance + tracking freshness (each part may fail on its own)
-  const [context, setContext] = useState<{ employees: any[] | null; liveLocations: any[] | null; locationProblems: any[] | null; breakEndEvents: any[] | null }>({ employees: null, liveLocations: null, locationProblems: null, breakEndEvents: null });
+  const [context, setContext] = useState<{ employees: any[] | null; liveLocations: any[] | null; locationProblems: any[] | null; breakEndEvents: any[] | null; trackingStates: any[] | null }>({ employees: null, liveLocations: null, locationProblems: null, breakEndEvents: null, trackingStates: null });
   const [contextErrors, setContextErrors] = useState<string[]>([]);
   const isToday = filterDate === companyDateStr();
 
@@ -54,7 +56,7 @@ const AdminBreaks: React.FC = () => {
   const staleMinutes = resolveStaleMinutes(appSettings?.trackingStaleMinutes);
   const loadContext = async () => {
     const ctx = await breakService.getBreakReportContext(filterDate, tracksDate(filterDate));
-    setContext({ employees: ctx.employees, liveLocations: ctx.liveLocations, locationProblems: ctx.locationProblems, breakEndEvents: ctx.breakEndEvents });
+    setContext({ employees: ctx.employees, liveLocations: ctx.liveLocations, locationProblems: ctx.locationProblems, breakEndEvents: ctx.breakEndEvents, trackingStates: ctx.trackingStates });
     setContextErrors(ctx.errors);
   };
 
@@ -159,13 +161,24 @@ const AdminBreaks: React.FC = () => {
     };
     const breaksChannel = realtimeService.subscribeToAdminBreaks(scheduleRefetch);
     const attendanceChannel = realtimeService.subscribeToAdminAttendance(scheduleRefetch);
-    // Tracking freshness changes with time and is not pushed: reload it every minute for today
-    const trackingTimer = setInterval(() => { if (tracksDate(filterDate)) loadContext(); }, 60000);
+    const trackingChannel = realtimeService.subscribeToTrackingStates(scheduleRefetch);
+    // Polling fallback (also covers realtime being unavailable): every minute for today, run the same
+    // idempotent server evaluation the scheduler runs (needed when pg_cron is not installed; the server
+    // only lets ADMIN / HR run it), then reload breaks and tracking.
+    const trackingTimer = setInterval(async () => {
+      if (!tracksDate(filterDate)) return;
+      if (canEndBreaks) {
+        const { error } = await trackingEnforcementService.runStaleEvaluation();
+        if (error) console.warn('[BREAKS] stale-tracking evaluation not run:', error.message);
+      }
+      fetchBreaks(true);
+    }, 60000);
     return () => {
       if (timer) clearTimeout(timer);
       clearInterval(trackingTimer);
       realtimeService.unsubscribe(breaksChannel);
       realtimeService.unsubscribe(attendanceChannel);
+      realtimeService.unsubscribe(trackingChannel);
     };
   }, [filterDate]);
 
@@ -178,6 +191,7 @@ const AdminBreaks: React.FC = () => {
     liveLocations: context.liveLocations,
     locationProblems: context.locationProblems,
     breakEndEvents: context.breakEndEvents,
+    trackingStates: context.trackingStates,
     settingBreakMins: appSettings?.breakDurationMins,
     nowMs,
     staleMinutes,
@@ -192,7 +206,7 @@ const AdminBreaks: React.FC = () => {
     withAttendance: reportRows.filter(r => r.attendanceId).length,
     onBreak: reportRows.filter(r => r.status === 'ON_BREAK').length,
     noAttendance: reportRows.filter(r => r.status === 'NO_ATTENDANCE').length,
-    trackingIssues: reportRows.filter(r => ['STALE', 'LOCATION_PROBLEM', 'NO_DATA'].includes(r.tracking.state)).length,
+    trackingIssues: reportRows.filter(r => r.trackingInterrupted || ['STALE', 'LOCATION_PROBLEM', 'NO_DATA'].includes(r.tracking.state)).length,
   };
 
   const selectedDetails = reportRows.find(r => r.key === selectedKey);
@@ -228,9 +242,28 @@ const AdminBreaks: React.FC = () => {
     return new Date(isoString).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: COMPANY_TIMEZONE });
   };
   const mins = (v: number | null) => (v === null ? 'Not configured' : `${v} min`);
-  const statusBadge = (st: BreakReportStatus) => {
-    const cls = st === 'ON_BREAK' ? 'badge-warning' : st === 'EXCESS' ? 'badge-danger' : (st === 'UNVERIFIED' || st === 'NO_ATTENDANCE') ? 'badge-gray' : 'badge-success';
-    return <span className={`badge ${cls}`}>{REPORT_STATUS_LABEL[st]}</span>;
+  const statusBadge = (r: BreakReportRow) => {
+    const st = r.status;
+    const cls = st === 'ON_BREAK' ? 'badge-warning' : st === 'EXCESS' ? 'badge-danger' : (st === 'UNVERIFIED' || st === 'NO_ATTENDANCE') ? 'badge-gray'
+      : r.trackingInterrupted ? 'badge-warning' : 'badge-success';
+    return <span className={`badge ${cls}`}>{reportStatusLabel(r)}</span>;
+  };
+  /** Server tracking state of an attendance (automatic-break rules), shown beside the location status */
+  const serverTrackingNote = (r: BreakReportRow, expanded = false) => {
+    if (!r.serverTracking || r.attendance?.clock_out_at) return null;
+    const v = trackingStateView(r.serverTracking.state);
+    const color = v.tone === 'ok' || v.tone === 'restored' ? 'var(--success-600)' : v.tone === 'problem' || v.tone === 'stale' ? 'var(--danger)' : 'var(--warning)';
+    return (
+      <div className="bt-note" title={v.detail} style={{ color }}>
+        Server: {v.label}{r.serverTracking.state_since ? ` since ${formatTime(r.serverTracking.state_since)}` : ''}
+        {expanded && (
+          <div style={{ color: 'var(--text-secondary)' }}>
+            {v.detail} Last fresh location received: {formatTime(r.serverTracking.last_fresh_fix_at ?? null)}.
+            {r.serverTracking.reported_offline_seconds ? ` Device reported ${Math.round(r.serverTracking.reported_offline_seconds / 60)} min offline (reconnected ${formatTime(r.serverTracking.last_reconnect_at ?? null)}).` : ''}
+          </div>
+        )}
+      </div>
+    );
   };
   const storedCell = (r: BreakReportRow) => {
     if (!r.summary) return <span style={{ color: 'var(--text-secondary)' }}>—</span>;
@@ -395,9 +428,13 @@ const AdminBreaks: React.FC = () => {
                           {!r.summary || r.summary.excessMins === null ? '—' : `${r.summary.excessMins} min`}
                         </span>
                       </td>
-                      <td role="cell" className="bt-status" data-label="Status">{statusBadge(r.status)}</td>
+                      <td role="cell" className="bt-status" data-label="Status">
+                        {statusBadge(r)}
+                        {activeSess && <div className="bt-note">{breakSourceLabel(activeSess)}{isAutomaticBreak(activeSess) && autoBreakReasonLabel(activeSess) ? ` · ${autoBreakReasonLabel(activeSess)}` : ''}</div>}
+                      </td>
                       <td role="cell" className="bt-tracking" data-label="Tracking">
                         <TrackingStatus tracking={r.tracking} nowMs={nowMs} staleMinutes={staleMinutes} />
+                        {serverTrackingNote(r)}
                       </td>
                       <td role="cell" className="bt-actions" data-label="Actions">
                         <div className="bt-action-group">
@@ -486,6 +523,7 @@ const AdminBreaks: React.FC = () => {
                 <div style={{ gridColumn: '1 / -1' }}>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Location tracking</div>
                   <TrackingStatus tracking={d.tracking} nowMs={nowMs} staleMinutes={staleMinutes} expanded />
+                  {serverTrackingNote(d, true)}
                 </div>
               </div>
             </div>
@@ -494,7 +532,7 @@ const AdminBreaks: React.FC = () => {
               <div role="note" style={{ marginBottom: '1rem', padding: '0.75rem', border: '1px solid var(--warning)', borderRadius: 'var(--radius-md)', fontSize: '0.8125rem' }}>
                 {sum.notes.map((n, i) => <div key={i}>{n}</div>)}
                 {sum.activeCount > 0 && ['STALE', 'LOCATION_PROBLEM', 'NO_DATA'].includes(d.tracking.state) && (
-                  <div>This employee's location is not updating, so a return to the office cannot be detected. The break stays open until a return is detected, the employee clocks out, or an admin ends it.</div>
+                  <div>This employee's location is not updating, so the end of the automatic break cannot be detected yet. It ends automatically when a fresh location reaches the server (or a return to the office is detected), when the employee clocks out, at shift end (tracking breaks), or when an admin ends it.</div>
                 )}
               </div>
             )}
@@ -523,8 +561,11 @@ const AdminBreaks: React.FC = () => {
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', marginBottom: session.id ? '0.75rem' : '0' }}>
                     <div>
                       {session.started_at ? formatTime(session.started_at) : '—'} → {session.state === 'ACTIVE' ? 'Now' : formatTime(session.ended_at)}
-                      {session.break_type === 'AUTO_GPS' && <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}> · automatic (GPS)</span>}
-                      {session.break_type === 'AUTO_TRACKING' && <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}> · automatic (tracking enforcement)</span>}
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                        {' · '}{breakSourceLabel(session).toLowerCase()}
+                        {isAutomaticBreak(session) && autoBreakReasonLabel(session) ? ` — ${autoBreakReasonLabel(session)}` : ''}
+                        {breakEndedReasonLabel(session) ? ` · ended: ${breakEndedReasonLabel(session).toLowerCase()}` : ''}
+                      </span>
                       {session.id && session.id in d.gapReturns && (
                         <div style={{ fontSize: '0.7rem', color: 'var(--warning)' }}>
                           Return seen only after a tracking gap (last location before: {formatTime(d.gapReturns[session.id])}). The actual return may have been earlier.

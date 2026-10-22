@@ -1,4 +1,8 @@
 /**
+ * NOTE (20261021120000): the app no longer uses these rules to start breaks. Automatic-break decisions
+ * are made by the database (report_tracking_event / process_stale_tracking); see
+ * src/services/attendance/automaticBreakRules.ts and docs/AUTOMATIC_BREAKS.md. Kept for reference / tests.
+ *
  * Pure rules for Tracking Warning and Automatic Break Policy.
  *
  * Requirements:

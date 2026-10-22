@@ -3,12 +3,9 @@ import type { Database } from '../../types/database';
 import { attendanceService } from './attendanceService';
 import { logBreakAudit } from './breakAudit';
 import { qaTimeService } from '../qa/qaTimeService';
-import { notificationService } from '../notifications/notificationService';
-import { autoBreakStarted, autoBreakEnded, trackingWarningAutoBreak } from '../notifications/notificationRules';
 import { breakDurationMinutes, classifyOpenBreaks, completedBreakMinutes, computeBreakOverrun, resolveAllowedBreakMinutes, statusAfterBreakEnds } from './breakRules';
-import { generateTrackingIncidentId, type TrackingViolationType } from '../location/trackingEnforcementRules';
+import { isAutomaticBreak, mapAutoBreakResult, type AutoBreakTransitionResult } from './automaticBreakRules';
 
-import { companyDateStr as companyDate } from '../../utils/companyDate';
 import { isReadingTimeAcceptable } from '../location/geofenceStability';
 import { isAdminPortalRole } from '../../lib/roles';
 
@@ -209,6 +206,9 @@ export const breakService = {
       return { data: null, error: new Error(error.message) };
     }
 
+    // The database sets the start time of a manual break (guard trigger); log the stored value
+    const startedAt: string = (newBreak as any)?.started_at || nowIso;
+
     // Audit: BREAK_STARTED
     const auditLogged = await logBreakAudit({
       action: 'BREAK_STARTED',
@@ -216,7 +216,7 @@ export const breakService = {
       entity_type: 'attendance_breaks',
       entity_id: (newBreak as any).id,
       description: `Employee started a ${breakType} break.`,
-      new_values: { attendance_id: attendanceId, break_type: breakType, started_at: nowIso }
+      new_values: { attendance_id: attendanceId, break_type: breakType, started_at: startedAt }
     });
 
     // Update Attendance status and add the event. The break already exists and is never removed
@@ -231,7 +231,7 @@ export const breakService = {
       attendance_id: attendanceId,
       employee_id: empId,
       event_type: 'BREAK_START',
-      event_at: nowIso,
+      event_at: startedAt,
       source: 'WEB'
     } as any);
     if (eventRes?.error) followUp.push(`break start event not logged (${eventRes.error.message})`);
@@ -276,10 +276,13 @@ export const breakService = {
       return { data: null, error: new Error('No active break found.') };
     }
     const activeBreak = open.active;
-    // An automatic (GPS) break ends only on a confirmed return inside, clock-out or an admin action
-    // (the employee screens never offer "End Break" for it; this keeps the service consistent).
-    if (activeBreak.break_type === 'AUTO_GPS') {
-      return { data: null, error: new Error('An automatic break ends when you are detected back in the office, or when you clock out.') };
+    // An automatic break (geofence or tracking) ends only on a confirmed return inside / a fresh
+    // location reaching the server, at clock-out, at shift end or by an admin. The employee screens
+    // never offer "End Break" for it, and the database refuses it as well.
+    if (isAutomaticBreak(activeBreak)) {
+      return { data: null, error: new Error(activeBreak.break_type === 'AUTO_GPS'
+        ? 'An automatic break ends when you are detected back in the office, or when you clock out.'
+        : 'This automatic break ends by itself as soon as a fresh location reaches WorkPulse, or when you clock out.') };
     }
 
     const nowIso = qaTimeService.getIsoString();
@@ -299,6 +302,9 @@ export const breakService = {
 
     if (error) return { data: null, error: new Error(error.message) };
     if (!updatedBreak) return { data: null, error: new Error('No active break found.') };
+    // The database sets the end time and duration of a manual break (guard trigger); log the stored values
+    const endedAt: string = (updatedBreak as any)?.ended_at || nowIso;
+    const storedMinutes: number = typeof (updatedBreak as any)?.duration_minutes === 'number' ? (updatedBreak as any).duration_minutes : durationMinutes;
 
     // Audit: BREAK_ENDED
     const auditLogged = await logBreakAudit({
@@ -306,8 +312,8 @@ export const breakService = {
       module: 'ATTENDANCE',
       entity_type: 'attendance_breaks',
       entity_id: (updatedBreak as any)?.id || activeBreak.id,
-      description: `Employee ended break. Duration: ${durationMinutes} minutes.`,
-      new_values: { attendance_id: attendanceId, duration_minutes: durationMinutes, ended_at: nowIso }
+      description: `Employee ended break. Duration: ${storedMinutes} minutes.`,
+      new_values: { attendance_id: attendanceId, duration_minutes: storedMinutes, ended_at: endedAt }
     });
 
     // 3. Update attendance totals from the stored breaks (sum of actual durations) and status.
@@ -320,7 +326,7 @@ export const breakService = {
       attendance_id: attendanceId,
       employee_id: empId,
       event_type: 'BREAK_END',
-      event_at: nowIso,
+      event_at: endedAt,
       source: 'WEB'
     } as any);
 
@@ -545,12 +551,12 @@ export const breakService = {
    *   still be open after midnight); live locations and failed location checks are loaded only then.
    */
   async getBreakReportContext(dateStr: string, loadTracking: boolean): Promise<{
-    employees: any[] | null; liveLocations: any[] | null; locationProblems: any[] | null; breakEndEvents: any[] | null; errors: string[];
+    employees: any[] | null; liveLocations: any[] | null; locationProblems: any[] | null; breakEndEvents: any[] | null; trackingStates: any[] | null; errors: string[];
   }> {
     const dayStartMs = new Date(`${dateStr}T00:00:00+05:30`).getTime();
     const dayStartIso = new Date(dayStartMs).toISOString();
     const none = Promise.resolve({ data: null, error: null } as any);
-    const [employees, live, problems, endEvents] = await Promise.all([
+    const [employees, live, problems, endEvents, states] = await Promise.all([
       supabase.from('employees').select('id, employee_code, first_name, last_name, status, joining_date, departments(name), role:role_id(name)') as any,
       // updated_at = server time of the last write (trigger), used with last_seen_at for freshness
       loadTracking ? supabase.from('employee_live_locations').select('employee_id, location_status, location_context, last_seen_at, updated_at') as any : none,
@@ -568,12 +574,18 @@ export const breakService = {
         .eq('event_type', 'BREAK_END')
         .gte('event_at', dayStartIso)
         .lt('event_at', new Date(dayStartMs + 2 * 86_400_000).toISOString()),
+      // Server-maintained tracking state (automatic breaks): today / open overnight shift only
+      loadTracking
+        ? (supabase.from('employee_tracking_state') as any)
+            .select('employee_id, attendance_id, state, state_since, work_mode, last_fresh_fix_at, last_contact_at, last_problem, last_problem_at, last_reconnect_at, reported_offline_seconds, open_auto_break_id')
+        : none,
     ]);
     const errors: string[] = [];
     if (employees.error) errors.push(`Employee list could not be loaded (${employees.error.message}); employees without attendance are not listed.`);
     if (live.error) errors.push(`Location tracking status could not be loaded (${live.error.message}).`);
     if (problems.error) errors.push(`Location problems could not be loaded (${problems.error.message}).`);
     if (endEvents.error) errors.push(`Break end details could not be loaded (${endEvents.error.message}); returns after a tracking gap are not flagged.`);
+    if (states?.error) errors.push(`Server tracking status could not be loaded (${states.error.message}).`);
     // Supabase returns at most 1000 rows per request by default: a full page may be a truncated list
     if (!employees.error && (employees.data || []).length >= 1000) errors.push('The employee list reached the 1000-row API limit and may be incomplete.');
     return {
@@ -581,6 +593,7 @@ export const breakService = {
       liveLocations: !loadTracking || live.error ? null : (live.data || []),
       locationProblems: !loadTracking || problems.error ? null : (problems.data || []),
       breakEndEvents: endEvents.error ? null : (endEvents.data || []),
+      trackingStates: !loadTracking || states?.error ? null : (states?.data || []),
       errors,
     };
   },
@@ -611,406 +624,34 @@ export const breakService = {
   },
 
   /**
-   * Handle automatic break transitions based on confirmed GPS geofence exits/entries.
-   * START: outside transition while clocked in (office mode) -> AUTO_GPS break from the transition time.
-   * END: return transition -> close the active AUTO_GPS break at the return time.
-   * Never clocks the employee out. WFH attendance never gets AUTO_GPS breaks.
+   * Automatic break on a confirmed GPS geofence exit / return (AUTO_GPS).
+   * The inside/outside decision is made on this device (debounced, stored in employee_live_locations);
+   * the break itself is created / closed by the database function geofence_auto_break with database
+   * time, server-side checks (open attendance incl. overnight shifts, WFH incl. roster WFH, shift end,
+   * one open break) and the employee notification. Never clocks the employee out.
+   * The device transition time is only used to drop delayed / fabricated readings, never as break time.
    */
   async handleAutoBreakTransition(
     empId: string, transition: 'START' | 'END', timestamp: string,
     opts: { isWfhContext?: boolean; trackingGap?: { lastSeenAt: string } } = {},
-  ) {
-    const today = companyDate(new Date().toISOString());
-    const yesterday = companyDate(new Date(Date.now() - 86400000).toISOString());
-
-    // The transition time comes from the device: never trust an unparseable, delayed or future time.
-    // (QA fast mode deliberately back-dates transitions and is exempt; it never runs in normal builds.)
+  ): Promise<AutoBreakTransitionResult> {
+    void empId; // the server identifies the employee from the session
     const transitionMs = new Date(timestamp).getTime();
     if (!Number.isFinite(transitionMs)) return { action: 'ERROR', reason: 'INVALID_TRANSITION_TIME' };
     if (!qaTimeService.isEnabled && !isReadingTimeAcceptable(transitionMs, Date.now())) {
       return { action: 'ERROR', reason: 'TRANSITION_TIME_OUT_OF_WINDOW' };
     }
-
-    // 1. Open attendance for today (or an overnight shift that started yesterday)
-    const { data: attendance, error: attendanceErr } = await supabase
-      .from('attendance')
-      .select('id, status, late_minutes, break_minutes, break_overrun_minutes, attendance_date, clock_in_at, clock_out_at, shift_template:shift_template_id(crosses_midnight)')
-      .eq('employee_id', empId)
-      .is('clock_out_at', null)
-      .in('attendance_date', [today, yesterday])
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle() as any;
-
-    // A failed read is not "not clocked in"
-    if (attendanceErr) return { action: 'ERROR', reason: `ATTENDANCE_CHECK_FAILED: ${attendanceErr.message}` };
-    if (!attendance || !attendance.clock_in_at) return { action: 'NONE', reason: 'NOT_CLOCKED_IN' };
-    if (attendance.attendance_date !== today && !attendance.shift_template?.crosses_midnight) return { action: 'NONE', reason: 'STALE_OPEN_ATTENDANCE' };
-
-    // A transition before clock-in belongs to no attendance
-    const atIso = new Date(Math.max(transitionMs, new Date(attendance.clock_in_at).getTime())).toISOString();
-
-    // A failed check never counts as "no active break", and two or more open breaks are an
-    // integrity problem: in both cases no break is inserted (and none is closed).
-    const openRes = await supabase
-      .from('attendance_breaks')
-      .select('id, started_at, break_type')
-      .eq('attendance_id', attendance.id)
-      .is('ended_at', null) as any;
-    const open = classifyOpenBreaks<any>(openRes?.data, openRes?.error);
-    if (open.kind === 'ERROR') return { action: 'ERROR', reason: `ACTIVE_BREAK_CHECK_FAILED: ${open.message}` };
-    if (open.kind === 'MULTIPLE') {
-      const auditLogged = await logBreakAudit({
-        action: 'MULTIPLE_ACTIVE_BREAKS_DETECTED',
-        module: 'ATTENDANCE',
-        entity_type: 'attendance',
-        entity_id: attendance.id,
-        description: `${open.count} open breaks found for one attendance; automatic break ${transition} was not applied.`,
-      });
-      return { action: 'ERROR', reason: 'MULTIPLE_ACTIVE_BREAKS', count: open.count, auditLogged };
-    }
-    const activeBreak = open.kind === 'ONE' ? open.active : null;
-
-    if (transition === 'START') {
-      if (activeBreak) {
-        // no duplicate active breaks; a retry after a partial start repairs the status
-        if (attendance.status !== 'ON_BREAK') {
-          // @ts-ignore
-          const fix: any = await supabase.from('attendance').update({ status: 'ON_BREAK' } as any).eq('id', attendance.id);
-          if (fix?.error) return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE', statusRepaired: false, statusError: fix.error.message };
-          return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE', statusRepaired: true };
-        }
-        return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' };
-      }
-      if (opts.isWfhContext) return { action: 'NONE', reason: 'WFH' };
-
-      // A failed WFH check is not "no WFH": without knowing, no automatic break is started
-      const { data: wfhData, error: wfhError } = await supabase
-        .from('wfh_requests')
-        .select('id')
-        .eq('employee_id', empId)
-        .eq('request_date', attendance.attendance_date)
-        .eq('status', 'APPROVED')
-        .maybeSingle();
-      if (wfhError) return { action: 'ERROR', reason: `WFH_CHECK_FAILED: ${wfhError.message}` };
-      if (wfhData) return { action: 'NONE', reason: 'WFH' };
-
-      const { data: newBreak, error } = await supabase
-        .from('attendance_breaks')
-        .insert({ attendance_id: attendance.id, employee_id: empId, break_type: 'AUTO_GPS', started_at: atIso } as any)
-        .select()
-        .single();
-
-      // Another tab/device created the active break first: keep that one, log nothing twice
-      if (isUniqueViolation(error)) return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' };
-      if (error || !newBreak) return { action: 'ERROR', reason: error?.message };
-
-      // Follow-up writes are checked; the break is kept even if one fails (the next exit repairs the status)
-      const followUp: string[] = [];
-      // @ts-ignore
-      const statusRes: any = await supabase.from('attendance').update({ status: 'ON_BREAK' } as any).eq('id', attendance.id);
-      if (statusRes?.error) followUp.push(`STATUS_NOT_UPDATED: ${statusRes.error.message}`);
-      const eventRes: any = await supabase.from('attendance_events').insert({
-        attendance_id: attendance.id, employee_id: empId, event_type: 'BREAK_START', event_at: atIso, source: 'SYSTEM',
-        metadata: { trigger: 'GPS_GEOFENCE', break_type: 'AUTO_GPS', break_id: (newBreak as any).id },
-      } as any);
-      if (eventRes?.error) followUp.push(`EVENT_NOT_LOGGED: ${eventRes.error.message}`);
-      if (followUp.length) console.error('[AUTO BREAK] started with follow-up failures', (newBreak as any).id, followUp.join('; '));
-
-      const auditLogged = await logBreakAudit({
-        action: 'AUTOMATIC_BREAK_STARTED',
-        module: 'ATTENDANCE',
-        entity_type: 'attendance_breaks',
-        entity_id: (newBreak as any).id,
-        description: `Automatic GPS break started at ${new Date(atIso).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}.`,
-      });
-      // Only the request that actually created the break notifies (jitter / second tab never reach here)
-      await notificationService.notifyEmployee(empId, autoBreakStarted({ breakId: (newBreak as any).id }));
-      if (followUp.length) return { action: 'STARTED', breakId: (newBreak as any).id, complete: false, reason: followUp.join('; '), auditLogged };
-      return { action: 'STARTED', breakId: (newBreak as any).id, complete: true, auditLogged };
-    }
-
-    // END: only an automatic break is closed by returning inside (manual breaks are ended by the employee)
-    if (!activeBreak) {
-      // Nothing is open: repair a stale attendance left by an earlier partial end (writes only if stale)
-      const rec = await reconcileIfStale(attendance.id, attendance);
-      return { action: 'NONE', reason: 'NO_ACTIVE_AUTO_BREAK', reconciled: rec.reconciled, ...(rec.changed ? { repaired: true } : {}) };
-    }
-    if (!activeBreak || activeBreak.break_type !== 'AUTO_GPS') return { action: 'NONE', reason: 'NO_ACTIVE_AUTO_BREAK' };
-
-    const endIso = new Date(Math.max(new Date(atIso).getTime(), new Date(activeBreak.started_at).getTime())).toISOString();
-    const durationMinutes = breakDurationMinutes(activeBreak.started_at, endIso);
-
-    const { data: updatedBreak, error } = await supabase
-      .from('attendance_breaks')
-      // @ts-ignore
-      .update({ ended_at: endIso, duration_minutes: durationMinutes } as any)
-      .eq('id', activeBreak.id)
-      .is('ended_at', null)
-      .select()
-      .maybeSingle();
-    if (error) return { action: 'ERROR', reason: error.message };
-    // Closed in the meantime (other tab / device, clock-out, admin): its end time is kept, nothing logged twice
-    if (!updatedBreak) return { action: 'NONE', reason: 'BREAK_ALREADY_ENDED' };
-
-    const totals = await recalculateBreakTotals(attendance.id);
-    const saved = await applyBreakTotals(attendance.id, totals);
-    const endEventRes: any = await supabase.from('attendance_events').insert({
-      attendance_id: attendance.id, employee_id: empId, event_type: 'BREAK_END', event_at: endIso, source: 'SYSTEM',
-      metadata: {
-        trigger: 'GPS_GEOFENCE', break_type: 'AUTO_GPS', break_id: activeBreak.id, duration_minutes: durationMinutes,
-        // Return seen only after the device stopped reporting: the real return time is unknown (≤ end time)
-        ...(opts.trackingGap ? { tracking_gap: true, last_seen_before_return: opts.trackingGap.lastSeenAt } : {}),
-      },
-    } as any);
-
-    const auditLogged = await logBreakAudit({
-      action: 'AUTOMATIC_BREAK_ENDED',
-      module: 'ATTENDANCE',
-      entity_type: 'attendance_breaks',
-      entity_id: activeBreak.id,
-      description: `Automatic GPS break ended. Duration: ${durationMinutes}m.${opts.trackingGap ? ' Return detected after a location tracking gap; the actual return may have been earlier.' : ''}`,
-    });
-    let overrunAuditLogged = true;
-    if (totals.ok && saved.totalsSaved && totals.overrun > 0) {
-      overrunAuditLogged = await logBreakAudit({
-        action: 'BREAK_OVERRUN_DETECTED',
-        module: 'ATTENDANCE',
-        entity_type: 'attendance',
-        entity_id: attendance.id,
-        description: `Break overrun detected: ${totals.overrun} minutes (allowed ${totals.allowed}, actual ${totals.actual}).`,
-      });
-    }
-    await notificationService.notifyEmployee(empId, autoBreakEnded({ breakId: activeBreak.id, minutes: durationMinutes }));
-    // totalsUpdated is true only when the write itself succeeded
-    const eventLogged = !endEventRes?.error;
-    const allAudited = auditLogged && overrunAuditLogged;
-    const gap = opts.trackingGap ? { trackingGap: true } : {};
-    if (!saved.totalsSaved || !totals.ok) {
-      const code = totals.ok ? 'TOTALS_NOT_SAVED' : 'TOTALS_NOT_RECALCULATED';
-      return { action: 'ENDED', breakId: activeBreak.id, durationMinutes, complete: false, totalsUpdated: false, statusUpdated: saved.statusSaved, eventLogged, auditLogged: allAudited, ...gap,
-        reason: `BREAK_TOTALS_NOT_UPDATED: ${saved.error?.message || 'unknown error'} [${code}]${eventLogged ? '' : `; EVENT_NOT_LOGGED: ${endEventRes.error.message}`}` };
-    }
-    if (!eventLogged) {
-      console.error('[AUTO BREAK] end event not logged', activeBreak.id, endEventRes.error.message);
-      return { action: 'ENDED', breakId: activeBreak.id, durationMinutes, complete: false, totalsUpdated: true, statusUpdated: true, eventLogged, auditLogged: allAudited, ...gap,
-        actual: totals.actual, allowed: totals.allowed, overrun: totals.overrun, statusAfterBreak: totals.statusAfterBreak, reason: `EVENT_NOT_LOGGED: ${endEventRes.error.message}` };
-    }
-    return { action: 'ENDED', breakId: activeBreak.id, durationMinutes, complete: true, totalsUpdated: true, statusUpdated: true, eventLogged, auditLogged: allAudited, ...gap, actual: totals.actual, allowed: totals.allowed, overrun: totals.overrun, statusAfterBreak: totals.statusAfterBreak };
-  },
-
-  /**
-   * Handle tracking-enforcement automatic break initiation.
-   * Immediately starts an automatic break when a tracking violation is confirmed,
-   * sending warnings to the employee and admin in the same workflow.
-   * Enforces all concurrency and duplicate safeguards (at most one active break,
-   * idempotent, checks DB state directly).
-   */
-  async handleTrackingEnforcementBreak(params: {
-    employeeId: string;
-    violationType: TrackingViolationType;
-    reason: string;
-    incidentId?: string;
-    serverTimestamp?: string;
-  }): Promise<{
-    action: 'STARTED' | 'NONE' | 'ERROR';
-    breakId?: string;
-    incidentId?: string;
-    reason?: string;
-    warningSent?: boolean;
-    adminNotified?: boolean;
-    complete?: boolean;
-    auditLogged?: boolean;
-  }> {
-    const today = companyDate(new Date().toISOString());
-    const yesterday = companyDate(new Date(Date.now() - 86400000).toISOString());
-    const nowIso = params.serverTimestamp || new Date().toISOString();
-
-    // 1. Open attendance for today (or an overnight shift that started yesterday)
-    const { data: attendance, error: attendanceErr } = await supabase
-      .from('attendance')
-      .select('id, status, late_minutes, break_minutes, break_overrun_minutes, attendance_date, clock_in_at, clock_out_at, shift_template:shift_template_id(crosses_midnight), employee:employee_id(id, first_name, last_name, employee_code)')
-      .eq('employee_id', params.employeeId)
-      .is('clock_out_at', null)
-      .in('attendance_date', [today, yesterday])
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle() as any;
-
-    if (attendanceErr) return { action: 'ERROR', reason: `ATTENDANCE_CHECK_FAILED: ${attendanceErr.message}` };
-    if (!attendance || !attendance.clock_in_at) return { action: 'NONE', reason: 'NOT_CLOCKED_IN' };
-    if (attendance.attendance_date !== today && !attendance.shift_template?.crosses_midnight) return { action: 'NONE', reason: 'STALE_OPEN_ATTENDANCE' };
-
-    // 2. Check WFH status
-    const { data: wfhData, error: wfhError } = await supabase
-      .from('wfh_requests')
-      .select('id')
-      .eq('employee_id', params.employeeId)
-      .eq('request_date', attendance.attendance_date)
-      .eq('status', 'APPROVED')
-      .maybeSingle();
-
-    if (wfhError) return { action: 'ERROR', reason: `WFH_CHECK_FAILED: ${wfhError.message}` };
-    if (wfhData) return { action: 'NONE', reason: 'WFH_EXEMPT' };
-
-    // 3. Concurrency check: check active breaks in DB
-    const openRes = await supabase
-      .from('attendance_breaks')
-      .select('id, started_at, break_type')
-      .eq('attendance_id', attendance.id)
-      .is('ended_at', null) as any;
-
-    const open = classifyOpenBreaks<any>(openRes?.data, openRes?.error);
-    if (open.kind === 'ERROR') return { action: 'ERROR', reason: `ACTIVE_BREAK_CHECK_FAILED: ${open.message}` };
-    if (open.kind === 'MULTIPLE') {
-      const auditLogged = await logBreakAudit({
-        action: 'MULTIPLE_ACTIVE_BREAKS_DETECTED',
-        module: 'ATTENDANCE',
-        entity_type: 'attendance',
-        entity_id: attendance.id,
-        description: `${open.count} open breaks found for one attendance; tracking enforcement break was not applied.`,
-      });
-      return { action: 'ERROR', reason: 'MULTIPLE_ACTIVE_BREAKS', auditLogged };
-    }
-
-    if (open.kind === 'ONE') {
-      // Break already active: repair status if needed and return idempotently
-      if (attendance.status !== 'ON_BREAK') {
-        // @ts-ignore
-        await supabase.from('attendance').update({ status: 'ON_BREAK' } as any).eq('id', attendance.id);
-      }
-      return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' };
-    }
-
-    // 4. Incident identifier
-    const incidentId = params.incidentId || generateTrackingIncidentId(params.employeeId, attendance.id, Date.now());
-
-    // 5. Attempt warning notifications (non-blocking for break creation)
-    let warningSent = false;
+    if (transition === 'START' && opts.isWfhContext) return { action: 'NONE', reason: 'WFH' };
     try {
-      const warning = trackingWarningAutoBreak({
-        incidentId,
-        reason: params.reason,
-        timestamp: nowIso,
+      const { data, error } = await (supabase as any).rpc('geofence_auto_break', {
+        p_transition: transition,
+        p_tracking_gap_last_seen: opts.trackingGap?.lastSeenAt ?? null,
       });
-      const notifyRes = await notificationService.notifyEmployee(params.employeeId, warning, {
-        incident_id: incidentId,
-        violation_type: params.violationType,
-      });
-      warningSent = !notifyRes.error && !notifyRes.skipped;
+      if (error) return { action: 'ERROR', reason: `SERVER_REFUSED: ${error.message}` };
+      return mapAutoBreakResult(data);
     } catch (e: any) {
-      console.error('[TRACKING ENFORCEMENT] Employee warning notification failed:', e);
+      return { action: 'ERROR', reason: `SERVER_UNREACHABLE: ${e?.message || e}` };
     }
-
-    // 6. Initiate automatic break immediately in the same workflow
-    // @ts-ignore
-    const { data: newBreak, error: breakErr } = await supabase
-      .from('attendance_breaks')
-      .insert({
-        attendance_id: attendance.id,
-        employee_id: params.employeeId,
-        break_type: 'AUTO_TRACKING',
-        started_at: nowIso,
-        ended_at: null,
-      } as any)
-      .select()
-      .single();
-
-    if (isUniqueViolation(breakErr)) {
-      return { action: 'NONE', reason: 'BREAK_ALREADY_ACTIVE' };
-    }
-    if (breakErr || !newBreak) {
-      return { action: 'ERROR', reason: breakErr?.message || 'FAILED_TO_CREATE_BREAK' };
-    }
-
-    // 7. Follow-up state updates
-    const followUp: string[] = [];
-    // @ts-ignore
-    const statusRes: any = await supabase.from('attendance').update({ status: 'ON_BREAK' } as any).eq('id', attendance.id);
-    if (statusRes?.error) followUp.push(`STATUS_NOT_UPDATED: ${statusRes.error.message}`);
-
-    const eventRes: any = await supabase.from('attendance_events').insert({
-      attendance_id: attendance.id,
-      employee_id: params.employeeId,
-      event_type: 'BREAK_START',
-      event_at: nowIso,
-      source: 'SYSTEM',
-      metadata: {
-        trigger: 'TRACKING_ENFORCEMENT',
-        break_type: 'AUTO_TRACKING',
-        break_id: (newBreak as any).id,
-        incident_id: incidentId,
-        violation_type: params.violationType,
-        reason: params.reason,
-      },
-    } as any);
-    if (eventRes?.error) followUp.push(`EVENT_NOT_LOGGED: ${eventRes.error.message}`);
-
-    // 8. Audit logging
-    const auditLogged = await logBreakAudit({
-      action: 'AUTOMATIC_BREAK_STARTED',
-      module: 'ATTENDANCE',
-      entity_type: 'attendance_breaks',
-      entity_id: (newBreak as any).id,
-      description: `Automatic tracking enforcement break started. Reason: ${params.reason}. Incident ID: ${incidentId}.`,
-      new_values: {
-        incident_id: incidentId,
-        break_type: 'AUTO_TRACKING',
-        started_at: nowIso,
-        violation_type: params.violationType,
-      },
-    });
-
-    // 9. Admin alert
-    let adminNotified = false;
-    try {
-      const empData = attendance.employee || {};
-      const empName = `${empData.first_name || 'Employee'} ${empData.last_name || ''}`.trim() || 'Employee';
-      const empCode = empData.employee_code || 'Unknown';
-      await notificationService.notifyAdmins({
-        notification_type: 'AUTOMATIC_BREAK',
-        title: `Tracking Enforcement: ${empName}`,
-        message: `Automatic break started for ${empName} (${empCode}) due to tracking violation: ${params.reason}. Incident ID: ${incidentId}.`,
-        priority: 'HIGH',
-        action_url: '/admin/live-tracking',
-        entity_type: 'attendance_breaks',
-        entity_id: (newBreak as any).id,
-        metadata: {
-          incident_id: incidentId,
-          break_id: (newBreak as any).id,
-          employee_id: params.employeeId,
-          violation_type: params.violationType,
-          reason: params.reason,
-        },
-      });
-      adminNotified = true;
-    } catch (e: any) {
-      console.error('[TRACKING ENFORCEMENT] Admin notification failed:', e);
-    }
-
-    if (followUp.length) {
-      console.error('[TRACKING ENFORCEMENT] Started with follow-up warnings:', (newBreak as any).id, followUp.join('; '));
-      return {
-        action: 'STARTED',
-        breakId: (newBreak as any).id,
-        incidentId,
-        warningSent,
-        adminNotified,
-        complete: false,
-        reason: followUp.join('; '),
-        auditLogged,
-      };
-    }
-
-    return {
-      action: 'STARTED',
-      breakId: (newBreak as any).id,
-      incidentId,
-      warningSent,
-      adminNotified,
-      complete: true,
-      auditLogged,
-    };
   },
 
   /**

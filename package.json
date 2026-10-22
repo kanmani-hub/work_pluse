@@ -19,7 +19,12 @@
     "test:responsive": "playwright test -c playwright.responsive.config.ts",
     "preview": "vite preview",
     "preview:local": "vite preview --mode localdev",
-    "preview:staging": "vite preview --mode staging"
+    "preview:staging": "vite preview --mode staging",
+    "server:dev": "npm --prefix server run dev",
+    "server:build": "npm --prefix server run build",
+    "server:test": "npm --prefix server test",
+    "redis:up": "docker compose up -d redis",
+    "redis:down": "docker compose down"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

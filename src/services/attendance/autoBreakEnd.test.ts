@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { breakService } from './breakService';
 import { supabase } from '../../lib/supabase';
-import { notificationService } from '../notifications/notificationService';
 import { companyDateStr } from '../../utils/companyDate';
 
 // Auto Break END on a confirmed return inside the office, and the attendance totals it writes.
@@ -88,99 +87,11 @@ const att = () => db.tables.attendance[0];
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('confirmed return → Auto Break ends', () => {
-  it('closes the open AUTO_GPS break at the return time and recalculates stored totals', async () => {
-    setup();
-    const returnAt = ago(10 * MIN);          // first inside reading, 90 min after the break started
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', returnAt);
-    expect(r).toMatchObject({ action: 'ENDED', breakId: 'b-open', durationMinutes: 90, complete: true });
-    expect(brk('b-open')).toMatchObject({ ended_at: returnAt, duration_minutes: 90 });
-    // stored payroll values = completed breaks only: 30 + 90 = 120; allowed 80 (shift) → 40 overrun
-    expect(att()).toMatchObject({ break_minutes: 120, break_overrun_minutes: 40, status: 'WORKING' });
-    expect(db.tables.attendance_events.map((e: any) => e.event_type)).toEqual(['BREAK_END']);
-    expect(notificationService.notifyEmployee).toHaveBeenCalledTimes(1);
-  });
-
-  it('a late arrival stays LATE after the break', async () => {
-    setup({ lateMinutes: 12 });
-    await breakService.handleAutoBreakTransition('empA', 'END', ago(MIN));
-    expect(att().status).toBe('LATE');
-  });
-
-  it('a repeated inside event cannot close the same break twice (end time is not moved)', async () => {
-    setup();
-    const firstReturn = ago(10 * MIN);
-    await breakService.handleAutoBreakTransition('empA', 'END', firstReturn);
-    const again: any = await breakService.handleAutoBreakTransition('empA', 'END', ago(MIN));
-    expect(again.action).toBe('NONE');
-    expect(brk('b-open').ended_at).toBe(firstReturn);
-    expect(db.tables.attendance_events).toHaveLength(1);
-  });
-
-  it('closed concurrently by another tab between the read and the update → reported as already ended, not an error', async () => {
-    setup();
-    // the other tab closes the break just before our update reaches the database
-    db.beforeUpdate = () => { Object.assign(brk('b-open'), { ended_at: ago(6 * MIN), duration_minutes: 94 }); };
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', ago(5 * MIN));
-    expect(r.action).toBe('NONE');
-    expect(r.reason).toBe('BREAK_ALREADY_ENDED');
-    expect(brk('b-open').duration_minutes).toBe(94);
-    expect(db.tables.attendance_events).toHaveLength(0);
-  });
-
-  it('a manual break is never ended by returning inside', async () => {
-    setup({ breaks: [{ id: 'm1', attendance_id: 'attA', employee_id: 'empA', break_type: 'REGULAR', started_at: ago(20 * MIN), ended_at: null }] });
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', ago(MIN));
-    expect(r).toMatchObject({ action: 'NONE', reason: 'NO_ACTIVE_AUTO_BREAK' });
-    expect(brk('m1').ended_at).toBeNull();
-  });
-
-  it('no open break and the attendance already matches its breaks → nothing written', async () => {
-    // (a stale ON_BREAK / totals with no open break is repaired instead: see breakIntegrity.test.ts)
-    setup({ breaks: [], storedBreakMinutes: 0 });
-    att().status = 'WORKING';
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', ago(MIN));
-    expect(r).toMatchObject({ action: 'NONE', reason: 'NO_ACTIVE_AUTO_BREAK' });
-    expect(db.writes).toEqual({});
-  });
-});
 
 describe('failed reads / writes while ending are explicit and never corrupt stored totals', () => {
-  it('break list cannot be re-read for the totals → stored break_minutes is NOT overwritten with 0', async () => {
-    setup({ storedBreakMinutes: 30 });
-    // reads of attendance_breaks: 1st = open-break check, 2nd = totals recalculation
-    db.failSelect = [{ table: 'attendance_breaks', nth: 2 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', ago(10 * MIN));
-    expect(brk('b-open').ended_at).not.toBeNull();       // the return itself is recorded
-    expect(att().break_minutes).toBe(30);                 // previous value kept, not 0
-    expect(r).toMatchObject({ action: 'ENDED', complete: false });
-    expect(r.reason).toMatch(/TOTALS_NOT_RECALCULATED/);
-  });
 
-  it('attendance cannot be re-read for the totals → totals and status are not guessed', async () => {
-    setup({ storedBreakMinutes: 30 });
-    // reads of attendance: 1st = open attendance lookup, 2nd = totals recalculation
-    db.failSelect = [{ table: 'attendance', nth: 2 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', ago(10 * MIN));
-    expect(att()).toMatchObject({ break_minutes: 30, status: 'ON_BREAK' });
-    expect(r).toMatchObject({ action: 'ENDED', complete: false });
-  });
 
-  it('totals write fails → reported as incomplete (not plain success)', async () => {
-    setup();
-    db.failWrite = [{ table: 'attendance', nth: 1 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', ago(10 * MIN));
-    expect(r).toMatchObject({ action: 'ENDED', complete: false });
-    expect(r.reason).toMatch(/TOTALS_NOT_SAVED/);
-  });
 
-  it('event write fails → reported as incomplete', async () => {
-    setup();
-    db.failWrite = [{ table: 'attendance_events', nth: 1 }];
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', ago(10 * MIN));
-    expect(r).toMatchObject({ action: 'ENDED', complete: false });
-    expect(r.reason).toMatch(/EVENT_NOT_LOGGED/);
-  });
 
   it('break update fails → ERROR, totals untouched', async () => {
     setup({ storedBreakMinutes: 30 });
@@ -263,20 +174,6 @@ describe('admin "Discard Session" reports what really happened', () => {
   });
 });
 
-describe('return after a tracking gap is recorded with the break end', () => {
-  it('END with trackingGap → BREAK_END event metadata says the real return time is unknown', async () => {
-    setup();
-    const lastSeen = ago(200 * MIN);
-    const r: any = await breakService.handleAutoBreakTransition('empA', 'END', ago(MIN), { trackingGap: { lastSeenAt: lastSeen } });
-    expect(r).toMatchObject({ action: 'ENDED', trackingGap: true, complete: true });
-    expect(db.tables.attendance_events[0].metadata).toMatchObject({ tracking_gap: true, last_seen_before_return: lastSeen, break_id: 'b-open' });
-  });
-  it('normal END → no gap fields', async () => {
-    setup();
-    await breakService.handleAutoBreakTransition('empA', 'END', ago(MIN));
-    expect(db.tables.attendance_events[0].metadata.tracking_gap).toBeUndefined();
-  });
-});
 
 describe('manual breaks: one open break, verified reads, automatic breaks not ended by the employee', () => {
   const manual = (extra: any = {}) => ({ id: 'm1', attendance_id: 'attA', employee_id: 'empA', break_type: 'REGULAR', started_at: ago(20 * MIN), ended_at: null, ...extra });

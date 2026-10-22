@@ -15,6 +15,8 @@ import { locationService } from '../../services/location/locationService';
 import { supabase } from '../../lib/supabase';
 import { qaTimeService } from '../../services/qa/qaTimeService';
 import { computeWorkTimer, findActiveBreak, resolveAllowedBreakMinutes, completedBreakMinutes } from '../../services/attendance/breakRules';
+import { isAutomaticBreak, autoBreakReasonLabel, recoveryInstruction, trackingStateView } from '../../services/attendance/automaticBreakRules';
+import { trackingEnforcementService } from '../../services/location/trackingEnforcementService';
 import { companyDateStr, COMPANY_TIMEZONE } from '../../utils/companyDate';
 import { useAuth } from '../../context/AuthContext';
 import { employeeService, type EmployeeWithRelations } from '../../services/employees/employeeService';
@@ -153,6 +155,8 @@ const EmployeeDashboard: React.FC = () => {
   // This device's GPS watcher state (permission denied / no fix), from locationService
   const [trackingStatus, setTrackingStatus] = useState<string>(() => locationService.getTrackingState().status);
   useEffect(() => locationService.onTrackingStateChange(st => setTrackingStatus(st.status)), []);
+  // Server-maintained tracking state (employee_tracking_state): what the automatic-break rules see
+  const [serverTracking, setServerTracking] = useState<any>(null);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentDate(new Date()), 1000);
@@ -183,6 +187,7 @@ const EmployeeDashboard: React.FC = () => {
         .eq('employee_id', empId)
         .maybeSingle()
         .then(({ data }: any) => { if (!cancelled) setLiveLocation(data ?? null); });
+      trackingEnforcementService.getMyTrackingState(empId).then(({ data }) => { if (!cancelled) setServerTracking(data); });
 
       // One channel per mount, removed on unmount (the cleanup used to be returned from
       // inside .then(), so it never ran and every visit added another subscription).
@@ -222,6 +227,19 @@ const EmployeeDashboard: React.FC = () => {
             if (payload.eventType === 'DELETE') setLiveLocation(null);
             else if (payload.new) setLiveLocation(payload.new);
           }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'employee_tracking_state', filter: `employee_id=eq.${empId}` },
+          (payload: any) => {
+            setServerTracking(payload.eventType === 'DELETE' ? null : payload.new ?? null);
+            fetchTodayAttendance();   // an automatic break may have started or ended on the server
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'attendance_breaks', filter: `employee_id=eq.${empId}` },
+          () => { fetchTodayAttendance(); }
         )
         .subscribe();
     });
@@ -432,9 +450,9 @@ const EmployeeDashboard: React.FC = () => {
       alert("Your shift assignment is not available for the current time.");
       return;
     }
-    // A manual break must be ended first; an automatic (GPS) break is closed by the clock-out itself
+    // A manual break must be ended first; an automatic break (geofence or tracking) is closed by the clock-out itself
     const active = findActiveBreak(todayBreaks);
-    if (action === 'out' && active && active.break_type !== 'AUTO_GPS') {
+    if (action === 'out' && active && !isAutomaticBreak(active)) {
       alert("Please end your active break before clocking out.");
       return;
     }
@@ -743,8 +761,13 @@ const EmployeeDashboard: React.FC = () => {
                 <>
                   <div style={{ color: 'var(--warning)', marginBottom: '0.5rem', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
                     <Coffee size={16} />
-                    {activeBreak?.break_type === 'AUTO_GPS' ? 'AUTOMATIC BREAK' : 'MANUAL BREAK'}
+                    {isAutomaticBreak(activeBreak) ? 'AUTOMATIC BREAK' : 'MANUAL BREAK'}
                   </div>
+                  {isAutomaticBreak(activeBreak) && autoBreakReasonLabel(activeBreak) && (
+                    <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                      Reason: <strong>{autoBreakReasonLabel(activeBreak)}</strong>
+                    </div>
+                  )}
                   <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
                     Clock In {formatCompanyTime(attendanceRecord?.clock_in_at)}{activeBreak?.started_at ? ` · Break started ${formatCompanyTime(activeBreak.started_at)}` : ''}
                   </div>
@@ -757,16 +780,16 @@ const EmployeeDashboard: React.FC = () => {
                   <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
                     {(() => { const allowed = resolveAllowedBreakMinutes(attendanceRecord?.shift_template?.break_duration_minutes ?? currentShift?.break_duration_minutes, appSettings?.breakDurationMins); return allowed !== null ? `Allowed: ${allowed} mins` : ''; })()}
                   </div>
-                  {activeBreak?.break_type !== 'AUTO_GPS' ? (
+                  {!isAutomaticBreak(activeBreak) ? (
                     <button onClick={confirmBreak} disabled={breakBusy} className="btn btn-primary" style={{ width: '100%', padding: '1rem', fontSize: '1.125rem', borderRadius: 'var(--radius-full)' }}>
                       End Break
                     </button>
                   ) : (
                     <>
-                      <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '1rem' }}>
-                        Break will automatically end when you return to the office. If you are leaving for the day, you can clock out now.
+                      <div role="status" style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '1rem' }}>
+                        {recoveryInstruction(activeBreak)} If you are leaving for the day, you can clock out now.
                       </div>
-                      {locationDisplay.geofence === 'LOCATION UNKNOWN' && (
+                      {activeBreak?.break_type === 'AUTO_GPS' && locationDisplay.geofence === 'LOCATION UNKNOWN' && (
                         <div role="alert" style={{ fontSize: '0.8125rem', color: 'var(--warning)', textAlign: 'center', marginBottom: '1rem' }}>
                           Your location is not updating ({locationDisplay.gps}). Keep WorkPulse open with location on: your return can only be detected while the app can read your location. Until then this break stays open.
                         </div>
@@ -858,6 +881,11 @@ const EmployeeDashboard: React.FC = () => {
             {infoRow('GPS', <span style={{ color: toneColor(locationDisplay.tone) }}>{locationDisplay.gps}</span>)}
             {infoRow('Geofence', locationDisplay.geofence === 'WFH' ? 'Not applied (WFH)' : locationDisplay.geofence)}
             {infoRow('Last update', locationDisplay.lastSeenAt ? formatCompanyTime(locationDisplay.lastSeenAt) : 'No location yet')}
+            {(attendanceState === 'working' || attendanceState === 'on_break') && serverTracking && serverTracking.attendance_id === attendanceRecord?.id && (() => {
+              const v = trackingStateView(serverTracking.state);
+              const color = v.tone === 'ok' || v.tone === 'restored' ? 'var(--success-600)' : v.tone === 'problem' || v.tone === 'stale' ? 'var(--danger)' : 'var(--warning)';
+              return infoRow('Tracking', <span title={v.detail} style={{ color }}>{v.label}{serverTracking.state_since ? ` · since ${formatCompanyTime(serverTracking.state_since)}` : ''}</span>);
+            })()}
             {locationDisplay.gps === 'Location Permission Denied' && (
               <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>Allow location access for this site in your browser settings so your attendance location can be verified.</p>
             )}

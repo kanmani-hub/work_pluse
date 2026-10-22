@@ -145,6 +145,14 @@ export const realtimeService = {
   /**
    * Admin: Subscribe to all attendance breaks
    */
+  /** Admin: server tracking state changes (automatic breaks; employee_tracking_state). */
+  subscribeToTrackingStates(callback: (payload: any) => void) {
+    return supabase
+      .channel('admin:tracking_states')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_tracking_state' }, callback)
+      .subscribe();
+  },
+
   subscribeToAdminBreaks(callback: (payload: any) => void) {
     return supabase
       .channel('admin:breaks')

@@ -252,7 +252,7 @@ const AdminSettings: React.FC = () => {
         <div>
           <label className="form-label" htmlFor="tracking-stale-minutes">Location shown as "not updating" after (minutes)</label>
           <input id="tracking-stale-minutes" type="number" min={5} max={120} className="form-control" value={settings.app.trackingStaleMinutes ?? 15} onChange={e => handleChangeApp('trackingStaleMinutes', parseInt(e.target.value) || 15)} />
-          <div className="help-text">Break Management and Live Tracking only (5–120, default 15). Automatic break and geofence timing are not affected.</div>
+          <div className="help-text">Break Management and Live Tracking display only (5–120, default 15). The automatic-break interval is set under Breaks → Automatic Breaks.</div>
         </div>
       </div>
       <div className="toggle-row" style={{ marginTop: '1rem' }}>
@@ -313,6 +313,42 @@ const AdminSettings: React.FC = () => {
           <div><label className="form-label">Maximum Break Duration (Mins)</label><input type="number" className="form-control" value={settings.app.maxBreakDurationMins} onChange={e => handleChangeApp('maxBreakDurationMins', parseInt(e.target.value) || 0)} aria-label="Maximum Break Duration (Mins)" /></div>
         </div>
       )}
+
+      <h3 className="section-title" style={{ marginTop: '2rem' }}>Automatic Breaks (location / network loss)</h3>
+      <div className="help-text" style={{ marginBottom: '1rem' }}>
+        Enforced by the database with server time; employees' devices only report what they observe. Automatic breaks count under the normal break allowance and excess-break deduction. Geofence (left the office) breaks are not affected by these switches.
+      </div>
+      {([
+        ['autoBreakEnabled', 'Enable automatic breaks for tracking loss', 'Master switch for the rules below.'],
+        ['autoBreakOnPermissionDenied', 'Location permission denied', 'Start a break when the device reports that location permission was turned off.'],
+        ['autoBreakOnGpsUnavailable', 'GPS / location unavailable', 'Start a break when the device reports that it cannot determine a location. A GPS timeout alone never starts a break.'],
+        ['autoBreakOnStale', 'No location reaching the server', 'Start a break when no fresh location reaches the server for the interval below (network off, app closed, device asleep). Checked by the server every minute.'],
+        ['autoBreakAutoResume', 'Resume automatically', 'End a tracking break as soon as a fresh, valid location reaches the server. Reconnecting alone is not enough.'],
+        ['autoBreakWfhStale', 'WFH: apply the network / stale rule', 'Work-from-home days still need locations to reach the server.'],
+        ['autoBreakWfhGpsLoss', 'WFH: apply the GPS-loss rules', 'Normally off: on WFH days, permission loss or GPS unavailability does not start a break.'],
+      ] as const).map(([key, title, help]) => (
+        <div className="toggle-row" key={key} style={{ marginTop: '0.75rem' }}>
+          <div><div style={{ fontWeight: 600 }}>{title}</div><div className="help-text">{help}</div></div>
+          <input type="checkbox" className="toggle" aria-label={title}
+            checked={!!(settings.app as any)[key]}
+            disabled={key !== 'autoBreakEnabled' && !settings.app.autoBreakEnabled}
+            onChange={e => handleChangeApp(key as any, e.target.checked)} />
+        </div>
+      ))}
+      <div className="form-grid" style={{ marginTop: '1.5rem' }}>
+        <div>
+          <label className="form-label" htmlFor="auto-break-stale-minutes">No-location interval (minutes)</label>
+          <input id="auto-break-stale-minutes" type="number" min={2} max={120} className="form-control" value={settings.app.autoBreakStaleMinutes ?? 15}
+            onChange={e => handleChangeApp('autoBreakStaleMinutes', Math.min(120, Math.max(2, parseInt(e.target.value) || 15)))} />
+          <div className="help-text">2–120, default 15. The break starts at the last fresh location the server received.</div>
+        </div>
+        <div>
+          <label className="form-label" htmlFor="auto-break-grace-minutes">Grace period (minutes)</label>
+          <input id="auto-break-grace-minutes" type="number" min={0} max={120} className="form-control" value={settings.app.autoBreakGraceMinutes ?? 0}
+            onChange={e => handleChangeApp('autoBreakGraceMinutes', Math.min(120, Math.max(0, parseInt(e.target.value) || 0)))} />
+          <div className="help-text">Confirmed policy: 0 (no waiting period). A larger value delays the break and starts it after the grace time.</div>
+        </div>
+      </div>
     </div>
   );
 

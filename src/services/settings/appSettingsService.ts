@@ -54,6 +54,23 @@ export interface AppSettings {
   breakDurationMins: number;
   maxBreakDurationMins: number;
 
+  // Automatic breaks on location / network loss. Read and enforced by the DATABASE (ab_policy() in
+  // migration 20261021120000); the app only edits them. Defaults = confirmed business policy.
+  autoBreakEnabled: boolean;
+  autoBreakOnPermissionDenied: boolean;
+  autoBreakOnGpsUnavailable: boolean;
+  autoBreakOnStale: boolean;
+  /** No fresh location reached the server for this many minutes → automatic break (2–120). */
+  autoBreakStaleMinutes: number;
+  /** Intentional waiting period before an automatic break starts (0 = none). */
+  autoBreakGraceMinutes: number;
+  /** End a tracking break automatically when a fresh location reaches the server. */
+  autoBreakAutoResume: boolean;
+  /** WFH days: stale / network-loss rule applies. */
+  autoBreakWfhStale: boolean;
+  /** WFH days: GPS permission loss / GPS unavailable starts a break (policy: no). */
+  autoBreakWfhGpsLoss: boolean;
+
   // Shifts
   defaultShift: string;
   shiftGracePeriodMins: number;
@@ -128,6 +145,15 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   breakEnabled: true,
   breakDurationMins: 60,
   maxBreakDurationMins: 90,
+  autoBreakEnabled: true,
+  autoBreakOnPermissionDenied: true,
+  autoBreakOnGpsUnavailable: true,
+  autoBreakOnStale: true,
+  autoBreakStaleMinutes: 15,
+  autoBreakGraceMinutes: 0,
+  autoBreakAutoResume: true,
+  autoBreakWfhStale: true,
+  autoBreakWfhGpsLoss: false,
   defaultShift: 'General Shift',
   shiftGracePeriodMins: 0,
   leaveEnabled: true,
