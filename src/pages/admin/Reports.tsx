@@ -16,6 +16,7 @@ import { formatMinutes } from '../../services/attendance/employeeDashboardRules'
 import RecordsModal from '../../components/common/RecordsModal';
 import { clickableCardProps, EMPLOYEE_COLUMNS, formatDuration } from '../../services/common/cardDetails';
 import { departmentSummary, type ReportCard } from '../../services/reports/reportCardRules';
+import { buildRequestReport, buildWorkingHours, type RequestKind } from '../../services/reports/requestReportRules';
 
 const AdminReports: React.FC = () => {
   const navigate = useNavigate();
@@ -29,6 +30,7 @@ const AdminReports: React.FC = () => {
     wfhEmployees: 0, onLeave: 0, avgWorkingHours: '0h 0m', payrollProcessed: '₹0'
   });
   const [attendanceReport, setAttendanceReport] = useState<any[]>([]);
+  const [requestRows, setRequestRows] = useState<any[]>([]);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const [loadError, setLoadError] = useState('');
   
@@ -54,10 +56,17 @@ const AdminReports: React.FC = () => {
       const dashMetrics = await reportService.getDashboardMetrics(startDateStr, endDateStr, filters.dept, filters.office);
       setMetrics(dashMetrics);
 
-      if (activeTab === 'Attendance') {
+      if (activeTab === 'Attendance' || activeTab === 'Working Hours') {
          const { data, error } = await reportService.getAttendanceReport(startDateStr, endDateStr, filters.dept);
-         if (error) throw new Error(`Could not load the attendance report: ${error.message}`);
+         if (error) throw new Error(`Could not load the ${activeTab.toLowerCase()} report: ${error.message}`);
          setAttendanceReport(data || []);
+      }
+      if (activeTab === 'Leave' || activeTab === 'WFH' || activeTab === 'Permission') {
+         const res = activeTab === 'Leave' ? await reportService.getLeaveReport(startDateStr, endDateStr)
+           : activeTab === 'WFH' ? await reportService.getWFHReport(startDateStr, endDateStr)
+           : await reportService.getPermissionReport(startDateStr, endDateStr);
+         if (res.error) throw new Error(`Could not load the ${activeTab} report: ${res.error.message}`);
+         setRequestRows(res.data || []);
       }
       setLastRefreshedAt(new Date());
     } catch (e: any) {
@@ -89,16 +98,22 @@ const AdminReports: React.FC = () => {
     e.preventDefault();
     setExportModal(false);
     
+    const stamp = companyDateStr();
     if (activeTab === 'Attendance' && attendanceReport.length > 0) {
-       exportService.excel(attendanceReport.map(r => ({ name: r.employees?.first_name ? `${r.employees.first_name} ${r.employees.last_name}` : 'Unknown', code: r.employees?.employee_code || '-', department: (r.employees?.departments as any)?.name || '-', date: r.date, clock_in: r.clock_in ? new Date(r.clock_in).toLocaleTimeString() : '-', late_minutes: r.late_minutes })), [{ header: 'Employee', key: 'name', width: 22 }, { header: 'Code', key: 'code', width: 14 }, { header: 'Department', key: 'department', width: 18 }, { header: 'Date', key: 'date', width: 14 }, { header: 'Clock In', key: 'clock_in', width: 14 }, { header: 'Late Minutes', key: 'late_minutes', width: 12 }], `attendance_report_${new Date().toISOString().split('T')[0]}`);
-
-
-
-
-
-      showToast('Report generated successfully');
+      exportService.excel(attendanceReport.map(r => ({ name: r.employees?.first_name ? `${r.employees.first_name} ${r.employees.last_name}` : 'Unknown', code: r.employees?.employee_code || '-', department: (r.employees?.departments as any)?.name || '-', date: r.attendance_date, clock_in: r.clock_in_at ? new Date(r.clock_in_at).toLocaleTimeString() : '-', clock_out: r.clock_out_at ? new Date(r.clock_out_at).toLocaleTimeString() : '-', status: r.status, late_minutes: r.late_minutes || 0 })), [{ header: 'Employee', key: 'name', width: 22 }, { header: 'Code', key: 'code', width: 14 }, { header: 'Department', key: 'department', width: 18 }, { header: 'Date', key: 'date', width: 14 }, { header: 'Clock In', key: 'clock_in', width: 14 }, { header: 'Clock Out', key: 'clock_out', width: 14 }, { header: 'Status', key: 'status', width: 18 }, { header: 'Late Minutes', key: 'late_minutes', width: 12 }], `attendance_report_${stamp}`);
+      showToast('Report exported');
+    } else if (activeTab === 'Working Hours' && attendanceReport.length > 0) {
+      const rows = buildWorkingHours(attendanceReport);
+      exportService.excel(rows.map(r => ({ ...r, worked: formatMinutes(r.workedMinutes), average: formatMinutes(r.avgMinutes) })), [{ header: 'Employee', key: 'employee', width: 22 }, { header: 'Code', key: 'code', width: 14 }, { header: 'Department', key: 'department', width: 18 }, { header: 'Closed days', key: 'days', width: 12 }, { header: 'Open days', key: 'openDays', width: 12 }, { header: 'Worked', key: 'worked', width: 12 }, { header: 'Average / day', key: 'average', width: 14 }, { header: 'Break minutes', key: 'breakMinutes', width: 14 }], `working_hours_report_${stamp}`);
+      showToast('Report exported');
+    } else if ((activeTab === 'Leave' || activeTab === 'WFH' || activeTab === 'Permission') && requestRows.length > 0) {
+      const rep = buildRequestReport(activeTab as RequestKind, requestRows);
+      exportService.excel(rep.rows, [{ header: 'Employee', key: 'employee', width: 22 }, { header: 'Code', key: 'code', width: 14 }, { header: 'Department', key: 'department', width: 18 }, { header: 'Date', key: 'date', width: 24 }, { header: 'Detail', key: 'detail', width: 24 }, { header: activeTab === 'Leave' ? 'Days' : activeTab === 'WFH' ? 'Days' : 'Minutes', key: 'amount', width: 10 }, { header: 'Status', key: 'status', width: 12 }], `${activeTab.toLowerCase()}_report_${stamp}`);
+      showToast('Report exported');
+    } else if (['Attendance', 'Working Hours', 'Leave', 'WFH', 'Permission'].includes(activeTab)) {
+      showToast(`No ${activeTab.toLowerCase()} rows to export for this range`);
     } else {
-      showToast(activeTab === 'Attendance' ? 'No attendance rows to export for this range' : `Export is not available for the ${activeTab} tab yet`);
+      showToast(`Export is not available for the ${activeTab} tab`);
     }
   };
 
@@ -252,10 +267,10 @@ const AdminReports: React.FC = () => {
                 <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2rem' }}>No records found for the selected filters</td></tr>
               ) : attendanceReport.map((r, i) => (
                 <tr key={r.id || i}>
-                  <td style={{ fontWeight: 600, color: 'var(--primary-700)', cursor: 'pointer' }} onClick={() => setEmployeeDrawer({ id: r.employees?.employee_code, name: `${r.employees?.first_name} ${r.employees?.last_name}`, dept: r.employees?.departments?.name, present: 1, late: r.late_minutes > 0 ? 1 : 0, wfh: 0, leave: 0, avgHours: Math.floor((r.work_minutes || 0) / 60) + 'h' })}>{r.employees?.first_name} {r.employees?.last_name}</td>
-                  <td>{r.date}</td>
+                  <td style={{ fontWeight: 600, color: 'var(--primary-700)', cursor: 'pointer' }} onClick={() => setEmployeeDrawer({ id: r.employees?.employee_code, name: `${r.employees?.first_name} ${r.employees?.last_name}`, dept: r.employees?.departments?.name, present: 1, late: r.late_minutes > 0 ? 1 : 0, wfh: 0, leave: 0, avgHours: r.worked_hours != null ? `${Number(r.worked_hours).toFixed(1)}h` : '—' })}>{r.employees?.first_name} {r.employees?.last_name}</td>
+                  <td>{r.attendance_date}</td>
                   <td>{r.shift_templates?.name || 'Standard'}</td>
-                  <td>{r.clock_in ? new Date(r.clock_in).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '—'}</td>
+                  <td>{r.clock_in_at ? new Date(r.clock_in_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '—'}</td>
                   <td style={{ textAlign: 'right', fontWeight: 600, color: r.late_minutes > 0 ? 'var(--danger)' : 'inherit' }}>{r.late_minutes || '0'}</td>
                 </tr>
               ))}
@@ -265,6 +280,71 @@ const AdminReports: React.FC = () => {
       </div>
     </div>
   );
+
+  const renderWorkingHours = () => {
+    const rows = buildWorkingHours(attendanceReport);
+    return (
+      <div className="card" style={{ padding: 0 }}>
+        <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)' }}>
+          <h3 className="section-title" style={{ border: 'none', margin: 0 }}>Working Hours</h3>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Closed days use the stored worked hours (or clock-out − clock-in − breaks). Days still open or flagged as missing clock-out are counted separately.</div>
+        </div>
+        <div className="table-container">
+          <table className="table" style={{ width: '100%' }}>
+            <thead><tr><th>Employee</th><th>Department</th><th style={{ textAlign: 'right' }}>Closed days</th><th style={{ textAlign: 'right' }}>Open days</th><th style={{ textAlign: 'right' }}>Worked</th><th style={{ textAlign: 'right' }}>Average / day</th></tr></thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem' }}>No attendance in the selected range</td></tr>
+              ) : rows.map(r => (
+                <tr key={r.employeeId}>
+                  <td style={{ fontWeight: 600 }}>{r.employee} <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>{r.code}</span></td>
+                  <td>{r.department}</td>
+                  <td style={{ textAlign: 'right' }}>{r.days}</td>
+                  <td style={{ textAlign: 'right', color: r.openDays ? 'var(--warning-700, #b45309)' : 'inherit' }}>{r.openDays}</td>
+                  <td style={{ textAlign: 'right' }}>{formatMinutes(r.workedMinutes)}</td>
+                  <td style={{ textAlign: 'right' }}>{formatMinutes(r.avgMinutes)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderRequests = (kind: RequestKind) => {
+    const rep = buildRequestReport(kind, requestRows);
+    const fmtAmount = (n: number) => kind === 'Permission' ? formatMinutes(n) : String(n);
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
+          {Object.entries(rep.byStatus).map(([k, v]) => (
+            <div key={k} className="card" style={{ padding: '0.75rem' }}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{k}</div><div style={{ fontSize: '1.25rem', fontWeight: 700 }}>{v}</div></div>
+          ))}
+          <div className="card" style={{ padding: '0.75rem' }}><div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{rep.amountLabel}</div><div style={{ fontSize: '1.25rem', fontWeight: 700 }}>{fmtAmount(rep.approvedAmount)}</div></div>
+        </div>
+        <div className="card" style={{ padding: 0 }}>
+          <div className="table-container">
+            <table className="table" style={{ width: '100%' }}>
+              <thead><tr><th>Employee</th><th>Department</th><th>Date</th><th>{kind === 'Permission' ? 'Time' : kind === 'Leave' ? 'Type' : 'Reason'}</th><th style={{ textAlign: 'right' }}>{kind === 'Permission' ? 'Duration' : 'Days'}</th><th>Status</th></tr></thead>
+              <tbody>
+                {rep.rows.length === 0 ? (
+                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem' }}>No {kind.toLowerCase()} requests in the selected range</td></tr>
+                ) : rep.rows.map(r => (
+                  <tr key={r.id}>
+                    <td style={{ fontWeight: 600 }}>{r.employee} <span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>{r.code}</span></td>
+                    <td>{r.department}</td><td>{r.date}</td><td>{r.detail}</td>
+                    <td style={{ textAlign: 'right' }}>{fmtAmount(r.amount)}</td>
+                    <td><span className={`badge ${r.status === 'APPROVED' ? 'badge-success' : r.status === 'PENDING' ? 'badge-warning' : 'badge-gray'}`}>{r.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const deptFigures = deptDrawer ? departmentSummary(metrics.cardRecords, deptDrawer) : null;
   return (
@@ -409,11 +489,19 @@ const AdminReports: React.FC = () => {
           <>
             {activeTab === 'Overview' && renderOverview()}
             {activeTab === 'Attendance' && renderAttendance()}
-            {activeTab !== 'Overview' && activeTab !== 'Attendance' && (
+            {activeTab === 'Working Hours' && renderWorkingHours()}
+            {(activeTab === 'Leave' || activeTab === 'WFH' || activeTab === 'Permission') && renderRequests(activeTab as RequestKind)}
+            {(activeTab === 'Shifts' || activeTab === 'Payroll' || activeTab === 'Payments') && (
               <div className="card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
                 <BarChart2 size={48} style={{ margin: '0 auto 1rem auto', opacity: 0.3 }} />
-                <h3 style={{ fontSize: '1.125rem', color: 'var(--text-primary)' }}>{activeTab} Analytics Prototype</h3>
-                <p style={{ marginTop: '0.5rem' }}>This specific reporting dimension is mocked for prototype purposes. The data structurally reflects the existing module configuration.</p>
+                <h3 style={{ fontSize: '1.125rem', color: 'var(--text-primary)' }}>{activeTab} report not available yet</h3>
+                <p style={{ marginTop: '0.5rem' }}>
+                  The figures and columns for this report have not been defined yet, so nothing is shown here.
+                  Use the {activeTab === 'Shifts' ? 'Shifts and Shift Roster pages' : 'Payroll page'} for the current data.
+                </p>
+                <button type="button" className="btn btn-outline" style={{ marginTop: '1rem' }} onClick={() => navigate(activeTab === 'Shifts' ? '/admin/shifts' : '/admin/payroll')}>
+                  Open {activeTab === 'Shifts' ? 'Shifts' : 'Payroll'}
+                </button>
               </div>
             )}
           </>

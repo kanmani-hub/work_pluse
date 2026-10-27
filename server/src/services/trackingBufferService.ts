@@ -2,27 +2,67 @@ import { getRedisClient } from '../redis/client.js';
 import { geoService, type LocationPing } from '../redis/geoService.js';
 import { getSupabase } from './supabase.js';
 
-const GPS_QUEUE_KEY = 'queue:gps_breadcrumbs';
+/**
+ * GPS breadcrumb buffer: pings are queued in Redis and written in batches to the existing
+ * employee_location_history table (security / integration fix MS-4).
+ *
+ * Before: batches went to a table that does not exist (live_tracking_breadcrumbs); every failed batch
+ * was pushed back in reverse order and retried forever, and in "mock mode" (no database) batches were
+ * popped and discarded while reporting success.
+ *
+ * Now:
+ *   - target: employee_location_history (history only). The live row (employee_live_locations), which
+ *     drives the automatic-break rules, is NOT written here, so this service cannot start or end breaks.
+ *   - the queue is bounded (MAX_QUEUE); when full, ingestPing reports 'degraded' instead of dropping.
+ *   - a failed batch goes back to the FRONT of the queue in its original order, with an attempt counter;
+ *     after MAX_ATTEMPTS it moves to a dead-letter list (kept, never silently dropped) and is logged.
+ *   - malformed queue items go to the dead-letter list too.
+ *   - without a database connection nothing is popped (no data loss, nothing reported as persisted).
+ */
+export const GPS_QUEUE_KEY = 'queue:gps_breadcrumbs';
+export const GPS_DEAD_KEY = 'queue:gps_breadcrumbs:dead';
 const BATCH_SIZE = 50;
+export const MAX_ATTEMPTS = 5;
+export const MAX_QUEUE = 50_000;
+const MAX_DEAD = 10_000;
+
+interface QueuedPing extends LocationPing { attempts?: number; receivedAt?: string }
+
+/** Server-side time bound for a client timestamp: never in the future, never older than 10 minutes. */
+export function clampPingTime(clientIso: string | undefined, now = Date.now()): string {
+  const t = clientIso ? Date.parse(clientIso) : NaN;
+  if (!Number.isFinite(t) || t > now || t < now - 10 * 60_000) return new Date(now).toISOString();
+  return new Date(t).toISOString();
+}
+
+export function toHistoryRow(p: QueuedPing) {
+  return {
+    employee_id: p.employeeId,
+    latitude: p.latitude,
+    longitude: p.longitude,
+    accuracy_meters: typeof p.accuracy === 'number' && p.accuracy >= 0 ? p.accuracy : null,
+    location_status: 'REPORTED',
+    location_context: 'UNKNOWN',
+    recorded_at: p.timestamp,
+    source: 'MICROSERVICE',
+    metadata: { speed: p.speed ?? null, heading: p.heading ?? null, battery_level: p.batteryLevel ?? null, received_at: p.receivedAt ?? null },
+  };
+}
 
 export class TrackingBufferService {
   private flushTimer: NodeJS.Timeout | null = null;
   private isFlushing = false;
 
-  /**
-   * Ingest an incoming GPS ping:
-   * 1. Updates live Geospatial index in Redis for immediate UI queries.
-   * 2. Pushes ping into Redis persistent queue for batch writing to PostgreSQL.
-   */
   async ingestPing(ping: LocationPing): Promise<boolean> {
     const redis = getRedisClient();
-
-    // 1. Update live Geo index
     await geoService.recordPing(ping);
-
-    // 2. Push to queue for batch persistence
     try {
-      await redis.rpush(GPS_QUEUE_KEY, JSON.stringify(ping));
+      const len = await redis.llen(GPS_QUEUE_KEY);
+      if (len >= MAX_QUEUE) {
+        console.warn(`[TrackingBuffer] Queue full (${len}); ping kept only in the live view`);
+        return false;
+      }
+      await redis.rpush(GPS_QUEUE_KEY, JSON.stringify({ ...ping, attempts: 0, receivedAt: new Date().toISOString() }));
       return true;
     } catch (err: any) {
       console.warn('[TrackingBuffer] Error queuing GPS ping:', err.message);
@@ -30,22 +70,14 @@ export class TrackingBufferService {
     }
   }
 
-  /**
-   * Start periodic background flusher to write breadcrumbs from Redis to Supabase
-   */
   startBackgroundFlusher(intervalSeconds = 15): void {
     if (this.flushTimer) return;
-
     this.flushTimer = setInterval(async () => {
       await this.flushBreadcrumbs();
     }, intervalSeconds * 1000);
-
     console.log(`[TrackingBuffer] Background GPS flusher started (interval: ${intervalSeconds}s)`);
   }
 
-  /**
-   * Stop background flusher
-   */
   stopBackgroundFlusher(): void {
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
@@ -54,70 +86,51 @@ export class TrackingBufferService {
     }
   }
 
-  /**
-   * Drains up to BATCH_SIZE items from Redis queue and bulk-inserts into Supabase
-   */
+  /** Returns the number of breadcrumbs written to the database in this run. */
   async flushBreadcrumbs(): Promise<number> {
     if (this.isFlushing) return 0;
+    const supabase = getSupabase();
+    if (!supabase) return 0;   // keep everything queued: nothing is written, nothing is dropped
     this.isFlushing = true;
-
+    const redis = getRedisClient();
     try {
-      const redis = getRedisClient();
-      const rawItems = await redis.lpop(GPS_QUEUE_KEY, BATCH_SIZE);
-      const itemsList: string[] = Array.isArray(rawItems) ? (rawItems as string[]) : rawItems ? [rawItems as string] : [];
+      const raw = await redis.lpop(GPS_QUEUE_KEY, BATCH_SIZE);
+      const items: string[] = Array.isArray(raw) ? (raw as string[]) : raw ? [raw as string] : [];
+      if (items.length === 0) return 0;
 
-      if (itemsList.length === 0) {
-        return 0;
+      const pings: QueuedPing[] = [];
+      for (const str of items) {
+        try { pings.push(JSON.parse(str)); }
+        catch { await this.deadLetter(str, 'malformed'); }
       }
+      if (!pings.length) return 0;
 
-      const pings: LocationPing[] = itemsList
-        .map((str: string) => {
-          try {
-            return JSON.parse(str);
-          } catch {
-            return null;
-          }
-        })
-        .filter((item: any): item is LocationPing => item !== null);
+      const { error } = await supabase.from('employee_location_history').insert(pings.map(toHistoryRow));
+      if (!error) return pings.length;
 
-      const supabase = getSupabase();
-      if (!supabase) {
-        // Mock mode: log batch count
-        console.log(`[TrackingBuffer] Flushed ${pings.length} breadcrumbs (Supabase mock mode)`);
-        return pings.length;
+      console.warn('[TrackingBuffer] Batch insert failed, will retry:', error.message);
+      const retry: string[] = [];
+      for (const p of pings) {
+        const attempts = (p.attempts ?? 0) + 1;
+        if (attempts >= MAX_ATTEMPTS) await this.deadLetter(JSON.stringify({ ...p, attempts }), error.message);
+        else retry.push(JSON.stringify({ ...p, attempts }));
       }
-
-      // Map to database column schema
-      const rows = pings.map((p) => ({
-        employee_id: p.employeeId,
-        latitude: p.latitude,
-        longitude: p.longitude,
-        accuracy: p.accuracy,
-        speed: p.speed,
-        heading: p.heading,
-        battery_level: p.batteryLevel,
-        recorded_at: p.timestamp,
-        created_at: new Date().toISOString(),
-      }));
-
-      const { error } = await supabase.from('live_tracking_breadcrumbs').insert(rows);
-      if (error) {
-        console.warn('[TrackingBuffer] Supabase batch insert error, re-queuing:', error.message);
-        // Put back in Redis to prevent data loss
-        if (itemsList.length > 0) {
-          await redis.lpush(GPS_QUEUE_KEY, ...itemsList);
-        }
-        return 0;
-      }
-
-      console.log(`[TrackingBuffer] Successfully persisted ${rows.length} GPS breadcrumbs to database`);
-      return rows.length;
+      // back to the front of the queue in the original order (LPUSH reverses, so push reversed)
+      if (retry.length) await redis.lpush(GPS_QUEUE_KEY, ...retry.reverse());
+      return 0;
     } catch (err: any) {
       console.error('[TrackingBuffer] Unexpected flush error:', err.message);
       return 0;
     } finally {
       this.isFlushing = false;
     }
+  }
+
+  private async deadLetter(item: string, reason: string): Promise<void> {
+    const redis = getRedisClient();
+    console.error(`[TrackingBuffer] Moving a breadcrumb to ${GPS_DEAD_KEY} (${reason})`);
+    await redis.rpush(GPS_DEAD_KEY, item);
+    await redis.ltrim(GPS_DEAD_KEY, -MAX_DEAD, -1);
   }
 }
 

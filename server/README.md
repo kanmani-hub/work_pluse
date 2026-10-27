@@ -116,3 +116,25 @@ cd server
 npm run build
 npm start
 ```
+
+
+## Security hardening (2026-10-22)
+
+- **Roles come from the database.** A bearer token is verified with Supabase, then the role and employee id
+  are read from `profiles` → `roles` (same source as the database's `get_auth_role()`). `user_metadata` is
+  never used: users can edit it themselves. Requires `SUPABASE_SERVICE_ROLE_KEY`; without it, tokens are
+  treated as unauthenticated (fail closed).
+- **Test tokens** (`dev-admin-token`, `dev-employee-token`) work only in automated tests, or with
+  `NODE_ENV=development` **and** `ALLOW_DEV_TOKENS=true`.
+- **CORS** allows only the origins in `CORS_ORIGIN`.
+- **Rate limiting** keys on the verified user (or `req.ip`, which honours `X-Forwarded-For` only when
+  `TRUST_PROXY` is set).
+- **`POST /api/attendance/punch` returns 501 and writes nothing.** Clock-in/out must go through the WorkPulse
+  app, which applies shift, geofence, face-verification and automatic-break rules that this service does
+  not implement. (Before, it wrote non-existent columns with the service key, bypassing those safeguards.)
+- **GPS buffer** writes to `employee_location_history` (history only; it never changes the live location
+  that drives automatic breaks). Failed batches are retried in order; after 5 attempts they move to the
+  `queue:gps_breadcrumbs:dead` list. Without a database nothing is popped.
+- **Payroll daily report** uses `attendance.attendance_date`, `salary_structures` effective on the date and
+  the payroll section of `app_settings`; database errors are returned, not cached.
+- Tests: `npm test` (the 5 live tests need a Redis at `REDIS_URL`).

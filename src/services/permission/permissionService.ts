@@ -2,6 +2,7 @@ import { supabase } from '../../lib/supabase';
 import { auditService } from '../audit/auditService';
 import { notificationService } from '../notifications/notificationService';
 import { permissionReviewed } from '../notifications/notificationRules';
+import { findPermissionOverlap, overlapMessage, ACTIVE_PERMISSION_STATUSES } from './permissionOverlapRules';
 
 export interface PermissionRequestInput {
   permission_date: string; // YYYY-MM-DD
@@ -33,6 +34,66 @@ export const permissionService = {
     return Math.max(0, endTotal - startTotal);
   },
 
+  /** Returns an Error when the time overlaps an active request (or when the check itself failed). */
+  async checkOverlap(employeeId: string, input: PermissionRequestInput, ignoreId?: string): Promise<Error | null> {
+    const { data, error } = await (supabase.from('permission_requests') as any)
+      .select('id, start_time, end_time, status')
+      .eq('employee_id', employeeId)
+      .eq('permission_date', input.permission_date)
+      .in('status', ACTIVE_PERMISSION_STATUSES);
+    if (error) return new Error(`Existing permissions could not be checked: ${error.message || 'unknown error'}`);
+    const clash = findPermissionOverlap(data || [], input.start_time, input.end_time, ignoreId);
+    return clash ? new Error(overlapMessage(clash)) : null;
+  },
+
+  /**
+   * Admin / HR: add a permission for an employee (Admin → Permissions → Add Permission).
+   * Saved as PENDING; with approveNow it is then approved through the normal review path
+   * (reviewer and time recorded by the database, employee notified, audit entry).
+   */
+  async createPermissionForEmployee(employeeId: string, input: PermissionRequestInput, approveNow: boolean, remarks?: string) {
+    if (!employeeId) return { data: null, error: new Error('Choose an employee.') };
+    if (!input.permission_date || !input.start_time || !input.end_time) return { data: null, error: new Error('Date, start time and end time are required.') };
+    if (!input.reason || !input.reason.trim()) return { data: null, error: new Error('A reason is required.') };
+    const duration_minutes = this.calculateDurationMinutes(input.start_time, input.end_time);
+    if (duration_minutes <= 0) return { data: null, error: new Error('End time must be after start time') };
+    const overlapError = await this.checkOverlap(employeeId, input);
+    if (overlapError) return { data: null, error: overlapError };
+
+    const { data, error } = await (supabase.from('permission_requests') as any)
+      .insert({
+        employee_id: employeeId,
+        permission_date: input.permission_date,
+        start_time: input.start_time,
+        end_time: input.end_time,
+        duration_minutes,
+        reason: input.reason.trim(),
+        status: 'PENDING'
+      })
+      .select('id, status')
+      .single();
+    if (error || !data) return { data: null, error: error || new Error('The permission was not saved.') };
+
+    auditService.recordAuditLog({
+      action: 'PERMISSION_CREATED_BY_ADMIN', module: 'PERMISSION', entity_type: 'permission_requests', entity_id: data.id,
+      description: `Permission added for an employee: ${input.permission_date} ${input.start_time}–${input.end_time} (${duration_minutes} min).`,
+      new_values: { employee_id: employeeId, permission_date: input.permission_date, start_time: input.start_time, end_time: input.end_time }
+    }).catch(e => console.error('[AUDIT] PERMISSION_CREATED_BY_ADMIN failed:', e));
+
+    if (approveNow) {
+      const review = await this.reviewPermissionRequest(data.id, 'APPROVED', remarks);
+      // confirm what the database actually stored (a refused update changes 0 rows without an error)
+      const { data: saved, error: readError } = await (supabase.from('permission_requests') as any).select('status').eq('id', data.id).single();
+      const status = saved?.status;
+      if (review.error || readError || status !== 'APPROVED') {
+        const why = review.error?.message || readError?.message || 'the approval was not stored';
+        return { data: { ...data, status: status || 'PENDING' }, error: new Error(`Saved as ${status || 'PENDING'}, but approval failed: ${why}`) };
+      }
+      return { data: { ...data, status: 'APPROVED' }, error: null };
+    }
+    return { data, error: null };
+  },
+
   async getMyPermissionRequests() {
     const empId = await this.getCurrentEmployeeId();
     if (!empId) return { data: null, error: new Error('Unauthorized') };
@@ -54,6 +115,9 @@ export const permissionService = {
     if (duration_minutes <= 0) {
       return { data: null, error: new Error('End time must be after start time') };
     }
+
+    const overlapError = await this.checkOverlap(empId, input);
+    if (overlapError) return { data: null, error: overlapError };
 
     const { data, error } = await supabase
       .from('permission_requests')

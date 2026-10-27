@@ -14,6 +14,9 @@ import trackingRoutes from './routes/tracking.routes.js';
 
 export function createApp(): Express {
   const app = express();
+  // Client IP (rate limiting) comes from Express, honouring X-Forwarded-For only behind a trusted proxy
+  const tp = env.TRUST_PROXY.trim().toLowerCase();
+  app.set('trust proxy', tp === 'true' ? true : tp === 'false' || tp === '' ? false : /^\d+$/.test(tp) ? Number(tp) : tp);
 
   // Security headers
   app.use(helmet());
@@ -23,10 +26,11 @@ export function createApp(): Express {
     cors({
       origin: (origin, callback) => {
         // Allow requests with no origin (e.g. mobile apps, curl, docker healthcheck)
-        if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+        if (!origin || allowedOrigins.includes(origin)) {
           return callback(null, true);
         }
-        return callback(null, true); // Dev-friendly permissive fallback
+        // Unknown browser origins get no CORS headers (security fix MS-6). '*' is not honoured with credentials.
+        return callback(null, false);
       },
       credentials: true,
     })

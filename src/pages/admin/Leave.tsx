@@ -10,6 +10,7 @@ import {
 
 import { leaveService } from '../../services/leave/leaveService';
 import { RequestTimeline } from '../../components/requests/RequestTimeline';
+import AdminAddLeaveDrawer from '../../components/requests/AdminAddLeaveDrawer';
 import { toBalanceRow, findBalance, toLeaveTypeRows } from '../../services/leave/leaveAdminRules';
 import { PersistedSettingToggle, useStoredAppSettings } from '../../components/settings/PersistedSettingToggle';
 import { realtimeService } from '../../services/realtime/realtimeService';
@@ -17,6 +18,7 @@ import RecordsModal from '../../components/common/RecordsModal';
 import { clickableCardProps } from '../../services/common/cardDetails';
 import { companyDateStr } from '../../utils/companyDate';
 import { leaveCards, type LeaveCard } from '../../services/common/requestCardRules';
+import { mapLeaveExportRow, LEAVE_EXPORT_COLUMNS } from '../../services/export/adminExportRules';
 
 
 const AdminLeave: React.FC = () => {
@@ -215,7 +217,7 @@ const AdminLeave: React.FC = () => {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => setSettingsDrawer(true)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Settings size={16}/> Leave Settings</button>
-          <button onClick={() => exportService.excel(filteredRequests.map(r => ({ employee: r.employees ? `${(r.employees as any).first_name} ${(r.employees as any).last_name}` : '-', leave_type: (r as any).leave_types?.name || '-', start_date: r.start_date, end_date: r.end_date, total_days: r.total_days, status: r.status, reason: r.reason, requested_at: r.requested_at ? new Date(r.requested_at).toLocaleDateString('en-IN') : '-' })), [{ header: 'Employee', key: 'employee', width: 22 }, { header: 'Leave Type', key: 'leave_type', width: 14 }, { header: 'Start', key: 'start_date', width: 12 }, { header: 'End', key: 'end_date', width: 12 }, { header: 'Days', key: 'total_days', width: 8 }, { header: 'Status', key: 'status', width: 12 }, { header: 'Reason', key: 'reason', width: 30 }, { header: 'Requested', key: 'requested_at', width: 14 }], `leave_export_${new Date().toISOString().split('T')[0]}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
+          <button onClick={() => exportService.excel(filteredRequests.map(mapLeaveExportRow), LEAVE_EXPORT_COLUMNS, `leave_export_${companyDateStr()}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
           <button onClick={() => setAddLeaveDrawer(true)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Plus size={16}/> Add Leave</button>
         </div>
       </div>
@@ -665,8 +667,9 @@ EmpC     AL  AL   —    —    —`}
               <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '2rem' }}>Configure leave types and company policies. Do not hard-code these as permanent system values.</p>
               
               <h3 className="section-title">Approval Workflow</h3>
+              <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>A single approval by HR or an administrator. Nobody can approve their own request; this is enforced by the database.</p>
               <div style={{ backgroundColor: 'var(--gray-50)', padding: '1.5rem', borderRadius: 'var(--radius-md)', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '1rem', alignItems: 'center', marginBottom: '2rem', fontFamily: 'monospace' }}>
-                <div>Employee</div><div>→</div><div>Manager</div><div>→</div><div>HR</div><div>→</div><div style={{ color: 'var(--success-600)', fontWeight: 600 }}>Approved</div>
+                <div>Employee</div><div>→</div><div>HR / Admin</div><div>→</div><div style={{ color: 'var(--success-600)', fontWeight: 600 }}>Approved / Rejected</div>
               </div>
 
               <h3 className="section-title">Leave Types</h3>
@@ -707,30 +710,9 @@ EmpC     AL  AL   —    —    —`}
         </div>
       )}
 
-      {/* Add Leave Drawer Placeholder */}
+      {/* Add Leave Drawer (saves for real; see AdminAddLeaveDrawer) */}
       {addLeaveDrawer && (
-        <div className="drawer-overlay" onClick={() => setAddLeaveDrawer(false)}>
-          <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
-            <div className="drawer-header">
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Add Leave (Admin)</h2>
-              <button className="icon-button" onClick={() => setAddLeaveDrawer(false)} aria-label="Close"><X size={20} /></button>
-            </div>
-            <div className="drawer-body">
-              <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '2rem' }}>Submit leave on behalf of an employee.</p>
-              <form onSubmit={e => { e.preventDefault(); setAddLeaveDrawer(false); showToast('Leave created successfully'); }} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                <div><label className="form-label">Employee</label><select className="form-control" aria-label="Employee"><option>Select Employee</option></select></div>
-                <div><label className="form-label">Leave Type</label><select className="form-control" aria-label="Leave Type">{(leaveTypes || []).filter(t => t.active).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                  <div style={{ flex: 1 }}><label className="form-label">Start Date</label><input type="date" className="form-control" aria-label="Start Date" /></div>
-                  <div style={{ flex: 1 }}><label className="form-label">End Date</label><input type="date" className="form-control" aria-label="End Date" /></div>
-                </div>
-                <div><label className="form-label">Half Day</label><input type="checkbox" /></div>
-                <div><label className="form-label">Reason</label><textarea className="form-control" rows={3} aria-label="Reason"></textarea></div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button className="btn btn-primary">Save Leave</button></div>
-              </form>
-            </div>
-          </div>
-        </div>
+        <AdminAddLeaveDrawer leaveTypes={leaveTypes} onClose={() => setAddLeaveDrawer(false)} onSaved={msg => { showToast(msg); fetchRequests(); }} />
       )}
 
       <style>{`

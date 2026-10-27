@@ -13,11 +13,13 @@ import KpiDetailModal from '../../components/attendance/KpiDetailModal';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { supabase } from '../../lib/supabase';
 import { useDepartments } from '../../hooks/useDepartments';
+import { useAuth } from '../../context/AuthContext';
 
 
 
 const AdminAttendance: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
   
@@ -36,6 +38,8 @@ const AdminAttendance: React.FC = () => {
   
   // Correction Form
   const [cForm, setCForm] = useState<any>({});
+  const [savingCorrection, setSavingCorrection] = useState(false);
+  const [correctionError, setCorrectionError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [liveStatus, setLiveStatus] = useState<any[]>([]);
   const [exceptions, setExceptions] = useState<any[]>([]);
@@ -184,13 +188,45 @@ const AdminAttendance: React.FC = () => {
     }
   };
 
-  const handleSaveCorrection = (e: React.FormEvent) => {
+  const handleSaveCorrection = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cForm.reason) return;
-    
-    // Corrections are not persisted yet: do not show edited values or a success message.
-    setCorrectionModal(null);
-    showToast('Correction NOT saved: attendance corrections are not available yet.');
+    if (!detailDrawer?.employee_uuid) return;
+    if (!cForm.reason || !cForm.reason.trim()) {
+      setCorrectionError('A non-empty correction reason is required.');
+      return;
+    }
+
+    setCorrectionError(null);
+    setSavingCorrection(true);
+    try {
+      const res = await adminAttendanceService.correctAttendance({
+        employeeId: detailDrawer.employee_uuid,
+        dateStr: localDateStr,
+        clockInTime: cForm.clockIn || null,
+        clockOutTime: cForm.clockOut || null,
+        breakMinutes: Number(cForm.breakMins) || 0,
+        status: cForm.status || 'PRESENT',
+        reason: cForm.reason.trim(),
+        actorId: user?.id || null,
+        attendanceId: detailDrawer.attendanceId || null,
+        isOvernight: !!detailDrawer.overnight,
+      });
+
+      if (!res.success) {
+        setCorrectionError(res.error || 'Failed to save attendance correction.');
+        setSavingCorrection(false);
+        return;
+      }
+
+      setCorrectionModal(null);
+      showToast('Attendance correction saved successfully.');
+      await fetchAttendance();
+      setDetailDrawer(null);
+    } catch (err: any) {
+      setCorrectionError(err?.message || 'An unexpected error occurred while saving correction.');
+    } finally {
+      setSavingCorrection(false);
+    }
   };
 
   return (
@@ -221,8 +257,8 @@ const AdminAttendance: React.FC = () => {
           <button className="btn btn-outline" onClick={handleToday} style={{ fontSize: '0.875rem' }}>Today</button>
 
           <button onClick={() => exportService.excel(filteredData.map(a => ({ empId: a.empId, name: a.name, dept: a.dept, shift: a.shiftTime, mode: a.mode, clockIn: a.clockIn, clockOut: a.clockOut, break: a.breakMins, status: a.status, late: a.late })), [{ header: 'Code', key: 'empId', width: 10 }, { header: 'Name', key: 'name', width: 22 }, { header: 'Department', key: 'dept', width: 16 }, { header: 'Shift Time', key: 'shift', width: 16 }, { header: 'Mode', key: 'mode', width: 10 }, { header: 'In', key: 'clockIn', width: 10 }, { header: 'Out', key: 'clockOut', width: 10 }, { header: 'Break (m)', key: 'break', width: 10 }, { header: 'Status', key: 'status', width: 12 }, { header: 'Late', key: 'late', width: 10 }], `attendance_export_${currentDateDisplay}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
-          <button type="button" onClick={() => fetchAttendance()} className="icon-button  border" aria-label="Refresh attendance" title="Refresh"><RefreshCw size={16}/></button>
-          <button type="button" className="icon-button  border" aria-label="Attendance settings" title="Settings"><Settings size={16}/></button>
+          <button type="button" onClick={() => fetchAttendance()} className="icon-button border" aria-label="Refresh attendance" title="Refresh"><RefreshCw size={16}/></button>
+          <button type="button" onClick={() => navigate('/admin/settings?section=Attendance')} className="icon-button border" aria-label="Attendance settings" title="Attendance Settings"><Settings size={16}/></button>
         </div>
       </div>
 
@@ -543,7 +579,23 @@ const AdminAttendance: React.FC = () => {
               
               {/* Action Bar */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-                <button onClick={() => { setCForm({ clockIn: detailDrawer.clockIn, clockOut: detailDrawer.clockOut === '—' ? '' : detailDrawer.clockOut }); setCorrectionModal(true); }} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Edit size={16}/> Edit Attendance</button>
+                <button 
+                  onClick={() => { 
+                    setCorrectionError(null);
+                    setCForm({ 
+                      clockIn: detailDrawer.clockIn === '—' ? '' : detailDrawer.clockIn, 
+                      clockOut: detailDrawer.clockOut === '—' ? '' : detailDrawer.clockOut,
+                      breakMins: detailDrawer.breakMins ?? 0,
+                      status: detailDrawer.status || 'PRESENT',
+                      reason: ''
+                    }); 
+                    setCorrectionModal(true); 
+                  }} 
+                  className="btn btn-outline" 
+                  style={{ fontSize: '0.875rem' }}
+                >
+                  <Edit size={16}/> Edit Attendance
+                </button>
               </div>
 
               {/* Shift Information */}
@@ -716,42 +768,113 @@ Attendance Completed`}
       {/* Manual Correction Modal */}
       {correctionModal && (
         <div className="drawer-overlay" style={{ alignItems: 'center', zIndex: 120 }}>
-          <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '450px', animation: 'slideUp 0.3s' }}>
+          <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '480px', animation: 'slideUp 0.3s' }}>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>Edit Attendance</h3>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Update records for {detailDrawer?.name}.</p>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>Update records for {detailDrawer?.name} ({currentDateDisplay}).</p>
             
-            <div style={{ padding: '0.75rem', backgroundColor: 'var(--warning-50)', color: 'var(--warning-800)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
-              <AlertTriangle size={16} style={{ marginTop: '0.125rem' }} /> 
+            <div style={{ padding: '0.75rem', backgroundColor: 'var(--warning-50)', color: 'var(--warning-800)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.875rem', marginBottom: '1rem' }}>
+              <AlertTriangle size={16} style={{ marginTop: '0.125rem', flexShrink: 0 }} /> 
               <div>
-                <strong>Warning:</strong> Attendance corrections are audit-sensitive and may affect payroll calculations.
+                <strong>Warning:</strong> Attendance corrections are audit-sensitive and directly affect worked hours and payroll calculations.
               </div>
             </div>
+
+            {correctionError && (
+              <div style={{ padding: '0.75rem', backgroundColor: 'var(--danger-50)', color: 'var(--danger-700)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.875rem', marginBottom: '1rem', border: '1px solid var(--danger-200)' }}>
+                <AlertCircle size={16} style={{ marginTop: '0.125rem', flexShrink: 0 }} />
+                <div>{correctionError}</div>
+              </div>
+            )}
 
             <form onSubmit={handleSaveCorrection} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               <div style={{ display: 'flex', gap: '1rem' }}>
                 <div style={{ flex: 1 }}>
                   <label className="form-label">Clock In</label>
-                  <input type="time" className="form-control" value={cForm.clockIn || ''} onChange={e => setCForm({...cForm, clockIn: e.target.value})} aria-label="Clock In" />
+                  <input 
+                    type="time" 
+                    className="form-control" 
+                    value={cForm.clockIn || ''} 
+                    onChange={e => setCForm({...cForm, clockIn: e.target.value})} 
+                    aria-label="Clock In" 
+                    disabled={savingCorrection}
+                  />
                 </div>
                 <div style={{ flex: 1 }}>
                   <label className="form-label">Clock Out</label>
-                  <input type="time" className="form-control" value={cForm.clockOut || ''} onChange={e => setCForm({...cForm, clockOut: e.target.value})} aria-label="Clock Out" />
+                  <input 
+                    type="time" 
+                    className="form-control" 
+                    value={cForm.clockOut || ''} 
+                    onChange={e => setCForm({...cForm, clockOut: e.target.value})} 
+                    aria-label="Clock Out" 
+                    disabled={savingCorrection}
+                  />
                 </div>
               </div>
-              
-              <div>
-                <label className="form-label">Break Duration (Mins)</label>
-                <input type="number" className="form-control" defaultValue={detailDrawer?.breakMins} aria-label="Break Duration (Mins)" />
+
+              <div style={{ display: 'flex', gap: '1rem' }}>
+                <div style={{ flex: 1 }}>
+                  <label className="form-label">Break Duration (Mins)</label>
+                  <input 
+                    type="number" 
+                    min="0"
+                    className="form-control" 
+                    value={cForm.breakMins ?? 0} 
+                    onChange={e => setCForm({ ...cForm, breakMins: e.target.value })}
+                    aria-label="Break Duration (Mins)" 
+                    disabled={savingCorrection}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label className="form-label">Status</label>
+                  <select 
+                    className="form-control" 
+                    value={cForm.status || 'PRESENT'} 
+                    onChange={e => setCForm({ ...cForm, status: e.target.value })}
+                    aria-label="Attendance Status"
+                    disabled={savingCorrection}
+                  >
+                    <option value="PRESENT">Present</option>
+                    <option value="HALF_DAY">Half Day</option>
+                    <option value="ABSENT">Absent</option>
+                    <option value="ON_LEAVE">On Leave</option>
+                    <option value="WFH">WFH</option>
+                  </select>
+                </div>
               </div>
 
               <div>
                 <label className="form-label">Correction Reason *</label>
-                <textarea required className="form-control" rows={3} placeholder="e.g. Employee forgot to clock out." value={cForm.reason || ''} onChange={e => setCForm({...cForm, reason: e.target.value})} aria-label="Correction Reason"></textarea>
+                <textarea 
+                  required 
+                  className="form-control" 
+                  rows={3} 
+                  placeholder="e.g. Employee forgot to clock out; verified supervisor logs." 
+                  value={cForm.reason || ''} 
+                  onChange={e => setCForm({...cForm, reason: e.target.value})} 
+                  aria-label="Correction Reason"
+                  disabled={savingCorrection}
+                ></textarea>
               </div>
 
               <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
-                <button type="button" onClick={() => setCorrectionModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel</button>
-                <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Save Correction</button>
+                <button 
+                  type="button" 
+                  onClick={() => setCorrectionModal(null)} 
+                  disabled={savingCorrection} 
+                  className="btn btn-outline" 
+                  style={{ flex: 1 }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={savingCorrection} 
+                  className="btn btn-primary" 
+                  style={{ flex: 1 }}
+                >
+                  {savingCorrection ? 'Saving...' : 'Save Correction'}
+                </button>
               </div>
             </form>
           </div>

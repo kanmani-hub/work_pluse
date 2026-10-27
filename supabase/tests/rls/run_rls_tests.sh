@@ -24,7 +24,9 @@ PSQL_ADMIN="psql -X -q -v ON_ERROR_STOP=1"
 # Copy migrations. Test-only patch for N1: 0015_auto_clock_out.sql uses v_status without declaring it,
 # which makes the migration fail on a clean database. The repo file itself is not changed.
 cp -r "$MIG_SRC" "$WORK/mig"
-sed -i 's/^    v_total_duration_hrs DECIMAL(10,4);/    v_total_duration_hrs DECIMAL(10,4);\n    v_status VARCHAR; -- TEST-ONLY patch (N1)/' "$WORK/mig/0015_auto_clock_out.sql"
+# (only while the repo file still lacks the declaration; it has been fixed in the migration itself since)
+grep -qE '^\s*v_status\s' "$WORK/mig/0015_auto_clock_out.sql" || \
+  sed -i 's/^    v_total_duration_hrs DECIMAL(10,4);/    v_total_duration_hrs DECIMAL(10,4);\n    v_status VARCHAR; -- TEST-ONLY patch (N1)/' "$WORK/mig/0015_auto_clock_out.sql"
 # pg_net is not available on plain PostgreSQL; the shim provides a stub net.http_post.
 sed -i -E 's/^CREATE EXTENSION IF NOT EXISTS pg_net.*$/-- pg_net stubbed by test shim/' "$WORK/mig/20261004120100_notification_push_trigger.sql"
 

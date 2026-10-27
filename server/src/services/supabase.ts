@@ -9,7 +9,9 @@ export function getSupabase(): SupabaseClient | null {
   }
 
   const url = env.SUPABASE_URL;
-  const key = env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_ANON_KEY;
+  // The server needs its own key to verify identities and read data; it never falls back to the public
+  // anon key (which would make every server query run without any user context).
+  const key = env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !key) {
     console.warn('[Supabase] Warning: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured in environment. Supabase bridge running in mock/offline mode.');

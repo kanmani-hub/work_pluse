@@ -85,6 +85,74 @@ export const leaveService = {
     return { data, error };
   },
 
+  /** Returns an Error when the dates overlap an active request (or when the check itself failed). */
+  async checkOverlap(employeeId: string, input: LeaveRequestInput): Promise<Error | null> {
+    const { data: overlaps, error } = await supabase
+      .from('leave_requests')
+      .select('id')
+      .eq('employee_id', employeeId)
+      .in('status', ['PENDING', 'APPROVED'])
+      .lte('start_date', input.end_date)
+      .gte('end_date', input.start_date);
+    // a failed check is not treated as "no overlap"
+    if (error) return new Error(`Existing leave could not be checked: ${error.message || 'unknown error'}`);
+    if (overlaps && overlaps.length > 0) return new Error('An overlapping active leave request already exists.');
+    return null;
+  },
+
+  /**
+   * Admin / HR: add leave for an employee (Admin → Leave → Add Leave).
+   * Saved as PENDING; with approveNow it is then approved through the normal review path
+   * (reviewer and time recorded by the database, employee notified, audit entry).
+   */
+  async createLeaveForEmployee(employeeId: string, input: LeaveRequestInput, approveNow: boolean, remarks?: string) {
+    if (!employeeId) return { data: null, error: new Error('Choose an employee.') };
+    if (!input.leave_type_id) return { data: null, error: new Error('Choose a leave type.') };
+    if (!input.start_date || !input.end_date) return { data: null, error: new Error('Start and end date are required.') };
+    if (!input.reason || !input.reason.trim()) return { data: null, error: new Error('A reason is required.') };
+    const total_days = this.calculateTotalDays(input.start_date, input.end_date, input.is_half_day);
+    if (total_days <= 0) return { data: null, error: new Error('Invalid date range') };
+    if (input.is_half_day && (input.start_date !== input.end_date)) return { data: null, error: new Error('A half day must start and end on the same date.') };
+    if (input.is_half_day && !input.half_day_type) return { data: null, error: new Error('Half day type required for half day requests') };
+    const overlapError = await this.checkOverlap(employeeId, input);
+    if (overlapError) return { data: null, error: overlapError };
+
+    const { data, error } = await (supabase.from('leave_requests') as any)
+      .insert({
+        employee_id: employeeId,
+        leave_type_id: input.leave_type_id,
+        start_date: input.start_date,
+        end_date: input.end_date,
+        total_days,
+        is_half_day: input.is_half_day,
+        half_day_type: input.is_half_day ? input.half_day_type : null,
+        reason: input.reason.trim(),
+        status: 'PENDING'
+      })
+      .select('id, status')
+      .single();
+    if (error || !data) return { data: null, error: error || new Error('The leave was not saved.') };
+
+    auditService.recordAuditLog({
+      action: 'LEAVE_CREATED_BY_ADMIN', module: 'LEAVE', entity_type: 'leave_requests', entity_id: data.id,
+      description: `Leave added for an employee: ${input.start_date} to ${input.end_date} (${total_days} day(s)).`,
+      new_values: { employee_id: employeeId, start_date: input.start_date, end_date: input.end_date, total_days }
+    }).catch(e => console.error('[AUDIT] LEAVE_CREATED_BY_ADMIN failed:', e));
+
+    if (approveNow) {
+      const review = await this.reviewLeaveRequest(data.id, 'APPROVED', remarks);
+      // confirm what the database actually stored (a refused update changes 0 rows without an error)
+      const { data: saved, error: readError } = await (supabase.from('leave_requests') as any).select('status').eq('id', data.id).single();
+      const status = saved?.status;
+      if (review.error || readError || status !== 'APPROVED') {
+        const why = review.error?.message || readError?.message || 'the approval was not stored';
+        return { data: { ...data, status: status || 'PENDING' }, error: new Error(`Saved as ${status || 'PENDING'}, but approval failed: ${why}`) };
+      }
+      return { data: { ...data, status: 'APPROVED' }, error: null };
+    }
+    return { data, error: null };
+  },
+
   async createLeaveRequest(input: LeaveRequestInput) {
     const empId = await this.getCurrentEmployeeId();
     if (!empId) return { data: null, error: new Error('Unauthorized') };
@@ -98,18 +166,8 @@ export const leaveService = {
       return { data: null, error: new Error('Half day type required for half day requests') };
     }
 
-    // Overlapping check
-    const { data: overlaps } = await supabase
-      .from('leave_requests')
-      .select('id')
-      .eq('employee_id', empId)
-      .in('status', ['PENDING', 'APPROVED'])
-      .lte('start_date', input.end_date)
-      .gte('end_date', input.start_date);
-
-    if (overlaps && overlaps.length > 0) {
-      return { data: null, error: new Error('An overlapping active leave request already exists.') };
-    }
+    const overlapError = await this.checkOverlap(empId, input);
+    if (overlapError) return { data: null, error: overlapError };
 
     // NOTE: Leave balance pending_days update is NOT performed here via client update
     // as it is unsafe and prone to inconsistency without atomic server-side RPC/transactions.

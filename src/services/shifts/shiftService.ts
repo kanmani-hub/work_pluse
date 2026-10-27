@@ -33,6 +33,15 @@ export const shiftService = {
     };
   },
 
+  /** Active employees for Admin → Shifts → Assign. */
+  async getAssignableEmployees(): Promise<{ data: any[] | null; error: any }> {
+    const { data, error } = await (supabase.from('employees') as any)
+      .select('id, first_name, last_name, employee_code, status')
+      .eq('status', 'ACTIVE')
+      .order('first_name', { ascending: true });
+    return { data: error ? null : data, error: error || null };
+  },
+
   async createShift(shiftData: any) {
     // @ts-ignore
     const { data, error } = await (supabase.from('shift_templates') as any)

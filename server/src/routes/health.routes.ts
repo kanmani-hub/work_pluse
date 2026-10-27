@@ -11,7 +11,7 @@ router.get('/', async (req, res) => {
   let supabaseStatus = 'not_configured';
   if (supabase) {
     try {
-      const { error } = await supabase.from('payroll_rules').select('count', { count: 'exact', head: true });
+      const { error } = await supabase.from('app_settings').select('id', { count: 'exact', head: true });
       supabaseStatus = error ? `error: ${error.message}` : 'connected';
     } catch (e: any) {
       supabaseStatus = `error: ${e.message}`;

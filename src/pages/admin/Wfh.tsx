@@ -15,6 +15,7 @@ import RecordsModal from '../../components/common/RecordsModal';
 import { clickableCardProps } from '../../services/common/cardDetails';
 import { companyDateStr } from '../../utils/companyDate';
 import { wfhCards, type WfhCard } from '../../services/common/requestCardRules';
+import { mapWfhExportRow, WFH_EXPORT_COLUMNS } from '../../services/export/adminExportRules';
 
 const AdminWfh: React.FC = () => {
   const { employee } = useAuth();
@@ -185,7 +186,7 @@ const AdminWfh: React.FC = () => {
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>Review employee WFH requests, schedules and balances.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <button onClick={() => exportService.excel(filteredRequests.map(r => ({ employee: r.employees ? `${(r.employees as any).first_name} ${(r.employees as any).last_name}` : '-', request_date: r.request_date, status: r.status, reason: r.reason, requested_at: r.requested_at ? new Date(r.requested_at).toLocaleDateString('en-IN') : '-', reviewed_at: r.reviewed_at ? new Date(r.reviewed_at).toLocaleDateString('en-IN') : '-' })), [{ header: 'Employee', key: 'employee', width: 22 }, { header: 'WFH Date', key: 'request_date', width: 14 }, { header: 'Status', key: 'status', width: 12 }, { header: 'Reason', key: 'reason', width: 30 }, { header: 'Requested', key: 'requested_at', width: 14 }, { header: 'Reviewed', key: 'reviewed_at', width: 14 }], `wfh_export_${new Date().toISOString().split('T')[0]}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
+          <button onClick={() => exportService.excel(filteredRequests.map(mapWfhExportRow), WFH_EXPORT_COLUMNS, `wfh_export_${companyDateStr()}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
         </div>
       </div>
 

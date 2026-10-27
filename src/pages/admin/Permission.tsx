@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 
 import { permissionService } from '../../services/permission/permissionService';
+import AdminAddPermissionDrawer from '../../components/requests/AdminAddPermissionDrawer';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { companyDateStr } from '../../utils/companyDate';
 import { shiftDateStr, permissionsOnDate, formatCompanyDateLabel } from '../../services/admin/permissionTimelineRules';
@@ -17,6 +18,7 @@ import { PersistedSettingToggle, useStoredAppSettings } from '../../components/s
 import RecordsModal from '../../components/common/RecordsModal';
 import { clickableCardProps } from '../../services/common/cardDetails';
 import { permissionCards, hoursLabel, type PermissionCard } from '../../services/common/requestCardRules';
+import { mapPermissionExportRow, PERMISSION_EXPORT_COLUMNS } from '../../services/export/adminExportRules';
 
 const mockUsage: any[] = [];
 
@@ -214,7 +216,7 @@ const AdminPermission: React.FC = () => {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => setSettingsDrawer(true)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Settings size={16}/> Permission Settings</button>
-          <button onClick={() => exportService.excel(filteredRequests.map(r => ({ employee: r.employees ? `${(r.employees as any).first_name} ${(r.employees as any).last_name}` : '-', permission_date: r.permission_date, start_time: r.start_time, end_time: r.end_time, duration: r.duration_minutes, status: r.status, reason: r.reason })), [{ header: 'Employee', key: 'employee', width: 22 }, { header: 'Date', key: 'permission_date', width: 14 }, { header: 'Start', key: 'start_time', width: 10 }, { header: 'End', key: 'end_time', width: 10 }, { header: 'Minutes', key: 'duration', width: 10 }, { header: 'Status', key: 'status', width: 12 }, { header: 'Reason', key: 'reason', width: 30 }], `permission_export_${new Date().toISOString().split('T')[0]}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
+          <button onClick={() => exportService.excel(filteredRequests.map(mapPermissionExportRow), PERMISSION_EXPORT_COLUMNS, `permission_export_${companyDateStr()}`)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Download size={16}/> Export Excel</button>
           <button onClick={() => setAddDrawer(true)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Plus size={16}/> Add Permission</button>
         </div>
       </div>
@@ -626,30 +628,9 @@ const AdminPermission: React.FC = () => {
         </div>
       )}
 
-      {/* Add Permission Drawer */}
+      {/* Add Permission Drawer (saves for real; see AdminAddPermissionDrawer) */}
       {addDrawer && (
-        <div className="drawer-overlay" onClick={() => setAddDrawer(false)}>
-          <div className="drawer wide-drawer" onClick={e => e.stopPropagation()}>
-            <div className="drawer-header">
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>Add Permission (Admin)</h2>
-              <button className="icon-button" onClick={() => setAddDrawer(false)} aria-label="Close"><X size={20} /></button>
-            </div>
-            <div className="drawer-body">
-              <form onSubmit={e => { e.preventDefault(); setAddDrawer(false); showToast('Permission added successfully'); }} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                <div><label className="form-label">Employee</label><select className="form-control" aria-label="Employee"><option>Select Employee</option></select></div>
-                <div><label className="form-label">Date</label><input type="date" className="form-control" aria-label="Date" /></div>
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                  <div style={{ flex: 1 }}><label className="form-label">Start Time</label><input type="time" className="form-control" defaultValue="14:00" id="pt_start" aria-label="Start Time" /></div>
-                  <div style={{ flex: 1 }}><label className="form-label">End Time</label><input type="time" className="form-control" defaultValue="15:30" id="pt_end" aria-label="End Time" /></div>
-                </div>
-                <div><label className="form-label">Duration</label><input type="text" className="form-control" disabled value="1h 30m" style={{ backgroundColor: 'var(--gray-100)' }} aria-label="Duration" /></div>
-                <div><label className="form-label">Reason *</label><textarea required className="form-control" rows={3} aria-label="Reason"></textarea></div>
-                <div><label className="form-label">Status</label><select className="form-control" aria-label="Status"><option>Approved</option><option>Pending</option></select></div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button type="submit" className="btn btn-primary">Save Permission</button></div>
-              </form>
-            </div>
-          </div>
-        </div>
+        <AdminAddPermissionDrawer onClose={() => setAddDrawer(false)} onSaved={msg => { showToast(msg); fetchRequests(); }} />
       )}
 
       {/* Settings Drawer */}

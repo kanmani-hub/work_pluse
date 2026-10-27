@@ -273,20 +273,20 @@ const AdminSettings: React.FC = () => {
       
       <h3 className="section-title" style={{ marginTop: '2rem' }}>Automatic Clock-Out</h3>
       <div className="toggle-row">
-        <div><div style={{ fontWeight: 600 }}>Enable Automatic Clock-Out</div><div className="help-text">Employees who remain clocked in after their shift will be automatically clocked out after the configured grace period.</div></div>
+        <div><div style={{ fontWeight: 600 }}>Enable Missing Clock-Out Detection</div><div className="help-text">When an employee is still clocked in after the shift end (plus the hours below), the server marks the day as a missing clock-out, closes any open break at the shift end and notifies the employee. No clock-out time is invented: the employee submits the real time with a reason and HR verifies it.</div></div>
         <input type="checkbox" className="toggle" checked={settings.app.autoClockOut} onChange={e => handleChangeApp('autoClockOut', e.target.checked)}/>
       </div>
       {settings.app.autoClockOut && (
         <div className="form-grid" style={{ marginTop: '0.5rem', backgroundColor: 'var(--bg-surface-elevated)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
           <div>
-            <label className="form-label">Auto Clock-Out After Shift Ends (Hours)</label>
+            <label className="form-label">Flag Missing Clock-Out After Shift Ends (Hours)</label>
             <input type="number" min="0" className="form-control" value={settings.app.autoClockOutGraceHours} onChange={e => handleChangeApp('autoClockOutGraceHours', parseInt(e.target.value) || 0)} aria-label="Auto Clock-Out After Shift Ends (Hours)" />
           </div>
           <div>
-            <label className="form-label">Auto Clock-Out Mode</label>
+            <label className="form-label">When to Flag</label>
             <select className="form-control" value={settings.app.autoClockOutMode} onChange={e => handleChangeApp('autoClockOutMode', e.target.value)} aria-label="Auto Clock-Out Mode">
-              <option value="after_grace_period">After Grace Period</option>
-              <option value="at_shift_end">At Shift End</option>
+              <option value="after_grace_period">After the hours above</option>
+              <option value="at_shift_end">Immediately at shift end</option>
             </select>
           </div>
         </div>

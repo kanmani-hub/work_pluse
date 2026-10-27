@@ -216,8 +216,9 @@ export const reportService = {
   async getLeaveReport(startDate: string, endDate: string) {
     const { data, error } = await supabase.from('leave_requests')
       .select('*, employees!leave_requests_employee_id_fkey(first_name, last_name, employee_code, departments(name)), leave_types(name)')
-      .gte('start_date', startDate)
-      .lte('end_date', endDate)
+      // every leave that overlaps the range (a leave crossing the range boundary is included)
+      .lte('start_date', endDate)
+      .gte('end_date', startDate)
       .order('start_date', { ascending: false });
     return { data, error };
   },

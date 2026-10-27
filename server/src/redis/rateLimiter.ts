@@ -22,7 +22,8 @@ export function createRateLimiter(options: RateLimiterOptions) {
     keyGenerator = (req: Request) => {
       // Use employee ID if authenticated, or IP address as fallback
       const employeeId = (req as any).user?.employee_id || (req as any).user?.id;
-      const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown-ip';
+      // req.ip honours X-Forwarded-For only when 'trust proxy' is configured (security fix MS-7)
+      const ip = req.ip || req.socket.remoteAddress || 'unknown-ip';
       return employeeId ? `user:${employeeId}` : `ip:${ip}`;
     },
     message = 'Too many requests. Please try again later.',

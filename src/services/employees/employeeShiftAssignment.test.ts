@@ -94,7 +94,8 @@ describe('employeeService.assignShift', () => {
             return {
               eq: vi.fn().mockImplementation((field: string, id: string) => {
                 updatedEqId = id;
-                return Promise.resolve({ data: [{ id }], error: null });
+                // the service reads the changed rows back to confirm the update was stored
+                return { select: vi.fn().mockResolvedValue({ data: [{ id }], error: null }) };
               }),
             };
           }),
@@ -158,5 +159,30 @@ describe('employeeService.assignShift', () => {
 
     await employeeService.assignShift('emp-123', 'shift-456', '');
     expect(checkedDate).toBe(today);
+  });
+
+  it('reports an error when the update changed no row (refused by RLS), never success', async () => {
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'shift_assignments') {
+        return {
+          select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'asgn-existing' }, error: null }) }) }) }),
+          update: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ select: vi.fn().mockResolvedValue({ data: [], error: null }) }) }),
+        };
+      }
+      return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }) }) }) };
+    });
+    const res: any = await employeeService.assignShift('emp-1', 'shift-1', '2026-11-01');
+    expect(res.error).toBeInstanceOf(Error);
+    expect(res.error.message).toMatch(/not saved/);
+  });
+
+  it('returns the lookup error instead of guessing when the existing assignment cannot be read', async () => {
+    (supabase.from as any).mockImplementation(() => ({
+      select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: { message: 'timeout' } }) }) }) }),
+    }));
+    const res: any = await employeeService.assignShift('emp-1', 'shift-1', '2026-11-01');
+    expect(res.error).toEqual({ message: 'timeout' });
   });
 });

@@ -18,6 +18,7 @@ import { companyDateStr } from '../../utils/companyDate';
 import RecordsModal from '../../components/common/RecordsModal';
 import { clickableCardProps, EMPLOYEE_COLUMNS } from '../../services/common/cardDetails';
 import { employeeCards, type EmployeeCard } from '../../services/employees/employeeCardRules';
+import { validateImport, runEmployeeImport, importSummary, IMPORT_TEMPLATE_CSV, type ParsedImport, type ImportResult } from '../../services/employees/employeeImportRules';
 
 const AdminEmployees: React.FC = () => {
   const navigate = useNavigate();
@@ -54,7 +55,11 @@ const AdminEmployees: React.FC = () => {
   const [assignShiftModal, setAssignShiftModal] = useState<any>(null);
   const [assignOfficeModal, setAssignOfficeModal] = useState<any>(null);
   const [importModal, setImportModal] = useState(false);
-  const [importState, setImportState] = useState<'idle' | 'uploading' | 'done'>('idle');
+  const [importState, setImportState] = useState<'idle' | 'preview' | 'importing' | 'done'>('idle');
+  const [importFileName, setImportFileName] = useState('');
+  const [importParsed, setImportParsed] = useState<ParsedImport | null>(null);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importProgress, setImportProgress] = useState({ done: 0, total: 0 });
   const [deleteModal, setDeleteModal] = useState<any>(null);
 
   // Form State
@@ -291,9 +296,42 @@ const AdminEmployees: React.FC = () => {
     }
   };
 
-  const simulateImport = () => {
-    setImportState('uploading');
-    setTimeout(() => setImportState('done'), 1500);
+  const resetImport = () => {
+    setImportState('idle'); setImportFileName(''); setImportParsed(null); setImportResult(null); setImportProgress({ done: 0, total: 0 });
+  };
+
+  // Read the CSV in the browser and validate every row before anything is sent (employeeImportRules)
+  const handleImportFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (!/\.csv$/i.test(file.name)) { alert('Please choose a .csv file (save Excel sheets as CSV first).'); return; }
+    if (file.size > 2 * 1024 * 1024) { alert('The file is larger than 2 MB.'); return; }
+    const text = await file.text();
+    setImportFileName(file.name);
+    setImportParsed(validateImport(text, {
+      existingEmails: employees.map((e: any) => e.email).filter(Boolean),
+      departments: (departments || []).map((d: any) => ({ id: d.id, name: d.name })),
+      offices: offices.map((o: any) => ({ id: o.id, name: o.name })),
+      roles: roles.map((r: any) => ({ id: r.id, name: r.name })),
+    }));
+    setImportState('preview');
+  };
+
+  const handleRunImport = async () => {
+    if (!importParsed || importState === 'importing' || !importParsed.valid.length) return;   // no double submit
+    setImportState('importing');
+    setImportProgress({ done: 0, total: importParsed.valid.length });
+    const result = await runEmployeeImport(importParsed.valid, (payload) => employeeService.createEmployee(payload as any),
+      (done, total) => setImportProgress({ done, total }));
+    setImportResult(result);
+    setImportState('done');
+    if (result.created.length) loadData();
+  };
+
+  const downloadImportTemplate = () => {
+    const url = URL.createObjectURL(new Blob([IMPORT_TEMPLATE_CSV], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = 'employee_import_template.csv'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   return (
@@ -313,7 +351,7 @@ const AdminEmployees: React.FC = () => {
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>Manage profiles, departments, offices, shifts and status.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <button onClick={() => setImportModal(true)} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Upload size={16}/> Import Employees</button>
+          <button onClick={() => { resetImport(); setImportModal(true); }} className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Upload size={16}/> Import Employees</button>
           <button onClick={() => exportService.excel(filteredEmployees.map(e => ({
             employee_code: e.employee_code,
             name: `${e.first_name} ${e.last_name}`,
@@ -904,42 +942,86 @@ const AdminEmployees: React.FC = () => {
           <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '500px', animation: 'slideUp 0.3s' }}>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
               Import Employees
-              <button onClick={() => setImportModal(false)} className="icon-button" aria-label="Close"><X size={18}/></button>
+              <button onClick={() => { if (importState === 'importing') return; setImportModal(false); resetImport(); }} className="icon-button" aria-label="Close" disabled={importState === 'importing'}><X size={18}/></button>
             </h3>
             
             {importState === 'idle' && (
               <>
-                <div style={{ border: '2px dashed var(--gray-300)', borderRadius: 'var(--radius-lg)', padding: '3rem 1rem', textAlign: 'center', backgroundColor: 'var(--gray-50)', marginBottom: '1.5rem' }}>
+                <div style={{ border: '2px dashed var(--gray-300)', borderRadius: 'var(--radius-lg)', padding: '2.5rem 1rem', textAlign: 'center', backgroundColor: 'var(--gray-50)', marginBottom: '1rem' }}>
                   <Upload size={32} style={{ margin: '0 auto 1rem auto', color: 'var(--text-secondary)' }} />
-                  <div style={{ fontWeight: 500, marginBottom: '0.25rem' }}>Drag and drop CSV or Excel file here</div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>or click to browse</div>
-                  <button onClick={simulateImport} className="btn btn-outline" style={{ marginTop: '1.5rem' }}>Choose File</button>
+                  <div style={{ fontWeight: 500, marginBottom: '0.25rem' }}>Choose a CSV file</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Required columns: first_name, last_name, email, joining_date (YYYY-MM-DD), password. Every row is checked before anything is saved; the file stays on this computer.</div>
+                  <label className="btn btn-outline" style={{ marginTop: '1.25rem', display: 'inline-block', cursor: 'pointer' }}>
+                    Choose File
+                    <input type="file" accept=".csv,text/csv" style={{ display: 'none' }} aria-label="Choose CSV file"
+                      onChange={e => { handleImportFile(e.target.files?.[0]); e.target.value = ''; }} />
+                  </label>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'center' }}>
-                  <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}><FileText size={14} style={{ marginRight: '0.25rem' }}/> Download Sample Template</button>
+                  <button type="button" onClick={downloadImportTemplate} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}><FileText size={14} style={{ marginRight: '0.25rem' }}/> Download Sample Template</button>
                 </div>
               </>
             )}
 
-            {importState === 'uploading' && (
-              <div style={{ padding: '3rem', textAlign: 'center' }}>
-                <div className="pulse-ring" style={{ width: '40px', height: '40px', margin: '0 auto 1rem auto', border: '3px solid var(--primary-500)', borderRadius: '50%', borderTopColor: 'transparent', animation: 'spin 1s linear infinite' }} />
-                <div style={{ fontWeight: 500 }}>Processing file...</div>
+            {importState === 'preview' && importParsed && (
+              <div>
+                <div style={{ fontSize: '0.875rem', marginBottom: '0.75rem' }}>File: <strong>{importFileName}</strong></div>
+                {importParsed.headerErrors.length > 0 ? (
+                  <div role="alert" style={{ backgroundColor: 'var(--danger-50, #fef2f2)', color: 'var(--danger-700, #b91c1c)', padding: '0.75rem', borderRadius: 'var(--radius-md)', fontSize: '0.8125rem' }}>
+                    {importParsed.headerErrors.map((e, i) => <div key={i}>{e}</div>)}
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: '1.5rem', fontSize: '0.875rem', marginBottom: '1rem', backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}><span style={{ fontSize: '1.25rem', fontWeight: 600 }}>{importParsed.rows.length}</span><span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Rows</span></div>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}><span style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--success-600)' }}>{importParsed.valid.length}</span><span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Valid</span></div>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}><span style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--danger-600)' }}>{importParsed.invalid.length}</span><span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>With errors</span></div>
+                    </div>
+                    {importParsed.invalid.length > 0 && (
+                      <div style={{ maxHeight: '180px', overflowY: 'auto', fontSize: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '0.5rem', marginBottom: '1rem' }}>
+                        {importParsed.invalid.map(r => <div key={r.line} style={{ marginBottom: '0.25rem' }}><strong>Line {r.line}</strong> ({r.values.email || 'no e-mail'}): {r.errors.join(' ')}</div>)}
+                      </div>
+                    )}
+                    {importParsed.invalid.length > 0 && importParsed.valid.length > 0 && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>Rows with errors are not imported. You can fix them and import them afterwards.</div>
+                    )}
+                  </>
+                )}
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                  <button type="button" onClick={resetImport} className="btn btn-outline" style={{ flex: 1 }}>Choose another file</button>
+                  <button type="button" onClick={handleRunImport} className="btn btn-primary" style={{ flex: 1 }} disabled={importParsed.headerErrors.length > 0 || importParsed.valid.length === 0}>
+                    Import {importParsed.valid.length} employee{importParsed.valid.length === 1 ? '' : 's'}
+                  </button>
+                </div>
               </div>
             )}
 
-            {importState === 'done' && (
-              <div style={{ textAlign: 'center' }}>
-                <CheckCircle2 size={48} color="var(--success)" style={{ margin: '0 auto 1rem auto' }} />
-                <h4 style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Import Successful</h4>
-                <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', fontSize: '0.875rem', marginBottom: '1.5rem', backgroundColor: 'var(--gray-50)', padding: '1rem', borderRadius: 'var(--radius-md)' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}><span style={{ fontSize: '1.25rem', fontWeight: 600 }}>0</span><span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Found</span></div>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}><span style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--success-600)' }}>0</span><span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Valid</span></div>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}><span style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--danger-600)' }}>0</span><span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>Invalid</span></div>
-                </div>
-                <button onClick={() => { setImportModal(false); setImportState('idle'); showToast('120 employees imported'); }} className="btn btn-primary" style={{ width: '100%' }}>Done</button>
+            {importState === 'importing' && (
+              <div style={{ padding: '2.5rem', textAlign: 'center' }}>
+                <div className="pulse-ring" style={{ width: '40px', height: '40px', margin: '0 auto 1rem auto', border: '3px solid var(--primary-500)', borderRadius: '50%', borderTopColor: 'transparent', animation: 'spin 1s linear infinite' }} />
+                <div style={{ fontWeight: 500 }}>Creating employees… {importProgress.done} / {importProgress.total}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.5rem' }}>Keep this window open until it finishes.</div>
               </div>
             )}
+
+            {importState === 'done' && importResult && importParsed && (() => {
+              const summary = importSummary(importResult, importParsed.invalid.length);
+              return (
+                <div style={{ textAlign: 'center' }}>
+                  {summary.status === 'success'
+                    ? <CheckCircle2 size={48} color="var(--success)" style={{ margin: '0 auto 1rem auto' }} />
+                    : <AlertTriangle size={48} color={summary.status === 'failed' ? 'var(--danger)' : 'var(--warning)'} style={{ margin: '0 auto 1rem auto' }} />}
+                  <h4 style={{ fontWeight: 600, marginBottom: '0.5rem' }}>{summary.status === 'success' ? 'Import complete' : summary.status === 'partial' ? 'Import partly completed' : 'Import failed'}</h4>
+                  <div role="status" style={{ fontSize: '0.875rem', marginBottom: '1rem' }}>{summary.message}</div>
+                  {importResult.failed.length > 0 && (
+                    <div style={{ textAlign: 'left', maxHeight: '160px', overflowY: 'auto', fontSize: '0.75rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '0.5rem', marginBottom: '1rem' }}>
+                      {importResult.failed.map(f => <div key={f.line}><strong>Line {f.line}</strong> ({f.email}): {f.message}</div>)}
+                    </div>
+                  )}
+                  <button onClick={() => { setImportModal(false); if (importResult.created.length) showToast(summary.message); resetImport(); }} className="btn btn-primary" style={{ width: '100%' }}>Done</button>
+                </div>
+              );
+            })()}
 
           </div>
         </div>

@@ -71,4 +71,85 @@ export const adminAttendanceService = {
 
     return { ...day, isToday: date === today, errors };
   },
+
+  /**
+   * Admin attendance correction. Validates inputs, persists clock-in, clock-out,
+   * break minutes and status, and writes an immutable audit log.
+   */
+  async correctAttendance(params: import('./attendanceCorrectionRules').AttendanceCorrectionInput) {
+    const { validateAttendanceCorrection } = await import('./attendanceCorrectionRules');
+    const { auditService } = await import('../audit/auditService');
+
+    const validation = validateAttendanceCorrection(params);
+    if (validation.error || !validation.data) {
+      return { data: null, error: new Error(validation.error || 'Validation failed.') };
+    }
+
+    const { clockInISO, clockOutISO, breakMinutes, workedHours, status, reason } = validation.data;
+
+    // 1. Find existing record
+    let existing: any = null;
+    if (params.attendanceId && !params.attendanceId.startsWith('no-attendance-')) {
+      const { data } = await supabase.from('attendance').select('*').eq('id', params.attendanceId).maybeSingle();
+      existing = data;
+    } else {
+      const { data } = await supabase.from('attendance').select('*').eq('employee_id', params.employeeId).eq('attendance_date', params.date).maybeSingle();
+      existing = data;
+    }
+
+    const updateFields = {
+      clock_in_at: clockInISO,
+      clock_out_at: clockOutISO,
+      break_minutes: breakMinutes,
+      worked_hours: workedHours,
+      status,
+      notes: reason,
+      updated_at: new Date().toISOString(),
+    };
+
+    let savedData: any = null;
+    if (existing) {
+      const { data, error } = await (supabase.from('attendance') as any)
+        .update(updateFields)
+        .eq('id', existing.id)
+        .select()
+        .single();
+      if (error) return { data: null, error: new Error(`Failed to save correction: ${error.message}`) };
+      savedData = data;
+    } else {
+      const newId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `att-${Date.now()}`;
+      const { data, error } = await (supabase.from('attendance') as any)
+        .insert({
+          id: newId,
+          employee_id: params.employeeId,
+          attendance_date: params.date,
+          required_hours: params.requiredHours ?? 8,
+          is_half_day: status === 'HALF_DAY',
+          is_auto_logged_out: false,
+          ...updateFields,
+        })
+        .select()
+        .single();
+      if (error) return { data: null, error: new Error(`Failed to create corrected record: ${error.message}`) };
+      savedData = data;
+    }
+
+    // 2. Audit recording
+    try {
+      await auditService.recordAuditLog({
+        action: 'ATTENDANCE_CORRECTED',
+        module: 'ATTENDANCE',
+        entity_type: 'attendance',
+        entity_id: savedData.id,
+        description: `Attendance record corrected on ${params.date}. Reason: ${reason}`,
+        old_values: existing ? { clock_in_at: existing.clock_in_at, clock_out_at: existing.clock_out_at, status: existing.status, break_minutes: existing.break_minutes } : null,
+        new_values: updateFields,
+        metadata: { reason },
+      });
+    } catch (auditErr) {
+      console.error('[AUDIT ERROR]', auditErr);
+    }
+
+    return { data: savedData, error: null };
+  },
 };

@@ -370,21 +370,24 @@ export const employeeService = {
   async assignShift(employeeId: string, shiftTemplateId: string, effectiveDate?: string) {
     const targetDate = (effectiveDate && effectiveDate.trim() !== '') ? effectiveDate : companyDateStr();
     // Check if an assignment already exists for this date
-    const { data: existing } = await supabase
+    const { data: existing, error: lookupError } = await supabase
       .from('shift_assignments')
       .select('id')
       .eq('employee_id', employeeId)
       .eq('effective_date', targetDate)
       .maybeSingle();
+    if (lookupError) return { data: null, error: lookupError };
 
     if (existing) {
       // Update existing
-      const { data, error } = await supabase
-        .from('shift_assignments')
-        // @ts-ignore
+      const { data: updated, error: updateError } = await (supabase
+        .from('shift_assignments') as any)
         .update({ shift_template_id: shiftTemplateId })
-        // @ts-ignore
-        .eq('id', (existing as any).id);
+        .eq('id', (existing as any).id)
+        .select('id');
+      // A refused update (RLS) changes 0 rows without an error: never report it as saved
+      const error = updateError || (!updated || updated.length === 0 ? new Error('The shift assignment was not saved (no permission or the record changed).') : null);
+      const data = error ? null : updated;
       if (!error) {
         await notifyShiftAssignment(employeeId, (existing as any).id, shiftTemplateId, targetDate);
         import('../audit/auditService').then(({ auditService }) => {

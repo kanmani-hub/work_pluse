@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { geoService } from '../redis/geoService.js';
-import { trackingBufferService } from '../services/trackingBufferService.js';
+import { trackingBufferService, clampPingTime } from '../services/trackingBufferService.js';
 import { requireAuth, requireRole, type AuthenticatedRequest } from '../middleware/auth.js';
 
 const router = Router();
@@ -49,7 +49,8 @@ router.post('/ping', requireAuth as any, async (req: AuthenticatedRequest, res, 
 
     const payload = {
       ...parse.data,
-      timestamp: parse.data.timestamp || new Date().toISOString(),
+      // the client clock is not trusted: future or very old times are replaced by the server time
+      timestamp: clampPingTime(parse.data.timestamp),
     };
 
     const queued = await trackingBufferService.ingestPing(payload);

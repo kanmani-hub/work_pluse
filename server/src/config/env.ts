@@ -18,6 +18,10 @@ const envSchema = z.object({
   REDIS_MAX_RECONNECT_ATTEMPTS: z.coerce.number().default(10),
 
   // Supabase (optional if standalone Redis caching proxy)
+  // Fixed test tokens (dev-admin-token / dev-employee-token) in NODE_ENV=development only when true
+  ALLOW_DEV_TOKENS: z.enum(['true', 'false']).default('false').transform((v) => v === 'true'),
+  // Express 'trust proxy' (e.g. 1 behind one reverse proxy); the client IP for rate limiting comes from it
+  TRUST_PROXY: z.string().default('false'),
   SUPABASE_URL: z.string().optional().default(''),
   SUPABASE_ANON_KEY: z.string().optional().default(''),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(''),

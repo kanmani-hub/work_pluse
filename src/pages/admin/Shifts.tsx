@@ -7,6 +7,9 @@ import {
 } from 'lucide-react';
 
 import { shiftService } from '../../services/shifts/shiftService';
+import { employeeService } from '../../services/employees/employeeService';
+import { assignShiftToEmployees, assignmentSummary, validateAssignment } from '../../services/shifts/shiftAssignmentBatch';
+import { companyDateStr } from '../../utils/companyDate';
 import { validateShiftTimes, getShiftDurationMinutes, formatDurationMinutes } from '../../utils/shiftTime';
 import { useStoredAppSettings } from '../../components/settings/PersistedSettingToggle';
 import RecordsModal from '../../components/common/RecordsModal';
@@ -33,7 +36,13 @@ const AdminShifts: React.FC = () => {
   const [isDuplicating, setIsDuplicating] = useState(false);
   const [showDetail, setShowDetail] = useState<any>(null);
   const [assignModal, setAssignModal] = useState<any>(null);
-  const [conflictModal, setConflictModal] = useState<any>(null);
+  // Assign Shift (real save; see shiftAssignmentBatch)
+  const [assignDate, setAssignDate] = useState(companyDateStr());
+  const [assignSearch, setAssignSearch] = useState('');
+  const [assignEmployees, setAssignEmployees] = useState<any[] | null>(null);
+  const [assignSelected, setAssignSelected] = useState<string[]>([]);
+  const [assignSaving, setAssignSaving] = useState(false);
+  const [assignError, setAssignError] = useState('');
   const [deactivateModal, setDeactivateModal] = useState<any>(null);
   const [deleteModal, setDeleteModal] = useState<any>(null);
   const [deleteError, setDeleteError] = useState<any>(null);
@@ -49,9 +58,11 @@ const AdminShifts: React.FC = () => {
     ? (companySettings.loading ? 'Loading…' : 'Unavailable (settings not loaded)')
     : !companySettings.app.autoClockOut
       ? 'Off'
-      // The server closes open sessions once shift end + grace hours has passed; the mode only
-      // decides which time is recorded as the clock-out.
-      : `On: ${companySettings.app.autoClockOutGraceHours ?? 4}h after shift end, recorded at ${companySettings.app.autoClockOutMode === 'at_shift_end' ? 'shift end' : 'that time'}`;
+      // The server flags open days as MISSING_CLOCK_OUT once shift end (+ grace) has passed; no clock-out
+      // time is invented (20261022100000_fix_auto_clock_out.sql).
+      : companySettings.app.autoClockOutMode === 'at_shift_end'
+        ? 'On: missing clock-out flagged at shift end'
+        : `On: missing clock-out flagged ${companySettings.app.autoClockOutGraceHours ?? 4}h after shift end`;
 
   const fetchShifts = async () => {
     setLoading(true);
@@ -186,15 +197,38 @@ const AdminShifts: React.FC = () => {
     fetchShifts();
   };
 
-  const triggerMockConflict = (e: React.FormEvent) => {
-    e.preventDefault();
-    setConflictModal(assignModal);
+  const openAssign = async (shift: any) => {
+    setAssignModal(shift);
+    setAssignDate(companyDateStr());
+    setAssignSearch('');
+    setAssignSelected([]);
+    setAssignError('');
+    setAssignEmployees(null);
+    const { data, error } = await shiftService.getAssignableEmployees();
+    if (error) { setAssignError(`Employees could not be loaded: ${error.message || 'unknown error'}`); setAssignEmployees([]); return; }
+    setAssignEmployees(data || []);
   };
 
-  const resolveConflict = () => {
-    setConflictModal(null);
-    setAssignModal(null);
-    showToast('Shift assigned successfully (Overridden)');
+  const submitAssign = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (assignSaving || !assignModal) return;   // no double submit
+    const invalid = validateAssignment(assignSelected, assignModal.id, assignDate);
+    if (invalid) { setAssignError(invalid); return; }
+    setAssignSaving(true);
+    setAssignError('');
+    const outcome = await assignShiftToEmployees(assignSelected, assignModal.id, assignDate,
+      (id, shiftId, date) => employeeService.assignShift(id, shiftId, date));
+    setAssignSaving(false);
+    const summary = assignmentSummary(outcome);
+    if (outcome.succeeded.length) fetchShifts();   // counts change for whatever was saved
+    if (summary.ok) {
+      showToast(summary.message);
+      setAssignModal(null);
+      return;
+    }
+    const names = new Map((assignEmployees || []).map((x: any) => [x.id, `${x.first_name} ${x.last_name}`]));
+    setAssignSelected(outcome.failed.map((f) => f.employeeId));
+    setAssignError(`${summary.message}\n${outcome.failed.map((f) => `${names.get(f.employeeId) || f.employeeId}: ${f.message}`).join('\n')}`);
   };
 
   const formatTimeAMPM = (timeStr: string) => {
@@ -620,7 +654,7 @@ const AdminShifts: React.FC = () => {
                   Employees Assigned
                   <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     <span className="badge badge-primary">{showDetail.employees === null ? '—' : showDetail.employees} Total</span>
-                    <button onClick={() => setAssignModal(showDetail)} className="btn btn-outline" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}><UserPlus size={14}/> Assign</button>
+                    <button onClick={() => openAssign(showDetail)} className="btn btn-outline" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}><UserPlus size={14}/> Assign</button>
                   </div>
                 </h3>
                 
@@ -650,48 +684,51 @@ const AdminShifts: React.FC = () => {
       )}
 
       {/* Assign Shift Modal */}
-      {assignModal && !conflictModal && (
+      {assignModal && (
         <div className="drawer-overlay" style={{ alignItems: 'center', zIndex: 110 }}>
-          <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '450px', animation: 'slideUp 0.3s' }}>
+          <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '480px', animation: 'slideUp 0.3s' }}>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>Assign Shift</h3>
-            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Assign <strong>{assignModal.name}</strong> to employees.</p>
-            
-            <form onSubmit={triggerMockConflict} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>Assign <strong>{assignModal.name}</strong> to employees from the effective date. An existing assignment on that date is replaced.</p>
+
+            <form onSubmit={submitAssign} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
-                <label className="form-label">Effective Date(s)</label>
-                <input required type="date" className="form-control" defaultValue="2026-09-25" aria-label="Effective Date(s)" />
+                <label className="form-label" htmlFor="assign-date">Effective Date</label>
+                <input id="assign-date" required type="date" className="form-control" value={assignDate} onChange={e => setAssignDate(e.target.value)} aria-label="Effective Date" />
               </div>
-              
+
               <div style={{ position: 'relative' }}>
                 <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-                <input type="text" className="form-control" placeholder="Search employees..." style={{ paddingLeft: '2.25rem' }} aria-label="Search employees" />
+                <input type="text" className="form-control" placeholder="Search employees..." style={{ paddingLeft: '2.25rem' }} aria-label="Search employees" value={assignSearch} onChange={e => setAssignSearch(e.target.value)} />
               </div>
-              
-              <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                Please manage individual and bulk shift assignments in the <button type="button" className="btn btn-outline" style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem', marginLeft: '0.5rem' }} onClick={() => { setAssignModal(null); navigate('/admin/employees'); }}>Employees</button> module.
+
+              <div style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', maxHeight: '240px', overflowY: 'auto' }} role="group" aria-label="Employees">
+                {assignEmployees === null ? (
+                  <div style={{ padding: '1rem', color: 'var(--text-secondary)' }}>Loading employees…</div>
+                ) : assignEmployees.length === 0 ? (
+                  <div style={{ padding: '1rem', color: 'var(--text-secondary)' }}>No active employees found.</div>
+                ) : assignEmployees
+                  .filter((x: any) => `${x.first_name} ${x.last_name} ${x.employee_code}`.toLowerCase().includes(assignSearch.trim().toLowerCase()))
+                  .map((x: any) => (
+                    <label key={x.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.75rem', borderBottom: '1px solid var(--border-color)', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={assignSelected.includes(x.id)}
+                        onChange={e => setAssignSelected(sel => e.target.checked ? [...sel, x.id] : sel.filter(i => i !== x.id))} />
+                      <span>{x.first_name} {x.last_name}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{x.employee_code}</span>
+                    </label>
+                  ))}
               </div>
-              <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
-                <button type="button" onClick={() => setAssignModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Close</button>
+
+              {assignError && (
+                <div role="alert" style={{ whiteSpace: 'pre-line', backgroundColor: 'var(--danger-50, #fef2f2)', color: 'var(--danger-700, #b91c1c)', padding: '0.75rem', borderRadius: 'var(--radius-md)', fontSize: '0.8125rem' }}>{assignError}</div>
+              )}
+
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+                <button type="button" onClick={() => setAssignModal(null)} className="btn btn-outline" style={{ flex: 1 }} disabled={assignSaving}>Cancel</button>
+                <button type="submit" className="btn btn-primary" style={{ flex: 1 }} disabled={assignSaving || assignSelected.length === 0}>
+                  {assignSaving ? 'Saving…' : `Assign${assignSelected.length ? ` (${assignSelected.length})` : ''}`}
+                </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* Conflict Modal */}
-      {conflictModal && (
-        <div className="drawer-overlay" style={{ alignItems: 'center', zIndex: 120 }}>
-          <div className="card" style={{ margin: 'auto', width: '100%', maxWidth: '450px', animation: 'slideUp 0.3s', borderTop: '4px solid var(--warning)' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <AlertTriangle size={20} color="var(--warning-600)" /> Shift Conflict Detected
-            </h3>
-            <div style={{ backgroundColor: 'var(--warning-50)', padding: '1rem', borderRadius: 'var(--radius-md)', color: 'var(--warning-800)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
-              
-            </div>
-            <div style={{ display: 'flex', gap: '1rem' }}>
-              <button type="button" onClick={() => setConflictModal(null)} className="btn btn-outline" style={{ flex: 1 }}>Cancel Assignment</button>
-              <button onClick={resolveConflict} className="btn btn-primary" style={{ flex: 1 }}>Replace Existing</button>
-            </div>
           </div>
         </div>
       )}

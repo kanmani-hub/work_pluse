@@ -1,5 +1,4 @@
 import { supabase } from '../../lib/supabase';
-import { ADMIN_NOTIFICATION_ROLES } from '../../lib/roles';
 import { salaryService } from '../payroll/salaryService'; // Reusing getCurrentEmployeeId
 import type { EmployeeNotification } from './notificationRules';
 
@@ -174,8 +173,10 @@ export const notificationService = {
   },
 
   /**
-   * Notify all Admin/HR users of a business event (e.g. new request submitted).
-   * Resolves actual admin employee IDs from the DB — never uses hardcoded IDs.
+   * Notify all active Admin/HR users of a business event (e.g. new request submitted).
+   * Runs on the server through rpc('notify_admins') (migration 20261022090200): employees can neither
+   * list other employees nor write into other people's inboxes. The server resolves the recipients,
+   * restricts the notification type and stamps the sender. Returns how many admins were notified.
    */
   async notifyAdmins(params: {
     notification_type: string;
@@ -186,38 +187,19 @@ export const notificationService = {
     entity_type?: string;
     entity_id?: string;
     metadata?: any;
-  }) {
-    const { data: adminRoles } = await supabase
-      .from('roles')
-      .select('id, name')
-      .in('name', [...ADMIN_NOTIFICATION_ROLES]) as any;
-
-    if (!adminRoles || adminRoles.length === 0) return;
-    const roleIds = adminRoles.map((r: any) => r.id);
-
-    const { data: admins } = await supabase
-      .from('employees')
-      .select('id')
-      .in('role_id', roleIds)
-      .eq('status', 'ACTIVE') as any;
-
-    if (!admins || admins.length === 0) return;
-
-    // Dedup: don't create if same entity already notified this admin
-    const notificationsToInsert = admins.map((admin: any) => ({
-      recipient_employee_id: admin.id,
-      notification_type: params.notification_type,
-      title: params.title,
-      message: params.message,
-      priority: params.priority || 'NORMAL',
-      action_url: params.action_url || null,
-      entity_type: params.entity_type || null,
-      entity_id: params.entity_id || null,
-      metadata: params.metadata || null,
-    }));
-
-    const { error } = await supabase.from('notifications').insert(notificationsToInsert as any);
-    if (error) console.error('[NOTIFY] notifyAdmins insert error:', error);
+  }): Promise<{ count: number; error: any }> {
+    const { data, error } = await (supabase.rpc as any)('notify_admins', {
+      p_type: params.notification_type,
+      p_title: params.title,
+      p_message: params.message,
+      p_priority: params.priority || 'NORMAL',
+      p_action_url: params.action_url || null,
+      p_entity_type: params.entity_type || null,
+      p_entity_id: params.entity_id || null,
+      p_metadata: params.metadata || null,
+    });
+    if (error) console.error('[NOTIFY] notifyAdmins failed:', error.message || error);
+    return { count: error ? 0 : Number(data) || 0, error: error || null };
   },
 
   // Notify Admins of Geofence Events
@@ -242,40 +224,15 @@ export const notificationService = {
       return; // Unhandled event type
     }
 
-    // Deduplication check: Has this specific event (or event type for this employee in the last minute) already been notified?
-    // A robust deduplication requires checking existing notifications.
-    if (params.eventId) {
-      const { data: existingNotif } = await supabase
-        .from('notifications')
-        .select('id')
-        .eq('entity_id', params.eventId)
-        .eq('notification_type', 'GEOFENCE')
-        .limit(1);
-      
-      if (existingNotif && existingNotif.length > 0) return;
-    }
-
-    // 1. Fetch admins (Role = System Admin or HR)
-    const { data: adminRoles } = await supabase.from('roles').select('id, name').in('name', [...ADMIN_NOTIFICATION_ROLES]) as any;
-    if (!adminRoles || adminRoles.length === 0) return;
-    
-    const roleIds = adminRoles.map((r: any) => r.id);
-    const { data: admins } = await supabase.from('employees').select('id, email, first_name').in('role_id', roleIds) as any;
-    if (!admins || admins.length === 0) return;
-
-    // 2. Filter out the employee who caused the event (if they happen to be an admin)
-    const validAdmins = admins.filter((a: any) => a.id !== params.empId);
-    
-    // 3. Create notifications
-    const notificationsToInsert = validAdmins.map((admin: any) => ({
-      recipient_employee_id: admin.id,
+    // Duplicates of the same event (same eventId) are dropped by notify_admins on the server.
+    await this.notifyAdmins({
       notification_type: 'GEOFENCE',
       title,
       message,
       priority: 'HIGH',
       action_url: '/admin/dashboard',
       entity_type: 'geofence_events',
-      entity_id: params.eventId || null,
+      entity_id: params.eventId || undefined,
       metadata: {
         employee_id: params.empId,
         employee_code: params.employeeCode,
@@ -283,11 +240,6 @@ export const notificationService = {
         distance_meters: params.distance,
         timestamp: new Date().toISOString()
       }
-    }));
-
-    if (notificationsToInsert.length > 0) {
-      const { error } = await supabase.from('notifications').insert(notificationsToInsert as any);
-      if (error) console.error('Failed to insert geofence notifications', error);
-    }
+    });
   }
 };
