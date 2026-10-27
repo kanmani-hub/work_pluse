@@ -82,10 +82,11 @@ export const adminAttendanceService = {
 
     const validation = validateAttendanceCorrection(params);
     if (validation.error || !validation.data) {
-      return { data: null, error: new Error(validation.error || 'Validation failed.') };
+      return { success: false, data: null, error: validation.error || 'Validation failed.' };
     }
 
     const { clockInISO, clockOutISO, breakMinutes, workedHours, status, reason } = validation.data;
+    const date = params.dateStr || params.date || '';
 
     // 1. Find existing record
     let existing: any = null;
@@ -93,7 +94,7 @@ export const adminAttendanceService = {
       const { data } = await supabase.from('attendance').select('*').eq('id', params.attendanceId).maybeSingle();
       existing = data;
     } else {
-      const { data } = await supabase.from('attendance').select('*').eq('employee_id', params.employeeId).eq('attendance_date', params.date).maybeSingle();
+      const { data } = await supabase.from('attendance').select('*').eq('employee_id', params.employeeId).eq('attendance_date', date).maybeSingle();
       existing = data;
     }
 
@@ -114,7 +115,7 @@ export const adminAttendanceService = {
         .eq('id', existing.id)
         .select()
         .single();
-      if (error) return { data: null, error: new Error(`Failed to save correction: ${error.message}`) };
+      if (error) return { success: false, data: null, error: `Failed to save correction: ${error.message}` };
       savedData = data;
     } else {
       const newId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `att-${Date.now()}`;
@@ -122,7 +123,7 @@ export const adminAttendanceService = {
         .insert({
           id: newId,
           employee_id: params.employeeId,
-          attendance_date: params.date,
+          attendance_date: date,
           required_hours: params.requiredHours ?? 8,
           is_half_day: status === 'HALF_DAY',
           is_auto_logged_out: false,
@@ -130,7 +131,7 @@ export const adminAttendanceService = {
         })
         .select()
         .single();
-      if (error) return { data: null, error: new Error(`Failed to create corrected record: ${error.message}`) };
+      if (error) return { success: false, data: null, error: `Failed to create corrected record: ${error.message}` };
       savedData = data;
     }
 
@@ -141,7 +142,7 @@ export const adminAttendanceService = {
         module: 'ATTENDANCE',
         entity_type: 'attendance',
         entity_id: savedData.id,
-        description: `Attendance record corrected on ${params.date}. Reason: ${reason}`,
+        description: `Attendance record corrected on ${date}. Reason: ${reason}`,
         old_values: existing ? { clock_in_at: existing.clock_in_at, clock_out_at: existing.clock_out_at, status: existing.status, break_minutes: existing.break_minutes } : null,
         new_values: updateFields,
         metadata: { reason },
@@ -150,6 +151,6 @@ export const adminAttendanceService = {
       console.error('[AUDIT ERROR]', auditErr);
     }
 
-    return { data: savedData, error: null };
+    return { success: true, data: savedData, error: null };
   },
 };
