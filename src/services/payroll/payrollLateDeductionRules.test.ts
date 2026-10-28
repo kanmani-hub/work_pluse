@@ -387,3 +387,150 @@ describe('Salary-Based Late Login Deduction Rules', () => {
     expect(sessionBeyond.lateMinutes).toBe(15);
   });
 });
+
+describe('Late Deduction Audit: Exact Scenario Investigation & Boundary Tests', () => {
+  // Scenario 1: 1 minute late -> ₹2
+  // Under salary_based deduction: Monthly Gross ₹20,000, 26 working days, 8h/day (480 mins).
+  // Rate = 20,000 / (26 * 480) = 1.60256... ₹/min.
+  // 1 min late * 1.60256 = ₹1.60 -> rounded to nearest rupee = ₹2.
+  it('investigates 1 minute late -> ₹2 (Salary ₹20,000, 26 working days, 8h shift, round)', () => {
+    const res = calculateLateDeduction({
+      enableLateLoginDeduction: true,
+      lateDeductionMethod: 'salary_based',
+      monthlySalary: 20000,
+      workingDays: 26,
+      defaultRequiredHours: 8,
+      totalLateMinutes: 1,
+      salaryRounding: 'round',
+    });
+    expect(res.salaryPerMinute).toBeCloseTo(1.6026, 3);
+    expect(res.chargeableMinutes).toBe(1);
+    expect(res.unroundedAmount).toBeCloseTo(1.6026, 3);
+    expect(res.deductionAmount).toBe(2);
+  });
+
+  // Scenario 2: 3 minutes late -> ₹9
+  // Monthly Gross ₹36,000, 25 working days, 8h/day (rate = ₹3.00/min).
+  // 3 min late * 3.00 = ₹9.00.
+  it('investigates 3 minutes late -> ₹9 (Salary ₹36,000, 25 working days, 8h shift, rate = ₹3/min)', () => {
+    const res = calculateLateDeduction({
+      enableLateLoginDeduction: true,
+      lateDeductionMethod: 'salary_based',
+      monthlySalary: 36000,
+      workingDays: 25,
+      defaultRequiredHours: 8,
+      totalLateMinutes: 3,
+      salaryRounding: 'round',
+    });
+    expect(res.salaryPerMinute).toBe(3);
+    expect(res.chargeableMinutes).toBe(3);
+    expect(res.deductionAmount).toBe(9);
+  });
+
+  // Scenario 3: 7 minutes late -> ₹11
+  // Same ₹20,000 salary as Scenario 1:
+  // Rate = 1.60256... ₹/min.
+  // 7 min late * 1.60256 = 11.2179... -> rounded to nearest rupee = ₹11.
+  it('investigates 7 minutes late -> ₹11 (Salary ₹20,000, 26 working days, 8h shift, round)', () => {
+    const res = calculateLateDeduction({
+      enableLateLoginDeduction: true,
+      lateDeductionMethod: 'salary_based',
+      monthlySalary: 20000,
+      workingDays: 26,
+      defaultRequiredHours: 8,
+      totalLateMinutes: 7,
+      salaryRounding: 'round',
+    });
+    expect(res.salaryPerMinute).toBeCloseTo(1.6026, 3);
+    expect(res.chargeableMinutes).toBe(7);
+    expect(res.unroundedAmount).toBeCloseTo(11.218, 2);
+    expect(res.deductionAmount).toBe(11);
+  });
+
+  // On-time check (0 minutes late)
+  it('on-time arrival (0 late minutes) yields ₹0 deduction', () => {
+    const res = calculateLateDeduction({
+      enableLateLoginDeduction: true,
+      lateDeductionMethod: 'salary_based',
+      monthlySalary: 50000,
+      workingDays: 26,
+      totalLateMinutes: 0,
+    });
+    expect(res.deductionAmount).toBe(0);
+    expect(res.chargeableMinutes).toBe(0);
+  });
+
+  // Grace period boundary at clock-in
+  it('grace period boundary: arrival exactly at grace limit is on-time (0 late mins), arrival at grace+1 is late', () => {
+    const shift = { start_time: '09:00:00', end_time: '18:00:00', crosses_midnight: false };
+    const graceMinutes = 15;
+
+    // 09:15:00 IST (exactly 15 mins after 09:00) -> on time
+    const atGraceLimit = new Date('2026-10-08T03:45:00.000Z').getTime();
+    const sessionLimit = resolveClockInSession({
+      nowMs: atGraceLimit,
+      today: '2026-10-08',
+      shift,
+      graceMinutes,
+      timeZone: 'Asia/Kolkata',
+    });
+    expect(sessionLimit.lateMinutes).toBe(0);
+
+    // 09:16:00 IST (16 mins after 09:00, 1 min beyond grace) -> lateMinutes is 16
+    const beyondGrace = new Date('2026-10-08T03:46:00.000Z').getTime();
+    const sessionBeyond = resolveClockInSession({
+      nowMs: beyondGrace,
+      today: '2026-10-08',
+      shift,
+      graceMinutes,
+      timeZone: 'Asia/Kolkata',
+    });
+    expect(sessionBeyond.lateMinutes).toBe(16);
+  });
+
+  // Missing shift configuration fallback
+  it('missing shift configuration: falls back to defaultRequiredHours = 8 without error', () => {
+    const res = calculateLateDeduction({
+      enableLateLoginDeduction: true,
+      lateDeductionMethod: 'salary_based',
+      monthlySalary: 24000,
+      workingDays: 25,
+      totalLateMinutes: 10,
+      defaultRequiredHours: undefined,
+    });
+    // Fallback: 8h shift -> 24000 / (25 * 8 * 60) = 2.00/min
+    expect(res.salaryPerMinute).toBe(2);
+    expect(res.deductionAmount).toBe(20);
+    expect(res.breakdown.defaultShiftHours).toBe(8);
+  });
+
+  // Invalid settings: negative minutes, NaN, zero working days
+  it('invalid settings: negative minutes, NaN, or zero divisor safely yield ₹0 deduction', () => {
+    const resNeg = calculateLateDeduction({
+      enableLateLoginDeduction: true,
+      lateDeductionMethod: 'salary_based',
+      monthlySalary: 30000,
+      workingDays: 25,
+      totalLateMinutes: -10,
+    });
+    expect(resNeg.deductionAmount).toBe(0);
+
+    const resNaN = calculateLateDeduction({
+      enableLateLoginDeduction: true,
+      lateDeductionMethod: 'salary_based',
+      monthlySalary: NaN,
+      workingDays: 25,
+      totalLateMinutes: 15,
+    });
+    expect(resNaN.deductionAmount).toBe(0);
+
+    const resZeroDays = calculateLateDeduction({
+      enableLateLoginDeduction: true,
+      lateDeductionMethod: 'salary_based',
+      monthlySalary: 30000,
+      workingDays: 0,
+      totalLateMinutes: 15,
+    });
+    expect(resZeroDays.deductionAmount).toBe(0);
+  });
+});

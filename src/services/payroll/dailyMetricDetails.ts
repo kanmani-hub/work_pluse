@@ -93,14 +93,15 @@ export function overtimeRuleText(s: any, dailyRate?: number): { enabled: boolean
 }
 
 // ---------------------------------------------------------------- per-employee calculation text
-export function lateFormula(s: any, minutes: number, dailyRate: number): string {
+export function lateFormula(s: any, minutes: number, dailyRate: number, requiredHours: number = 8): string {
   if (!s?.enableLateLoginDeduction) return 'Deduction off';
   if (!(minutes > 0)) return '—';
+  const shiftMins = Math.max(60, (Number(requiredHours) || 8) * 60);
   switch (s.lateDeductionMethod) {
     case 'interval_based': { const iv = s.lateIntervalMinutes || 15; return `floor(${minutes} ÷ ${iv}) × ${inr(s.lateIntervalAmount || 100)}`; }
     case 'fixed': return `fixed ${inr(s.lateFixedAmount || 0)}`;
     case 'per_minute': return `${minutes} × ${inr(s.latePerMinuteRate || 0)}`;
-    case 'salary_based': return `${minutes}m × ${inr(dailyRate / 480)}/m`;
+    case 'salary_based': return `${minutes}m × ${inr(dailyRate / shiftMins)}/m`;
     case 'half_day': return s.halfDayMethod === 'fixed' ? `fixed ${inr(s.lateHalfDayAmount || s.halfDayAmount || 0)}` : `50% × ${inr(dailyRate)}`;
     default: return '—';
   }
@@ -146,7 +147,8 @@ function withStatus(m: Omit<MetricDetail, 'pendingCount' | 'unavailableCount'>, 
  */
 export function lateDayFormula(r: any): string {
   const s = pset(r);
-  const base = lateFormula(s, r.lateMinutes || 0, calc(r).dailyRate || 0);
+  const reqHours = Number(r?.attendance?.shift_template?.required_hours || r?.attendance?.required_hours || 8);
+  const base = lateFormula(s, r.lateMinutes || 0, calc(r).dailyRate || 0, reqHours);
   const mtd = r?.lateMonthToDate;
   if (!s?.enableLateLoginDeduction || !mtd || !((r.lateMinutes || 0) > 0)) return base;
   if (r.lateStatus === 'EXEMPT') return `exempt (within the monthly late-login limit of ${s.monthlyLateLoginLimit ?? 0})`;
