@@ -9,7 +9,7 @@ import { payrollService } from '../../services/payroll/payrollService';
 import { payrollAuditService } from '../../services/payroll/payrollAuditService';
 import { realtimeService } from '../../services/realtime/realtimeService';
 import { useAuth } from '../../context/AuthContext';
-import { earningAdjustmentItems } from '../../services/payroll/payrollRules';
+import { earningAdjustmentItems, parsePayrollSnapshot } from '../../services/payroll/payrollRules';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -79,10 +79,7 @@ const EmployeePayroll: React.FC = () => {
   const getMonthName = (monthNum: number) => MONTH_NAMES[monthNum - 1] || '';
 
   const parseDataSummary = (payroll: any) => {
-    try {
-      if (payroll?.notes) return JSON.parse(payroll.notes);
-    } catch {}
-    return null;
+    return parsePayrollSnapshot(payroll?.remarks) || parsePayrollSnapshot(payroll?.notes);
   };
 
   const getEventIcon = (action: string) => {

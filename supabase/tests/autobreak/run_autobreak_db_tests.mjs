@@ -26,6 +26,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../../..');
 const MIG_DIR = path.join(ROOT, 'supabase/migrations');
 const NEW_MIG = '20261021120000_automatic_break_tracking.sql';
+// Later migrations that redefine NEW_MIG's functions: applied right after it (it is applied last, on seeded data)
+const ON_TOP = ['20261028090300_auto_break_tracking_off_immediate.sql'];
 const ROLLBACK = path.join(ROOT, 'supabase/rollbacks/20261021120000_automatic_break_tracking.rollback.sql');
 
 async function loadPglite() {
@@ -57,12 +59,15 @@ async function newDb({ withNew = true, before } = {}) {
   const db = new PGlite({ extensions: { uuid_ossp } });
   await db.exec(read(path.join(ROOT, 'supabase/tests/rls/00_supabase_shim.sql')));
   for (const f of ALL) {
-    if (f === NEW_MIG) continue;
+    if (f === NEW_MIG || ON_TOP.includes(f)) continue;
     try { await db.exec(migrationSql(f)); } catch (e) { throw new Error(`migration ${f} failed: ${e.message}`); }
   }
   await seed(db);
   if (before) await before(db);
-  if (withNew) await db.exec(migrationSql(NEW_MIG));
+  if (withNew) {
+    await db.exec(migrationSql(NEW_MIG));
+    for (const f of ON_TOP) if (ALL.includes(f)) await db.exec(migrationSql(f));
+  }
   return db;
 }
 
@@ -254,14 +259,35 @@ scenario('policy switched off / grace period', async () => {
   let r = await rpc(db, 'emp', 'report_tracking_event', `'LOCATION_DENIED'`);
   const p = await rpc(db, 'service', 'process_stale_tracking');
   check('T7 disabled policy: no break from events or the stale job', r.reason === 'POLICY_DISABLED' && p.started === 0 && (await breaks(db)).length === 0, JSON.stringify({ r, p }));
-  // grace > 0: the event waits; the job starts it once the grace has passed, at problem time + grace
+  // grace > 0 applies only to signals that are NOT proof of tracking OFF (GPS / location unavailable):
+  // the event waits; the job starts it once the grace has passed, at problem time + grace
   await setPolicy(db, { autoBreakEnabled: true, autoBreakGraceMinutes: 5 });
-  r = await rpc(db, 'emp', 'report_tracking_event', `'LOCATION_DENIED'`);
-  check('T7b with a 5-minute grace the event does not start a break yet', r.reason === 'GRACE_PERIOD' && (await breaks(db)).length === 0, JSON.stringify(r));
+  r = await rpc(db, 'emp', 'report_tracking_event', `'LOCATION_UNAVAILABLE'`);
+  check('T7b with a 5-minute grace, "location unavailable" does not start a break yet', r.reason === 'GRACE_PERIOD' && (await breaks(db)).length === 0, JSON.stringify(r));
   await sys(db, `UPDATE employee_tracking_state SET state_since = now() - interval '7 minutes' WHERE employee_id=$1`, [E.emp]);
   await rpc(db, 'service', 'process_stale_tracking');
   const b = (await openBreaks(db))[0];
-  check('T7c after the grace the job starts it at problem time + grace (≈2 min ago)', b?.reason === 'LOCATION_PERMISSION_DENIED' && ageSec(b.started_at) >= 100 && ageSec(b.started_at) <= 140, b?.started_at);
+  check('T7c after the grace the job starts it at problem time + grace (≈2 min ago)', b?.reason === 'GPS_UNAVAILABLE' && ageSec(b.started_at) >= 100 && ageSec(b.started_at) <= 140, b?.started_at);
+  await db.close();
+});
+
+scenario('tracking explicitly OFF (permission denied): immediate, no grace (2026-10-28)', async () => {
+  const db = await newDb();
+  await clockIn(db, { minsAgo: 40 });
+  await setPolicy(db, { autoBreakEnabled: true, autoBreakGraceMinutes: 5 });
+  const r = await rpc(db, 'emp', 'report_tracking_event', `'LOCATION_DENIED', 'User denied Geolocation'`);
+  const open = await openBreaks(db);
+  check('OFF1 permission denied starts the break at once even with a 5-minute grace, at database time, reason LOCATION_PERMISSION_DENIED',
+    r.action === 'STARTED' && open.length === 1 && open[0].reason === 'LOCATION_PERMISSION_DENIED' && open[0].break_type === 'AUTO_TRACKING' && open[0].source === 'SYSTEM' && ageSec(open[0].started_at) <= 5,
+    JSON.stringify({ r, open }));
+  const note = await one(db, `SELECT count(*)::int c FROM notifications WHERE recipient_employee_id=$1 AND title='Automatic Break Started'`, [E.emp]);
+  const audit = await one(db, `SELECT count(*)::int c FROM audit_logs WHERE action='AUTOMATIC_BREAK_STARTED' AND entity_id=$1`, [open[0]?.id]);
+  check('OFF2 the employee is warned (notification) and the start is audited', note.c === 1 && audit.c === 1, JSON.stringify({ note, audit }));
+  const again = await rpc(db, 'emp', 'report_tracking_event', `'LOCATION_DENIED'`);
+  const p = await rpc(db, 'service', 'process_stale_tracking');
+  check('OFF3 repeated reports and the scheduled job add no second break', again.reason === 'BREAK_ALREADY_ACTIVE' && p.started === 0 && (await breaks(db)).length === 1, JSON.stringify({ again, p }));
+  const t = await rpc(db, 'emp', 'report_tracking_event', `'TIMEOUT'`);
+  check('OFF4 a GPS timeout is still never treated as tracking OFF', t.reason === 'NOT_PROOF_OF_TRACKING_LOSS', JSON.stringify(t));
   await db.close();
 });
 

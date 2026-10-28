@@ -42,8 +42,8 @@ const SalaryEditor: React.FC<SalaryEditorProps> = ({ employeeId, payrollYear, pa
     e.preventDefault();
     setSalaryLoading(true);
     
-    if (Number(salaryForm.basic_salary) < 0) {
-      alert(`Gross salary cannot be negative`);
+    if (Number(salaryForm.basic_salary) <= 0) {
+      alert(`Gross salary must be greater than zero`);
       setSalaryLoading(false);
       return;
     }

@@ -24,6 +24,13 @@ DB tests:  `supabase/tests/autobreak/run_autobreak_db_tests.mjs`
 | WFH: apply GPS-loss rules | `autoBreakWfhGpsLoss` | **off** |
 
 * Zero grace = no intentional waiting period. A **GPS timeout alone never starts a break.**
+* **Tracking explicitly OFF is always immediate (business rule 2026-10-28, migration
+  `20261028090300_auto_break_tracking_off_immediate.sql`).** "Explicitly OFF" = the location permission is
+  denied or revoked (browser `PERMISSION_DENIED`, Permissions API state `denied`, native `NOT_AUTHORIZED`).
+  The break starts at database time when the report arrives, whatever the grace setting. The grace setting
+  now applies only to "GPS / location unavailable" (not proof that tracking is off: no fix yet, indoors, a
+  temporary device error) and to the stale rule. The app also listens to the browser's permission state, so
+  switching location permission off is reported at once even while the GPS watcher is silent.
 * Automatic breaks count under the existing break allowance and excess-break deduction (no payroll
   formula changed). Each break is counted once: totals are recalculated by the database from the break rows.
 * Geofence ("left the office") breaks keep working as before and are not affected by these switches.
@@ -33,7 +40,7 @@ DB tests:  `supabase/tests/autobreak/run_autobreak_db_tests.mjs`
 
 | Situation | Who detects it | What happens |
 |---|---|---|
-| Location permission denied | device → `report_tracking_event('LOCATION_DENIED')` | break `AUTO_TRACKING` / `LOCATION_PERMISSION_DENIED` at server time (office days) |
+| Location permission denied / turned off | device → `report_tracking_event('LOCATION_DENIED')` (watcher error or Permissions API change) | break `AUTO_TRACKING` / `LOCATION_PERMISSION_DENIED` at server time, immediately — never delayed by the grace setting (office days) |
 | GPS / location unavailable | device → `report_tracking_event('LOCATION_UNAVAILABLE')` | break `GPS_UNAVAILABLE` (office days) |
 | GPS timeout | device → `report_tracking_event('TIMEOUT')` | state `GPS_TIMEOUT` only, no break |
 | Network lost / app closed / device asleep | **server** job `process_stale_tracking()` every minute | no fresh location for the interval → break `TRACKING_STALE`, starting at the last fresh location the server received |

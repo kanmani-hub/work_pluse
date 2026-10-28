@@ -166,8 +166,11 @@ export function unresolvedReviewItems(remarks: unknown): { date: string; type?: 
   return Array.isArray(items) ? items : [];
 }
 
-/** Approval is refused while flags are unresolved. Returns the message, or null when approval may proceed. */
-export function approvalBlockReason(remarks: unknown): string | null {
+/** Approval is refused while flags are unresolved or salary is invalid. Returns the message, or null when approval may proceed. */
+export function approvalBlockReason(remarks: unknown, payroll?: { gross_salary?: number | null; basic_salary?: number | null } | null): string | null {
+  if (payroll && typeof payroll.gross_salary === 'number' && payroll.gross_salary <= 0) {
+    return 'Cannot approve payroll with ₹0 gross salary. Configure a valid salary structure and recalculate.';
+  }
   const n = unresolvedReviewItems(remarks).length;
   return n > 0 ? `Cannot approve: ${n} attendance review flag(s) are unresolved. Resolve each flag (Apply or Waive) in the payroll details first.` : null;
 }

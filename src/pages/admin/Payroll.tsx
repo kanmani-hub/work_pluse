@@ -168,12 +168,9 @@ const AdminPayroll: React.FC = () => {
     setTimeout(() => setToast(''), 3000);
   };
 
-  // Parse data summary from payroll.notes
+  // Parse data summary from payroll.remarks or payroll.notes
   const parseDataSummary = (payroll: any) => {
-    try {
-      if (payroll?.notes) return JSON.parse(payroll.notes);
-    } catch {}
-    return null;
+    return parsePayrollSnapshot(payroll?.remarks) || parsePayrollSnapshot(payroll?.notes);
   };
 
   const filteredData = employees.map(emp => {
@@ -436,9 +433,9 @@ const AdminPayroll: React.FC = () => {
     const summary = parseDataSummary(p);
     const settings = globalSettingsService.getSettings().payroll;
     const workingDays = summary?.settings?.workingDaysUsed ?? payrollSettingsService.getWorkingDaysForMonth(p.payroll_year, p.payroll_month, settings, globalSettingsService.getSettings().app?.workingDays);
-    const present = summary?.attendance?.presentDays ?? 0;
-    const approvedLeave = summary?.leave?.approvedLeave ?? 0;
-    const lopLeave = summary?.leave?.lopLeave ?? 0;
+    const present = typeof summary?.attendance?.presentDays === 'number' ? summary.attendance.presentDays : null;
+    const approvedLeave = typeof summary?.leave?.approvedLeave === 'number' ? summary.leave.approvedLeave : null;
+    const lopLeave = typeof summary?.leave?.lopLeave === 'number' ? summary.leave.lopLeave : null;
     return { workingDays, present, approvedLeave, lopLeave };
   };
 
@@ -672,7 +669,7 @@ const AdminPayroll: React.FC = () => {
                   <tbody>
                     {filteredData.map(({ emp, payroll }) => {
                       if (!payroll) {
-                        const hasActiveSalary = emp.salary_structures && emp.salary_structures.some((s: any) => s.is_active);
+                        const hasActiveSalary = emp.salary_structures && emp.salary_structures.some((s: any) => s.is_active && Number(s.basic_salary) > 0);
                         return (
                           <tr key={emp.id}>
                             <td>
@@ -693,17 +690,26 @@ const AdminPayroll: React.FC = () => {
                       }
                       
                       const ts = getTableSummary(payroll);
+                      const isZeroGross = Number(payroll.gross_salary) <= 0;
                       return (
                         <tr key={payroll.id}>
                           <td>
                             <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{emp.first_name} {emp.last_name}</div>
                             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{emp.employee_code} • {emp.department?.name || 'Unknown'}</div>
                           </td>
-                          <td style={{ textAlign: 'right', fontWeight: 500 }}>₹{Number(payroll.gross_salary).toLocaleString('en-IN')}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 500, color: isZeroGross ? 'var(--danger)' : 'inherit' }}>
+                            ₹{Number(payroll.gross_salary).toLocaleString('en-IN')}
+                          </td>
                           <td style={{ textAlign: 'right' }}>{Number.isFinite(ts.workingDays) ? ts.workingDays : '-'}</td>
-                          <td style={{ textAlign: 'right' }}>{ts.present}</td>
+                          <td style={{ textAlign: 'right' }}>{ts.present !== null ? ts.present : <span style={{ color: 'var(--text-secondary)' }}>—</span>}</td>
                           <td style={{ textAlign: 'right' }}>
-                            <span style={{ color: 'var(--text-secondary)' }}>{ts.approvedLeave}</span> / <span style={{ color: ts.lopLeave > 0 ? 'var(--danger-600)' : 'var(--gray-600)', fontWeight: ts.lopLeave > 0 ? 600 : 400 }}>{ts.lopLeave}</span>
+                            {ts.approvedLeave !== null && ts.lopLeave !== null ? (
+                              <>
+                                <span style={{ color: 'var(--text-secondary)' }}>{ts.approvedLeave}</span> / <span style={{ color: ts.lopLeave > 0 ? 'var(--danger-600)' : 'var(--gray-600)', fontWeight: ts.lopLeave > 0 ? 600 : 400 }}>{ts.lopLeave}</span>
+                              </>
+                            ) : (
+                              <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                            )}
                           </td>
                           <td style={{ textAlign: 'right', color: Number(payroll.total_deductions) > 0 ? 'var(--danger)' : 'inherit' }}>
                             ₹{Number(payroll.total_deductions).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
@@ -714,9 +720,23 @@ const AdminPayroll: React.FC = () => {
                           <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)', fontSize: '1rem' }}>
                             ₹{Number(payroll.net_salary).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                           </td>
-                          <td>{getStatusBadge(payroll.status)}</td>
+                          <td>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', alignItems: 'flex-start' }}>
+                              {getStatusBadge(payroll.status)}
+                              {isZeroGross && (
+                                <span className="badge badge-danger" style={{ fontSize: '0.6875rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.3)' }}>
+                                  Invalid Salary (₹0)
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td style={{ textAlign: 'right' }}>
-                            <button onClick={() => openDetailDrawer(payroll)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>View</button>
+                            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                              {isZeroGross && (
+                                <button onClick={() => setShowSalaryEditor(emp.id)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderColor: 'var(--danger)', color: 'var(--danger)' }}>Configure</button>
+                              )}
+                              <button onClick={() => openDetailDrawer(payroll)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>View</button>
+                            </div>
                           </td>
                         </tr>
                       );

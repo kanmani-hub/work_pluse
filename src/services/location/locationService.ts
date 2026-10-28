@@ -890,8 +890,40 @@ export const locationService = {
     }
   },
 
+  /**
+   * Confirmed tracking OFF (business rule 2026-10-28): the browser's own permission signal. When the
+   * employee turns location permission off, the Permissions API reports "denied" at once — even while the
+   * GPS watcher is silent (some browsers never call its error callback after a revoke). This is reported
+   * like a watcher PERMISSION_DENIED (same dedupe), and the server starts the automatic break immediately.
+   * "granted" again resumes tracking (a fresh location then ends the break per the approved policy).
+   * Not available (older WebViews): the watcher error remains the signal; nothing is invented.
+   */
+  _permissionStatus: null as { state: string; onchange: (() => void) | null } | null,
+  async _watchLocationPermission(generation: number) {
+    const perms = typeof navigator !== 'undefined' ? (navigator as any).permissions : null;
+    if (this._permissionStatus || !perms?.query) return;
+    try {
+      const status = await perms.query({ name: 'geolocation' });
+      if (generation !== this._trackingGeneration || this._permissionStatus) return;   // stopped meanwhile
+      this._permissionStatus = status;
+      const onState = () => {
+        if (status.state === 'denied') {
+          this.reportTrackingProblem('LOCATION_DENIED', 'Location permission was turned off').catch(() => {});
+        } else if (status.state === 'granted' && this._trackingState?.status === 'LOCATION_DENIED') {
+          this._lastResumeRefresh = 0;   // resume at once, not after the throttle
+          this.handleResume().catch(() => {});
+        }
+      };
+      status.onchange = onState;
+      if (status.state === 'denied') onState();
+    } catch {
+      /* Permissions API not supported for geolocation here: the watcher error is the signal */
+    }
+  },
+
   _startBrowserWatch() {
     if (this._watchId !== null || typeof navigator === 'undefined' || !navigator.geolocation) return;
+    this._watchLocationPermission(this._trackingGeneration).catch(() => {});
     this._startHeartbeat();
     this._watchId = navigator.geolocation.watchPosition(
       (position) => {
@@ -966,6 +998,7 @@ export const locationService = {
     }
     this._nativeWatcherId = null;
     this._nativePlugin = null;
+    if (this._permissionStatus) { this._permissionStatus.onchange = null; this._permissionStatus = null; }
     if (this._detachResume) { this._detachResume(); this._detachResume = null; }
     this._pendingReadings = [];
     if (this._heartbeatTimer) { clearInterval(this._heartbeatTimer); this._heartbeatTimer = null; }

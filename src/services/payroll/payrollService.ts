@@ -347,6 +347,14 @@ export const payrollService = {
     if (salErr || !salary) {
       return { data: null, error: new Error('No active salary structure found for this payroll period.') };
     }
+    const basic = Number(salary.basic_salary || 0);
+    const totalAllowances = Number(salary.hra || 0) + Number(salary.transport_allowance || 0) +
+                            Number(salary.medical_allowance || 0) + Number(salary.special_allowance || 0) +
+                            Number(salary.other_allowances || 0);
+    const grossSalary = basic + totalAllowances;
+    if (!(grossSalary > 0)) {
+      return { data: null, error: new Error('Salary configuration is invalid: gross salary must be greater than zero.') };
+    }
 
     // 2. Get payroll settings from configuration (not hardcoded). If the settings row could not be
     //    read, the defaults (e.g. Mon–Fri working days) would silently change who gets LOP: refuse.
@@ -398,12 +406,7 @@ export const payrollService = {
       permission: { permissionCount: permissionResult.permissionCount, totalMinutes: permissionResult.totalMinutes },
     };
 
-    // 4. Compute Gross Salary
-    const basic = Number(salary.basic_salary || 0);
-    const totalAllowances = Number(salary.hra || 0) + Number(salary.transport_allowance || 0) + 
-                            Number(salary.medical_allowance || 0) + Number(salary.special_allowance || 0) + 
-                            Number(salary.other_allowances || 0);
-    const grossSalary = basic + totalAllowances;
+    // 4. Gross salary already validated in step 1
 
     // 5. Daily rate (owner rule, 2026-10-09: keep until the company confirms another policy):
     //    dailyRate = monthly gross ÷ getWorkingDaysForMonth(), configured in Admin → Settings → Payroll
@@ -640,10 +643,23 @@ export const payrollService = {
     });
     if (otRaw > 0) overtime = payrollSettingsService.applyRounding(otRaw, settings);
 
-    // 8. Apply rounding
     totalDeductions = payrollSettingsService.applyRounding(totalDeductions, settings);
     
-    let netSalary = payrollSettingsService.applyRounding((grossSalary + overtime + adjustmentEarnings) - totalDeductions, settings);
+    const eligibleEarnings = grossSalary + overtime + adjustmentEarnings;
+    if (grossSalary > 0 && totalDeductions > eligibleEarnings) {
+      if (!empData.attendance.reviewItems) empData.attendance.reviewItems = [];
+      const reviewType = 'DEDUCTIONS_EXCEED_EARNINGS';
+      const hasResolution = (opts?.resolutions || []).some(r => r.type === reviewType);
+      if (!hasResolution && !empData.attendance.reviewItems.some(i => i.type === reviewType)) {
+        empData.attendance.reviewItems.push({
+          date: String(endDate).slice(0, 10),
+          type: reviewType as any,
+          reason: `Total deductions (₹${totalDeductions.toLocaleString('en-IN')}) exceed eligible earnings (₹${eligibleEarnings.toLocaleString('en-IN')}). Admin review required.`,
+        });
+      }
+    }
+
+    let netSalary = payrollSettingsService.applyRounding(eligibleEarnings - totalDeductions, settings);
     if (netSalary < 0) netSalary = 0;
 
     return {
@@ -800,9 +816,9 @@ export const payrollService = {
     const { data: existing } = await supabase.from('payroll').select('status, remarks, employee_id, payroll_year, payroll_month, period_start, period_end, calculated_at, basic_salary, gross_salary, total_allowances, total_deductions, lop_deduction, overtime_amount, net_salary').eq('id', id).single<any>();
     if (!existing) return { error: new Error('Not found') };
 
-    // Unresolved attendance review flags block approval (single and bulk approval both come here)
+    // Unresolved attendance review flags or invalid salary block approval (single and bulk approval both come here)
     if (newStatus === 'APPROVED') {
-      const blocked = approvalBlockReason(existing.remarks);
+      const blocked = approvalBlockReason(existing.remarks, existing);
       if (blocked) return { error: new Error(blocked) };
     }
 

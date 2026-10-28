@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { payrollService } from '../../services/payroll/payrollService';
-import { earningAdjustmentItems } from '../../services/payroll/payrollRules';
+import { earningAdjustmentItems, parsePayrollSnapshot } from '../../services/payroll/payrollRules';
 import PayslipDocument from '../../components/PayslipDocument';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -66,12 +66,8 @@ const EmployeePayslip: React.FC = () => {
 
   const getMonthName = (monthNum: number) => MONTH_NAMES[monthNum - 1] || '';
 
-  // Parse stored data summary from payroll.notes
   const getDataSummary = () => {
-    try {
-      if (currentPayroll?.notes) return JSON.parse(currentPayroll.notes);
-    } catch {}
-    return null;
+    return parsePayrollSnapshot(currentPayroll?.remarks) || parsePayrollSnapshot(currentPayroll?.notes);
   };
 
   // Get deduction items from payroll_items or stored summary

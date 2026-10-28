@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Rollback validation for the 2026-10-28 migrations, on a THROWAWAY in-memory PostgreSQL (PGlite):
- *   apply every migration (+ the two proposals) → roll back 090200, 090100, 090000 in reverse order →
+ *   apply every migration (+ the two proposals) → roll back 090300, 090200, 090100, 090000 in reverse order →
  *   check that what existed before still works and only the new objects are gone → re-apply the three
  *   migrations (re-runnable) → check the new behaviour is back. Synthetic data only.
  * Run: PGLITE_DIR=/path/to/node_modules node supabase/tests/rollback/run_rollback_tests.mjs
@@ -14,7 +14,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../../..');
 const MIG_DIR = path.join(ROOT, 'supabase/migrations');
 const RB_DIR = path.join(ROOT, 'supabase/rollbacks');
-const NEW = ['20261028090000_attendance_server_values', '20261028090100_payroll_lock_and_replace', '20261028090200_auto_clock_out_and_settings_hardening'];
+const NEW = ['20261028090000_attendance_server_values', '20261028090100_payroll_lock_and_replace', '20261028090200_auto_clock_out_and_settings_hardening', '20261028090300_auto_break_tracking_off_immediate'];
 
 async function loadPglite() {
   const dir = process.env.PGLITE_DIR;
@@ -51,13 +51,17 @@ const all = async (list) => { const r = []; for (const [k, n] of list) r.push([n
 let before = await all(NEW_OBJECTS);
 check('RB-0 after applying everything, the new objects exist', before.every(([, e]) => e), JSON.stringify(before.filter(([, e]) => !e)));
 
+const offRule = async () => (await q(`SELECT prosrc FROM pg_proc WHERE proname='report_tracking_event'`))[0]?.prosrc?.includes(`p_event <> 'LOCATION_DENIED'`);
+check('RB-0b the "tracking OFF = immediate" rule is active', await offRule());
 let err = null;
 try { for (const n of [...NEW].reverse()) await db.exec(read(path.join(RB_DIR, `${n}.rollback.sql`))); } catch (e) { err = e.message; }
-check('RB-1 the three rollbacks run in reverse order without error', !err, err || '');
+check('RB-1 the four rollbacks run in reverse order without error', !err, err || '');
 const gone = await all(NEW_OBJECTS);
-check('RB-2 every object added by the three migrations is removed', gone.every(([, e]) => !e), JSON.stringify(gone.filter(([, e]) => e)));
+check('RB-2 every object added by the migrations is removed', gone.every(([, e]) => !e), JSON.stringify(gone.filter(([, e]) => e)));
 const kept = await all(KEPT);
 check('RB-3 unrelated functionality is kept (auto clock-out job + guard, automatic-break guard, missing clock-out workflow, payroll tables)', kept.every(([, e]) => e), JSON.stringify(kept.filter(([, e]) => !e)));
+check('RB-3b report_tracking_event / process_stale_tracking restored to the 21 Oct version (functions kept, rule removed)',
+  (await exists('fn', 'report_tracking_event')) && (await exists('fn', 'process_stale_tracking')) && !(await offRule()));
 err = null; let n = null;
 try { n = (await q(`SELECT public.process_auto_clock_out() AS n`))[0].n; } catch (e) { err = e.message; }
 check('RB-4 the restored 22 Oct auto clock-out job runs', !err && Number.isInteger(n), err || String(n));
@@ -68,7 +72,7 @@ check('RB-5 the restored mco_settings() works for the proposal functions', !err 
 err = null;
 try { for (const nme of NEW) await db.exec(mig(`${nme}.sql`)); } catch (e) { err = e.message; }
 const back = await all(NEW_OBJECTS);
-check('RB-6 the migrations can be applied again after a rollback', !err && back.every(([, e]) => e), err || JSON.stringify(back.filter(([, e]) => !e)));
+check('RB-6 the migrations can be applied again after a rollback', !err && back.every(([, e]) => e) && await offRule(), err || JSON.stringify(back.filter(([, e]) => !e)));
 err = null;
 try { for (const nme of NEW) await db.exec(mig(`${nme}.sql`)); } catch (e) { err = e.message; }
 check('RB-7 applying them a second time is harmless (re-runnable)', !err, err || '');
