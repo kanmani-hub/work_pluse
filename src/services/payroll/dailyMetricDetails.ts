@@ -11,6 +11,7 @@
  */
 
 import { resolveAllowedBreakMinutes } from '../attendance/breakRules';
+import { overtimeStatusLabel } from '../overtime/overtimeRules';
 export type MetricKey = 'late' | 'break' | 'lop' | 'overtime' | 'total';
 
 export interface MetricColumn { key: string; label: string; align?: 'left' | 'right'; money?: boolean }
@@ -282,7 +283,7 @@ export function overtimeMetric(rows: any[]): MetricDetail {
         scheduled: dur(scheduledMin),
         elapsed: r.clockOut ? dur(minutesBetween(r.clockIn, r.clockOut)) : '—',
         eligible: r.overtimeRequestsError ? 'Unavailable' : req ? dur(Math.round(Number(req.eligible_overtime_hours || 0) * 60)) : 'No request',
-        status: r.overtimeRequestsError ? 'Unavailable' : req ? String(req.status) : 'No request',
+        status: r.overtimeRequestsError ? 'Unavailable' : req ? overtimeStatusLabel(req.status, req.approved_overtime_hours, pset(r).enableOvertimePay) : 'No request',
         approved: dur(r.overtimeMinutes || 0),
         formula: overtimeFormula(pset(r), r.overtimeMinutes || 0, calc(r).dailyRate || 0),
         amount: r2(r.overtimePay),

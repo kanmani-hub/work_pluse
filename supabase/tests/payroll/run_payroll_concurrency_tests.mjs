@@ -4,7 +4,8 @@
  * localhost only, deleted afterwards) for:
  *   - 20261028090100_payroll_lock_and_replace.sql: simultaneous (re)calculations of one employee-month,
  *     and a recalculation racing an approval;
- *   - 20261028090000_attendance_server_values.sql: two simultaneous clock-ins (double click / two tabs).
+ *   - 20261028090000_attendance_server_values.sql: two simultaneous clock-ins (double click / two tabs);
+ *   - auto clock-out runs racing payroll recalculation (C3); two reviewers rejecting one correction (C4).
  * Never connects to Supabase, staging or production. Synthetic data only.
  *
  * Run (not project dependencies; install outside package.json):
@@ -67,6 +68,10 @@ try {
     let sql = fs.readFileSync(path.join(MIG_DIR, f), 'utf8');
     if (f === '20261004120100_notification_push_trigger.sql') sql = sql.replace(/^CREATE EXTENSION IF NOT EXISTS pg_net.*$/m, '-- pg_net stubbed');
     try { await pool.query(sql); } catch (e) { throw new Error(`migration ${f}: ${e.message}`); }
+  }
+  // the missing clock-out workflow, in its documented order (needed for C4)
+  for (const p of ['PROPOSED_overtime_requests.sql', 'PROPOSED_missing_clock_out_workflow.sql']) {
+    try { await pool.query(fs.readFileSync(path.join(ROOT, 'docs/proposals', p), 'utf8')); } catch (e) { throw new Error(`${p}: ${e.message}`); }
   }
   const people = [['admin', 'ADMIN'], ['hr', 'HR'], ['emp', 'EMPLOYEE']];
   await pool.query(`SET session_replication_role = replica; INSERT INTO auth.users (id, email) VALUES ${people.map(([k]) => `('${U[k]}','payconc-${k}@example.com')`).join(',')}; SET session_replication_role = origin;`);
@@ -147,6 +152,57 @@ try {
     check('A1 3 simultaneous clock-ins → exactly one attendance row, the others refused by the unique constraint; stored late minutes are the server value',
       rs.filter((r) => r.ok).length === 1 && rs.filter((r) => !r.ok).every((r) => r.code === '23505') && rows.length === 1 && rows[0].late_minutes === rows[0].expected,
       JSON.stringify({ results: rs.map((r) => r.ok ? 'ok' : r.code), rows }));
+  }
+
+  // C3 — 4 overlapping auto clock-out runs and 4 payroll recalculations at the same moment
+  {
+    const emps = [];
+    for (let k = 0; k < 6; k++) {
+      const eid = `e9000000-0000-0000-0000-00000000000${k}`;
+      emps.push(eid);
+      await pool.query(`INSERT INTO employees (id, employee_code, first_name, last_name, email, joining_date, role_id, status)
+                        VALUES ('${eid}', 'PC-C3-${k}', 'Conc', '${k}', 'payconc-c3-${k}@example.com', '2026-01-01', (SELECT id FROM roles WHERE name='EMPLOYEE'), 'ACTIVE');
+                        INSERT INTO attendance (employee_id, shift_template_id, attendance_date, clock_in_at, required_hours, status)
+                        VALUES ('${eid}', '${SHIFT}', CURRENT_DATE - 3, (CURRENT_DATE - 3) + time '09:00', 8, 'WORKING')`);
+    }
+    const jobSql = `SELECT public.process_auto_clock_out() AS n`;   // as the scheduler (postgres)
+    const clients = await Promise.all(Array.from({ length: 8 }, () => pool.connect()));
+    let rs;
+    try {
+      rs = await Promise.all(clients.map(async (c, k) => {
+        try {
+          await c.query('BEGIN');
+          if (k % 2 === 0) { const r = await c.query(jobSql); await c.query('COMMIT'); return { ok: true, kind: 'job', n: r.rows[0].n }; }
+          await c.query(`SELECT set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ sub: U.hr, role: 'authenticated' })]);
+          await c.query('SET LOCAL ROLE authenticated');
+          await c.query(replaceSql(9, (k % 3) * 1000)); await c.query('COMMIT'); return { ok: true, kind: 'payroll' };
+        } catch (e) { await c.query('ROLLBACK').catch(() => {}); return { ok: false, error: e.message, code: e.code }; }
+      }));
+    } finally { clients.forEach((c) => c.release()); }
+    const flaggedRuns = rs.filter((r) => r.kind === 'job').reduce((t, r) => t + r.n, 0);
+    const flagged = (await q(`SELECT count(*)::int c FROM attendance WHERE status='MISSING_CLOCK_OUT' AND employee_id = ANY('{${emps.join(',')}}'::uuid[])`))[0].c;
+    const events = (await q(`SELECT count(*)::int c FROM attendance_events WHERE event_type='MISSING_CLOCK_OUT' AND employee_id = ANY('{${emps.join(',')}}'::uuid[])`))[0].c;
+    const c9 = await consistent(9);
+    check('C3 4 auto clock-out runs + 4 payroll recalculations at once → all succeed, each open day flagged exactly once, one consistent payroll, no deadlock',
+      rs.every((r) => r.ok) && flaggedRuns === 6 && flagged === 6 && events === 6 && c9.ok, JSON.stringify({ rs: rs.map((r) => r.ok ? r.kind : r.code), flaggedRuns, flagged, events, c9 }));
+  }
+
+  // C4 — two reviewers reject the same missing clock-out correction at once (deduction on, ₹200)
+  {
+    await pool.query(`UPDATE app_settings SET settings = jsonb_set(COALESCE(settings, '{}'), '{payroll}', COALESCE(settings->'payroll', '{}') || '{"enableMissingClockOutDeduction": true, "missingClockOutDeductionAmount": 200}'::jsonb)
+                      WHERE id = '00000000-0000-0000-0000-000000000001'`);
+    const attId = (await q(`INSERT INTO attendance (employee_id, shift_template_id, attendance_date, clock_in_at, required_hours, status)
+                            VALUES ('${E.emp}', '${SHIFT}', CURRENT_DATE - 5, ((CURRENT_DATE - 5) + time '09:00') AT TIME ZONE 'Asia/Kolkata', 8, 'MISSING_CLOCK_OUT') RETURNING id`))[0].id;
+    const sub = await race([{ as: 'emp', sql: `SELECT public.submit_missing_clock_out_request('${attId}', ((CURRENT_DATE - 5) + time '23:30') AT TIME ZONE 'Asia/Kolkata', 0, 'Worked late on the quarterly close') AS id` }]);
+    const reqId = sub[0].rows?.[0]?.id;
+    const rs = await race([
+      { as: 'hr', sql: `SELECT public.review_missing_clock_out_request('${reqId}', 'REJECTED', NULL, NULL, 'Not verified (HR)') AS r` },
+      { as: 'admin', sql: `SELECT public.review_missing_clock_out_request('${reqId}', 'REJECTED', NULL, NULL, 'Not verified (admin)') AS r` },
+    ]);
+    const adjs = (await q(`SELECT amount::numeric AS a FROM payroll_adjustments WHERE attendance_id='${attId}'`));
+    check('C4 two simultaneous rejections of one correction → one decision, the other refused, exactly one ₹200 deduction',
+      !!reqId && rs.filter((r) => r.ok).length === 1 && adjs.length === 1 && Number(adjs[0].a) === 200,
+      JSON.stringify({ sub, rs: rs.map((r) => r.ok ? 'ok' : r.error), adjs }));
   }
 
   await pool.end();

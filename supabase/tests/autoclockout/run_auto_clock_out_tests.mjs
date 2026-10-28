@@ -18,6 +18,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../../..');
 const MIG_DIR = path.join(ROOT, 'supabase/migrations');
 const FIX = '20261022100000_fix_auto_clock_out.sql';
+// Later migrations that redefine process_auto_clock_out() on top of FIX: left out with it in the baseline
+const SUPERSEDES = ['20261028090200_auto_clock_out_and_settings_hardening.sql'];
 
 async function loadPglite() {
   const dir = process.env.PGLITE_DIR;
@@ -50,7 +52,7 @@ async function newDb({ withFix = true } = {}) {
   const db = new PGlite({ extensions: { uuid_ossp } });
   await db.exec(read(path.join(ROOT, 'supabase/tests/rls/00_supabase_shim.sql')));
   for (const f of ALL) {
-    if (!withFix && f === FIX) continue;
+    if (!withFix && (f === FIX || SUPERSEDES.includes(f))) continue;
     try { await db.exec(migrationSql(f)); } catch (e) { throw new Error(`migration ${f} failed: ${e.message}`); }
   }
   await db.exec(`

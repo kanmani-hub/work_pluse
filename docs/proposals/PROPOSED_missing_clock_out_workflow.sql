@@ -1,7 +1,10 @@
 -- =============================================================================================
 -- PROPOSED (NOT APPLIED) — Missing clock-out, 3-hour additional time limit, payroll adjustments
 -- =============================================================================================
--- Requires docs/proposals/PROPOSED_overtime_requests.sql to be applied first (overtime_requests).
+-- Requires docs/proposals/PROPOSED_overtime_requests.sql to be applied first (overtime_requests), and
+-- supabase/migrations up to 20261028090200_auto_clock_out_and_settings_hardening.sql (wp_settings_* helpers).
+-- Revised 2026-10-28: mco_settings() identical to the migration; process_auto_clock_out() no longer redefined.
+-- Tested on a throwaway database together with all migrations: supabase/tests/missingclockout/.
 -- Company policy (2026-10-14):
 --   * Missing clock-out = clock-in, no clock-out, after shift end + autoClockOutGraceHours
 --     (24 h after clock-in when no shift). No clock-out time is invented, no overtime is created.
@@ -17,8 +20,8 @@
 --     payroll approved after the decision (approve_payroll_with_adjustments).
 --   * Every write that changes money or attendance is in one function = one transaction, with row
 --     locks; references are UNIQUE so retries / double clicks cannot duplicate a deduction or reversal.
--- process_auto_clock_out() is replaced: it only FLAGS records (status MISSING_CLOCK_OUT) and no
--- longer invents a clock-out time or writes overtime minutes (this also fixes the v_status error).
+-- process_auto_clock_out() (flag only: no clock-out time invented, no overtime minutes written) lives in
+-- supabase/migrations and is not changed by this file (section 9).
 --
 -- STEP 0 (read-only) — must return 0 before applying (reviewer = requester on existing requests):
 --   SELECT count(*) FROM overtime_requests WHERE reviewed_by IS NOT NULL AND reviewed_by = employee_id;
@@ -96,16 +99,27 @@ USING (public.get_auth_role() IN ('ADMIN', 'HR') OR employee_id = public.get_aut
 GRANT SELECT ON public.payroll_adjustments TO authenticated;
 
 -- ---------------------------------------------------------------------------- 3. shared helpers
+-- IDENTICAL to supabase/migrations/20261028090200_auto_clock_out_and_settings_hardening.sql (needs its
+-- wp_settings_numeric / wp_settings_bool): tolerant of invalid saved values, grace follows the auto clock-out mode.
 CREATE OR REPLACE FUNCTION public.mco_settings(OUT limit_hours NUMERIC, OUT deduction_enabled BOOLEAN, OUT deduction_amount NUMERIC, OUT grace_hours NUMERIC)
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE s JSONB;
 BEGIN
   SELECT settings INTO s FROM app_settings WHERE id = '00000000-0000-0000-0000-000000000001';
-  limit_hours       := COALESCE(NULLIF(s->'payroll'->>'missingClockOutMaxAdditionalHours', '')::NUMERIC, 3);
-  deduction_enabled := COALESCE((s->'payroll'->>'enableMissingClockOutDeduction')::BOOLEAN, false);
-  deduction_amount  := COALESCE(NULLIF(s->'payroll'->>'missingClockOutDeductionAmount', '')::NUMERIC, 0);
-  grace_hours       := GREATEST(0, COALESCE(NULLIF(s->'app'->>'autoClockOutGraceHours', '')::NUMERIC, 4));
-  IF limit_hours < 0 THEN limit_hours := 3; END IF;
+  limit_hours := public.wp_settings_numeric(s->'payroll'->>'missingClockOutMaxAdditionalHours');
+  IF limit_hours IS NULL OR limit_hours < 0 OR limit_hours > 24 THEN limit_hours := 3; END IF;
+  limit_hours := round(limit_hours, 2);
+  deduction_amount := public.wp_settings_numeric(s->'payroll'->>'missingClockOutDeductionAmount');
+  IF deduction_amount IS NULL OR deduction_amount < 0 THEN deduction_amount := 0; END IF;
+  deduction_amount := round(deduction_amount, 2);
+  deduction_enabled := COALESCE(public.wp_settings_bool(s->'payroll'->>'enableMissingClockOutDeduction'), false) AND deduction_amount > 0;
+  IF lower(COALESCE(s->'app'->>'autoClockOutMode', '')) = 'at_shift_end' THEN
+    grace_hours := 0;
+  ELSE
+    grace_hours := public.wp_settings_numeric(s->'app'->>'autoClockOutGraceHours');
+    IF grace_hours IS NULL THEN grace_hours := 4; END IF;
+    grace_hours := GREATEST(0, grace_hours);
+  END IF;
 END $$;
 
 -- When does this open attendance count as a missing clock-out? (NULL = it never will: already closed)
@@ -512,28 +526,11 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------- 9. auto clock-out → flag only
-CREATE OR REPLACE FUNCTION public.process_auto_clock_out()
-RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE cfg RECORD; rec attendance%ROWTYPE; v_flag TIMESTAMPTZ; n INTEGER := 0;
-BEGIN
-  SELECT * INTO cfg FROM public.mco_settings();
-  FOR rec IN SELECT * FROM attendance WHERE clock_in_at IS NOT NULL AND clock_out_at IS NULL
-             AND COALESCE(status, '') <> 'MISSING_CLOCK_OUT' LOOP
-    v_flag := public.mco_flag_at(rec, cfg.grace_hours);
-    IF v_flag IS NOT NULL AND now() >= v_flag THEN
-      -- No clock-out time is invented, no break is closed, no worked or overtime minutes are written.
-      UPDATE attendance SET status = 'MISSING_CLOCK_OUT', updated_at = now() WHERE id = rec.id AND clock_out_at IS NULL;
-      INSERT INTO attendance_events (attendance_id, employee_id, event_type, event_at, source, metadata)
-      VALUES (rec.id, rec.employee_id, 'MISSING_CLOCK_OUT', now(), 'SYSTEM', jsonb_build_object('flag_at', v_flag));
-      INSERT INTO notifications (recipient_employee_id, notification_type, title, message, action_url, is_read)
-      VALUES (rec.employee_id, 'ATTENDANCE', 'Clock-out missing',
-              'You did not clock out on ' || to_char(rec.attendance_date, 'DD Mon YYYY') || '. Please submit your clock-out time and reason under Overtime.',
-              '/employee/overtime', false);
-      n := n + 1;
-    END IF;
-  END LOOP;
-  RETURN n;
-END $$;
+-- NOT redefined here any more. process_auto_clock_out() is maintained in supabase/migrations
+-- (20261022100000_fix_auto_clock_out.sql, 20261028090200_auto_clock_out_and_settings_hardening.sql): flag-only,
+-- honours Settings (on/off, mode, grace), FOR UPDATE SKIP LOCKED, closes open breaks at the shift end, one
+-- notification per day, per-row failure isolation and a run log. The earlier copy that stood here would have
+-- replaced that version with one that ignored those settings when this file is applied after the migrations.
 
 -- ---------------------------------------------------------------------------- 9b. locked-month overtime rule
 -- If PROPOSED_payroll_payment_safety.sql (part 5) is applied, approving overtime for a month whose
@@ -583,6 +580,52 @@ GRANT EXECUTE ON FUNCTION public.review_missing_clock_out_request(UUID, TEXT, TI
 GRANT EXECUTE ON FUNCTION public.apply_missing_clock_out_deduction(UUID, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.approve_payroll_with_adjustments(UUID, UUID[]) TO authenticated;
 
+
+-- ---------------------------------------------------------------------------- 11. HR correction after a rejection
+-- Decision 2026-10-28: when HR / an admin later records the verified clock-out of a day that has a missing
+-- clock-out deduction (e.g. the correction was rejected, then HR verified the attendance), the deduction is
+--   * CANCELLED if it is not yet part of an approved payroll (status PENDING: never deducted), or
+--   * REVERSED ONCE (MCO-REV adjustment, an earning in the next payroll that is calculated) if an approved /
+--     paid payroll already settled it — that payroll is locked and is never changed.
+-- Nothing is deleted: the deduction row, its settlement and the audit entries stay.
+-- review_missing_clock_out_request() handles its own decision (workpulse.mco_rpc), so it is not repeated here.
+CREATE OR REPLACE FUNCTION public.mco_resolve_deduction_on_correction()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE v_ded payroll_adjustments%ROWTYPE; v_actor UUID := public.get_auth_employee_id(); v_rev UUID;
+BEGIN
+  IF COALESCE(current_setting('workpulse.mco_rpc', true), '') = 'on' THEN RETURN NEW; END IF;
+  IF OLD.clock_out_at IS NOT NULL OR NEW.clock_out_at IS NULL THEN RETURN NEW; END IF;
+  -- only a correction by HR / an admin (or trusted server SQL without a signed-in user)
+  IF auth.uid() IS NOT NULL AND COALESCE(public.get_auth_role(), '') NOT IN ('ADMIN', 'HR') THEN RETURN NEW; END IF;
+  SELECT * INTO v_ded FROM payroll_adjustments WHERE reference = 'MCO-DED:' || NEW.id FOR UPDATE;
+  IF v_ded.id IS NULL THEN RETURN NEW; END IF;
+  IF v_ded.status = 'PENDING' THEN
+    UPDATE payroll_adjustments SET status = 'CANCELLED', cancelled_at = now() WHERE id = v_ded.id;
+    INSERT INTO audit_logs (actor_employee_id, action, module, entity_type, entity_id, description, old_values, new_values, source)
+    VALUES (v_actor, 'MISSING_CLOCK_OUT_DEDUCTION_CANCELLED', 'PAYROLL', 'payroll_adjustments', v_ded.id,
+      format('Missing clock-out deduction %s for %s cancelled: HR recorded the verified clock-out %s before it was paid.', v_ded.amount, v_ded.work_date, NEW.clock_out_at),
+      jsonb_build_object('status', 'PENDING'), jsonb_build_object('status', 'CANCELLED', 'attendance_id', NEW.id, 'clock_out_at', NEW.clock_out_at), 'WEB');
+  ELSIF v_ded.status = 'SETTLED' THEN
+    INSERT INTO payroll_adjustments (reference, kind, employee_id, attendance_id, overtime_request_id, work_date, amount, reason, created_by)
+    VALUES ('MCO-REV:' || NEW.id, 'MISSING_CLOCK_OUT_REVERSAL', v_ded.employee_id, NEW.id, v_ded.overtime_request_id, v_ded.work_date,
+            v_ded.amount, 'HR verified the clock-out after the deduction was paid', v_actor)
+    ON CONFLICT (reference) DO NOTHING
+    RETURNING id INTO v_rev;
+    IF v_rev IS NOT NULL THEN
+      INSERT INTO audit_logs (actor_employee_id, action, module, entity_type, entity_id, description, new_values, source)
+      VALUES (v_actor, 'MISSING_CLOCK_OUT_DEDUCTION_REVERSED', 'PAYROLL', 'payroll_adjustments', v_rev,
+        format('Missing clock-out deduction %s for %s (settled in %s/%s payroll) reversed in the next payroll: HR recorded the verified clock-out %s.',
+               v_ded.amount, v_ded.work_date, v_ded.settled_month, v_ded.settled_year, NEW.clock_out_at),
+        jsonb_build_object('deduction_id', v_ded.id, 'attendance_id', NEW.id, 'amount', v_ded.amount), 'WEB');
+    END IF;
+  END IF;   -- CANCELLED: nothing to do
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.mco_resolve_deduction_on_correction() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS trg_mco_resolve_deduction_on_correction ON public.attendance;
+CREATE TRIGGER trg_mco_resolve_deduction_on_correction AFTER UPDATE OF clock_out_at ON public.attendance
+  FOR EACH ROW EXECUTE FUNCTION public.mco_resolve_deduction_on_correction();
+
 COMMIT;
 
 -- ROLLBACK — review before running; staging first. It keeps all data and history.
@@ -590,6 +633,8 @@ COMMIT;
 --      would apply to those rows. Check: SELECT count(*) FROM overtime_requests
 --        WHERE request_type = 'MISSING_CLOCK_OUT' AND status = 'PENDING';            -- must be 0
 --   BEGIN;
+--   DROP TRIGGER IF EXISTS trg_mco_resolve_deduction_on_correction ON public.attendance;
+--   DROP FUNCTION IF EXISTS public.mco_resolve_deduction_on_correction();
 --   DROP FUNCTION IF EXISTS public.approve_payroll_with_adjustments(UUID, UUID[]);
 --   DROP FUNCTION IF EXISTS public.apply_missing_clock_out_deduction(UUID, TEXT);
 --   DROP FUNCTION IF EXISTS public.review_missing_clock_out_request(UUID, TEXT, TIMESTAMPTZ, NUMERIC, TEXT);

@@ -43,7 +43,9 @@ vi.mock('../../lib/supabase', () => {
     };
     return b;
   };
-  return { supabase: { from, auth: { getUser: async () => ({ data: { user: null }, error: null }) }, __db: db } };
+  // report_tracking_event (automatic-break tracking): the server decides; here it records nothing
+  const rpc = vi.fn(async (_fn: string, _args: any) => ({ data: { action: 'NONE' }, error: null }));
+  return { supabase: { from, rpc, auth: { getUser: async () => ({ data: { user: null }, error: null }) }, __db: db } };
 });
 
 const db = (supabase as any).__db;

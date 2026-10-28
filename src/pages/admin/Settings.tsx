@@ -6,6 +6,7 @@ import {
 import { useSearchParams } from 'react-router-dom';
 import { appSettingsService, type AppSettings } from '../../services/settings/appSettingsService';
 import { globalSettingsService } from '../../services/settings/globalSettingsService';
+import { settingsSaveErrors } from '../../services/settings/settingsValidation';
 import { formatSavedAt } from '../../utils/lastUpdated';
 import { addHoliday, removeHoliday } from '../../services/settings/holidayRules';
 import { WFH_DEDUCTION_POLICY_APPROVED } from '../../services/payroll/payrollRules';
@@ -106,6 +107,9 @@ const AdminSettings: React.FC = () => {
       if (settings.payroll.configuredWorkingDays < 0) throw new Error("Working Days cannot be negative.");
       if (settings.payroll.monthlyLateLoginLimit < 0) throw new Error("Late Login Limit cannot be negative.");
       if (settings.payroll.permissionLimit < 0) throw new Error("Permission Limit cannot be negative.");
+      // Missing clock-out, auto clock-out and overtime values: same rules as the database check
+      const invalid = settingsSaveErrors(settings);
+      if (invalid.length > 0) throw new Error(invalid.join(' '));
 
       // Save to Supabase using globalSettingsService (Single Source of Truth)
       // The error is now thrown directly from globalSettingsService
@@ -795,9 +799,9 @@ const AdminSettings: React.FC = () => {
       <div className="form-grid">
         <div>
           <label className="form-label">Maximum additional working time (hours)</label>
-          <input type="number" min="0" step="0.25" className="form-control" value={settings.payroll.missingClockOutMaxAdditionalHours ?? 3}
+          <input type="number" min="0" max="24" step="0.25" className="form-control" value={settings.payroll.missingClockOutMaxAdditionalHours ?? 3}
             onChange={e => handleChangePayroll('missingClockOutMaxAdditionalHours', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Maximum additional working time (hours)" />
-          <div className="help-text">Time claimed beyond this is shown to the admin as excess; it is never silently dropped.</div>
+          <div className="help-text">0 to 24 hours. Time claimed beyond this is shown to the admin as excess; it is never silently dropped.</div>
         </div>
       </div>
       <div className="toggle-row" style={{ marginTop: '1rem' }}>
@@ -811,8 +815,9 @@ const AdminSettings: React.FC = () => {
         <div className="form-grid" style={{ marginTop: '0.5rem' }}>
           <div>
             <label className="form-label">Deduction per case (₹)</label>
-            <input type="number" min="0" className="form-control" value={settings.payroll.missingClockOutDeductionAmount ?? 0}
+            <input type="number" min="0" step="0.01" className="form-control" value={settings.payroll.missingClockOutDeductionAmount ?? 0}
               onChange={e => handleChangePayroll('missingClockOutDeductionAmount', e.target.value === '' ? null : parseFloat(e.target.value))} aria-label="Deduction per case (₹)" />
+            <div className="help-text">Must be above ₹0 while the deduction is on. The amount is fixed for a case when it is rejected; changing it later does not change recorded or paid cases.</div>
           </div>
         </div>
       )}

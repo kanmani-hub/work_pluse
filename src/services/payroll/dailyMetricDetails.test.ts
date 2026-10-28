@@ -119,8 +119,8 @@ describe('Overtime Pay', () => {
   it('lists pending (missing clock-out) and approved overtime; time after shift end is not paid without approval', () => {
     const m = buildDailyMetrics(rows()).overtime;
     expect(m.rows.map(r => [r.code, r.clock, r.elapsed, r.eligible, r.status, r.approved, r.amount])).toEqual([
-      ['EMP005', '09:00 – not clocked out', '—', '1h 30m', 'PENDING', '0h 00m', 0],
-      ['EMP006', '09:00 – 20:00', '11h 00m', '2h 00m', 'APPROVED', '1h 00m', 188],
+      ['EMP005', '09:00 – not clocked out', '—', '1h 30m', 'Pending', '0h 00m', 0],
+      ['EMP006', '09:00 – 20:00', '11h 00m', '2h 00m', 'Approved', '1h 00m', 188],   // overtime pay on: plain "Approved" (shared overtimeStatusLabel)
     ]);
     expect(m.rows[1].scheduled).toBe('8h 00m');
     expect(m.rows[1].formula).toBe('1h × ₹125/h × 1.5');

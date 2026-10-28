@@ -78,10 +78,13 @@ export function detectMissingClockOut(
  * server job uses (Admin → Settings): mode "at_shift_end" → 0; otherwise autoClockOutGraceHours
  * (default 4, as in appSettingsService).
  */
-export function missingClockOutGraceHours(app: { autoClockOutMode?: string | null; autoClockOutGraceHours?: number | null } | null | undefined): number {
-  if (app?.autoClockOutMode === 'at_shift_end') return 0;
-  const g = Number(app?.autoClockOutGraceHours ?? 4);
-  return Number.isFinite(g) && g > 0 ? g : 0;
+export function missingClockOutGraceHours(app: { autoClockOutMode?: string | null; autoClockOutGraceHours?: number | string | null } | null | undefined): number {
+  if (String(app?.autoClockOutMode || '').toLowerCase() === 'at_shift_end') return 0;
+  const raw = app?.autoClockOutGraceHours;
+  if (raw === null || raw === undefined || (typeof raw === 'string' && raw.trim() === '')) return 4;
+  const g = Number(raw);
+  if (!Number.isFinite(g)) return 4;    // unreadable value: the documented default (as the database)
+  return Math.max(0, g);
 }
 
 /** Employees with more than one open attendance (clock-in, no clock-out): a data problem to review. */
@@ -107,9 +110,11 @@ export interface ClaimEvaluation {
   excessHours: number;           // additional beyond the limit: flagged for admin review, never dropped
 }
 
+/** Saved limit → hours used (same as the database mco_settings): 0–24, else the default 3. Empty / null → default. */
 export function normalizeLimitHours(limit: unknown): number {
+  if (limit === null || limit === undefined || (typeof limit === 'string' && limit.trim() === '')) return DEFAULT_MAX_ADDITIONAL_HOURS;
   const n = Number(limit);
-  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : DEFAULT_MAX_ADDITIONAL_HOURS;
+  return Number.isFinite(n) && n >= 0 && n <= MAX_CLAIM_SPAN_HOURS ? Math.round(n * 100) / 100 : DEFAULT_MAX_ADDITIONAL_HOURS;
 }
 
 /**

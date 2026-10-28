@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Hourglass, Search, CheckCircle2, XCircle, X, RefreshCw, AlertTriangle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { globalSettingsService } from '../../services/settings/globalSettingsService';
 import { overtimeService, OT_NOT_SET_UP } from '../../services/overtime/overtimeService';
-import { validateOvertimeApproval, formatHours } from '../../services/overtime/overtimeRules';
+import { validateOvertimeApproval, formatHours, overtimeStatusLabel } from '../../services/overtime/overtimeRules';
 import { formatDay } from '../../services/notifications/notificationRules';
 import { formatShiftClock } from '../../services/attendance/employeeDashboardRules';
 import { companyDateStr, COMPANY_TIMEZONE } from '../../utils/companyDate';
@@ -15,6 +16,13 @@ const STATUS_BADGE: Record<string, string> = { PENDING: 'badge-warning', APPROVE
 const fmtTs = (iso?: string | null) => iso ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: COMPANY_TIMEZONE }) : '—';
 
 const AdminOvertime: React.FC = () => {
+  // Overtime approval and payment are separate: show approved overtime as unpaid while overtime pay is off
+  const [overtimePayEnabled, setOvertimePayEnabled] = useState<boolean | undefined>(globalSettingsService.getSettings()?.payroll?.enableOvertimePay);
+  useEffect(() => {
+    let live = true;
+    globalSettingsService.loadSettings().then(s => { if (live) setOvertimePayEnabled(s?.updated_at ? s.payroll?.enableOvertimePay : undefined); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -152,7 +160,7 @@ const AdminOvertime: React.FC = () => {
                     <td>{formatHours(Number(r.eligible_overtime_hours))}</td>
                     <td>{formatHours(Number(r.requested_overtime_hours))}</td>
                     <td style={{ fontWeight: 600 }}>{formatHours(r.status === 'APPROVED' ? Number(r.approved_overtime_hours) : 0)}</td>
-                    <td><span className={`badge ${STATUS_BADGE[r.status] || 'badge-gray'}`}>{r.status}</span>{r.request_type === 'MISSING_CLOCK_OUT' && <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Clock-out correction</div>}</td>
+                    <td><span className={`badge ${STATUS_BADGE[r.status] || 'badge-gray'}`}>{overtimeStatusLabel(r.status, r.approved_overtime_hours, overtimePayEnabled)}</span>{r.request_type === 'MISSING_CLOCK_OUT' && <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Clock-out correction</div>}</td>
                     <td style={{ maxWidth: '200px', overflowWrap: 'anywhere', fontSize: '0.8125rem' }}>{r.employee_reason}</td>
                     <td style={{ maxWidth: '200px', overflowWrap: 'anywhere', fontSize: '0.8125rem' }}>{r.admin_remarks || '—'}</td>
                     <td style={{ fontSize: '0.75rem' }}>{fmtTs(r.created_at)}</td>

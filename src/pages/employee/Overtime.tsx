@@ -2,8 +2,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Hourglass, Clock, AlertTriangle, X, RefreshCw, Plus } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
+import { globalSettingsService } from '../../services/settings/globalSettingsService';
 import { overtimeService, OT_NOT_SET_UP, type OvertimeDay } from '../../services/overtime/overtimeService';
-import { OT_REASON_TEXT, validateOvertimeRequest, formatHours, minutesToHours, ACTIVE_OVERTIME_STATUSES } from '../../services/overtime/overtimeRules';
+import { OT_REASON_TEXT, validateOvertimeRequest, formatHours, minutesToHours, ACTIVE_OVERTIME_STATUSES, overtimeStatusLabel } from '../../services/overtime/overtimeRules';
 import { formatDay } from '../../services/notifications/notificationRules';
 import { formatShiftClock, formatCompanyTime } from '../../services/attendance/employeeDashboardRules';
 import { companyDateStr } from '../../utils/companyDate';
@@ -15,6 +16,13 @@ import { myOvertimeCards, type MyOvertimeCard } from '../../services/common/myRe
 const STATUS_BADGE: Record<string, string> = { PENDING: 'badge-warning', APPROVED: 'badge-success', REJECTED: 'badge-danger', CANCELLED: 'badge-gray' };
 
 const EmployeeOvertime: React.FC = () => {
+  // Overtime approval and payment are separate: show approved overtime as unpaid while overtime pay is off
+  const [overtimePayEnabled, setOvertimePayEnabled] = useState<boolean | undefined>(globalSettingsService.getSettings()?.payroll?.enableOvertimePay);
+  useEffect(() => {
+    let live = true;
+    globalSettingsService.loadSettings().then(s => { if (live) setOvertimePayEnabled(s?.updated_at ? s.payroll?.enableOvertimePay : undefined); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
   const { employee } = useAuth();
   const [days, setDays] = useState<OvertimeDay[]>([]);
   const [loading, setLoading] = useState(true);
@@ -214,7 +222,7 @@ const EmployeeOvertime: React.FC = () => {
                     <td>{formatHours(Number(r.eligible_overtime_hours))}</td>
                     <td>{formatHours(Number(r.requested_overtime_hours))}</td>
                     <td style={{ fontWeight: 600 }}>{formatHours(r.status === 'APPROVED' ? Number(r.approved_overtime_hours) : 0)}</td>
-                    <td><span className={`badge ${STATUS_BADGE[r.status] || 'badge-gray'}`}>{r.status}</span>{r.request_type === 'MISSING_CLOCK_OUT' && <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Clock-out correction</div>}</td>
+                    <td><span className={`badge ${STATUS_BADGE[r.status] || 'badge-gray'}`}>{overtimeStatusLabel(r.status, r.approved_overtime_hours, overtimePayEnabled)}</span>{r.request_type === 'MISSING_CLOCK_OUT' && <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Clock-out correction</div>}</td>
                     <td style={{ maxWidth: '220px', overflowWrap: 'anywhere' }}>{r.employee_reason}</td>
                     <td style={{ maxWidth: '220px', overflowWrap: 'anywhere' }}>{r.admin_remarks || '—'}</td>
                     <td style={{ fontSize: '0.75rem' }}>{r.created_at ? new Date(r.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) : '—'}</td>
@@ -303,7 +311,7 @@ const EmployeeOvertime: React.FC = () => {
                       )}
                       {selectedDay.request && (
                         <span className={`badge ${STATUS_BADGE[selectedDay.request.status] || 'badge-gray'}`}>
-                          Existing: {selectedDay.request.status} ({selectedDay.request.requested_overtime_hours}h)
+                          Existing: {overtimeStatusLabel(selectedDay.request.status, selectedDay.request.approved_overtime_hours, overtimePayEnabled)} ({selectedDay.request.requested_overtime_hours}h)
                         </span>
                       )}
                     </div>

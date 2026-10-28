@@ -145,3 +145,18 @@ export function approvedOvertimeHours(requests: { status: string; approved_overt
 
 export const formatHours = (h: number | null | undefined) =>
   h === null || h === undefined ? '—' : `${Number(h).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')} h`;
+
+/** Shown for approved overtime while Payroll Settings → Enable Overtime Pay is off (paid ₹0; decision 2026-10-28). */
+export const OT_APPROVED_UNPAID_LABEL = 'Approved — Unpaid (Overtime Pay Disabled)';
+
+/**
+ * Status text of an overtime request. Approval and payment are separate: HR may approve while overtime
+ * pay is off; the approved hours are then paid ₹0 and labelled as unpaid. A clock-out correction with
+ * 0 approved hours has no overtime to pay and keeps the plain label. `overtimePayEnabled` undefined
+ * (settings not loaded) never claims "unpaid".
+ */
+export function overtimeStatusLabel(status: string | null | undefined, approvedHours: number | string | null | undefined, overtimePayEnabled: boolean | null | undefined): string {
+  const s = String(status || '').toUpperCase();
+  if (s === 'APPROVED' && overtimePayEnabled === false && Number(approvedHours) > 0) return OT_APPROVED_UNPAID_LABEL;
+  return s ? s.charAt(0) + s.slice(1).toLowerCase() : '—';
+}
