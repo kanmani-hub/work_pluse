@@ -507,7 +507,8 @@ scenario('attendance totals are database-derived; payroll consistency', async ()
   // clock-out totals: worked hours computed by the app from the same stored breaks
   await sys(db, `UPDATE attendance_breaks SET duration_minutes = duration_minutes WHERE attendance_id=$1`, [A.emp]);
   r = await as(db, 'emp', `UPDATE attendance SET clock_out_at = now(), worked_hours = 2.5, status = 'PRESENT', break_minutes = 999 WHERE id='${A.emp}' RETURNING break_minutes, status, clock_out_at`);
-  check('P5 at clock-out the stored break minutes are the database total (30), not the submitted value', !r.error && r.rows[0].break_minutes === 30 && r.rows[0].status === 'PRESENT', JSON.stringify(r));
+  // status / worked hours are computed by the server at clock-out (20261028090000): 1 h after clock-in → HALF_DAY
+  check('P5 at clock-out the stored break minutes are the database total (30), not the submitted value', !r.error && r.rows[0].break_minutes === 30 && r.rows[0].status === 'HALF_DAY', JSON.stringify(r));
   await db.close();
 });
 
@@ -541,8 +542,10 @@ scenario('bypass attempts through the attendance row (direct API calls)', async 
   // escape the checks by moving the attendance to another date
   let r = await as(db, 'emp', `UPDATE attendance SET attendance_date = '2000-01-01' WHERE id='${A.emp}'`);
   check('X1 employee cannot move an open attendance to another date', !!r.error && (await attRow(db)).attendance_date !== null && String((await attRow(db)).attendance_date).slice(0, 4) !== '2000', r.error);
+  const ciBefore = (await attRow(db)).clock_in_at;
   r = await as(db, 'emp', `UPDATE attendance SET clock_in_at = now() WHERE id='${A.emp}'`);
-  check('X2 employee cannot change the clock-in time', !!r.error, r.error);
+  // refused (automatic-break guard) or ignored (server values, 20261028090000): the stored time never changes
+  check('X2 employee cannot change the clock-in time', (!!r.error || r.affected >= 0) && String((await attRow(db)).clock_in_at) === String(ciBefore), r.error || 'ignored');
   // an open tracking break must not be shortened to 0 minutes by switching to an already-ended shift
   await rpc(db, 'emp', 'report_tracking_event', `'LOCATION_DENIED'`);
   await sys(db, `UPDATE attendance_breaks SET started_at = now() - interval '30 minutes' WHERE attendance_id=$1 AND ended_at IS NULL`, [A.emp]);

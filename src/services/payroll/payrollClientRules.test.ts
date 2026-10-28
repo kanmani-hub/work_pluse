@@ -18,6 +18,7 @@ vi.mock('./payrollAuditService');
 vi.mock('../notifications/notificationService');
 vi.mock('../../lib/supabase', () => ({
   supabase: {
+    rpc: vi.fn(async () => ({ data: null, error: { code: 'PGRST202', message: 'Could not find the function public.replace_payroll_calculation in the schema cache' } })), // migration not applied: previous save path
     from: vi.fn(() => ({
       insert: vi.fn().mockImplementation((payload) => ({ 
         select: vi.fn().mockReturnValue({ 

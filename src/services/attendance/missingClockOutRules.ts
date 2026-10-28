@@ -73,6 +73,17 @@ export function detectMissingClockOut(
     : { state: 'IN_PROGRESS', shiftEndMs: win.endMs, flagAtMs, reason: null };
 }
 
+/**
+ * Hours after the shift end at which an open day counts as a missing clock-out — the same setting the
+ * server job uses (Admin → Settings): mode "at_shift_end" → 0; otherwise autoClockOutGraceHours
+ * (default 4, as in appSettingsService).
+ */
+export function missingClockOutGraceHours(app: { autoClockOutMode?: string | null; autoClockOutGraceHours?: number | null } | null | undefined): number {
+  if (app?.autoClockOutMode === 'at_shift_end') return 0;
+  const g = Number(app?.autoClockOutGraceHours ?? 4);
+  return Number.isFinite(g) && g > 0 ? g : 0;
+}
+
 /** Employees with more than one open attendance (clock-in, no clock-out): a data problem to review. */
 export function duplicateOpenAttendance(rows: { id: string; employee_id: string; clock_in_at: string | null; clock_out_at: string | null }[]): Record<string, string[]> {
   const open: Record<string, string[]> = {};

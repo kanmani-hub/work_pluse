@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Banknote, Download, Settings, ChevronLeft, ChevronRight,
@@ -92,7 +92,12 @@ const AdminPayroll: React.FC = () => {
   // Filter payrolls for selected month
   const monthPayrolls = payrolls.filter(p => Number(p.payroll_year) === selectedYear && Number(p.payroll_month) === selectedMonth);
 
+  // Only the newest load may update the screen: a slower, older load (e.g. started by a realtime
+  // event before a date change) can otherwise overwrite newer figures.
+  const loadSeq = useRef(0);
   const fetchData = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    const current = () => seq === loadSeq.current;
     setLoading(true);
     setError(null);
     try {
@@ -103,6 +108,7 @@ const AdminPayroll: React.FC = () => {
           employeeService.getDepartments()
         ]);
         
+        if (!current()) return;
         if (payrollRes.error) throw payrollRes.error;
         if (empRes.error) throw empRes.error;
         if (deptRes.error) throw deptRes.error;
@@ -133,21 +139,28 @@ const AdminPayroll: React.FC = () => {
           : customDate;
 
         const { data, error } = await payrollService.getDailyDeductionReport(targetDate);
+        if (!current()) return;
         if (error) throw error;
         setDailyReports(data || []);
       }
     } catch (err: any) {
+      if (!current()) return;
       console.error("Error loading payroll data:", err);
       setError(err.message || 'Unable to load payroll data');
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
   }, [viewMode, selectedYear, selectedMonth, customDate]);
 
   useEffect(() => {
     fetchData();
-    const subscription = realtimeService.subscribeToPayrollImpactUpdates(() => fetchData());
-    return () => { subscription.unsubscribe(); };
+    // A burst of changes (e.g. a bulk approval) triggers one reload, not one per row
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const subscription = realtimeService.subscribeToPayrollImpactUpdates(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; fetchData(); }, 500);
+    });
+    return () => { if (timer) clearTimeout(timer); subscription.unsubscribe(); };
   }, [fetchData]);
 
   const showToast = (msg: string) => {
@@ -731,7 +744,7 @@ const AdminPayroll: React.FC = () => {
               { key: 'total', label: 'Total Daily Deduction Impact', color: 'var(--danger)', bg: 'var(--danger-50)' },
             ] as { key: MetricKey; label: string; color: string; bg?: string }[]).map(c => (
               <div key={c.key} className="tracking-kpi-card" role="button" tabIndex={0}
-                aria-label={`${c.label}: ₹${dailyMetrics[c.key].total.toLocaleString('en-IN')}. Show details`}
+                aria-label={`${c.label}: ₹${dailyMetrics[c.key].total.toLocaleString('en-IN')}${dailyMetrics[c.key].pendingCount > 0 ? `, ${dailyMetrics[c.key].pendingCount} pending` : ''}. Show details`}
                 onClick={() => setMetricModal(c.key)}
                 onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setMetricModal(c.key); } }}
                 style={{ cursor: 'pointer', ...(c.bg ? { backgroundColor: c.bg } : {}) }}>
@@ -739,6 +752,12 @@ const AdminPayroll: React.FC = () => {
                   ₹{dailyMetrics[c.key].total.toLocaleString('en-IN')}
                 </div>
                 <div className="sc-title">{c.label}</div>
+                {(dailyMetrics[c.key].pendingCount > 0 || dailyMetrics[c.key].unavailableCount > 0) && (
+                  <div style={{ fontSize: '0.7rem', color: 'var(--warning-700, #b45309)' }}>
+                    {[dailyMetrics[c.key].pendingCount > 0 ? `${dailyMetrics[c.key].pendingCount} pending` : '',
+                      dailyMetrics[c.key].unavailableCount > 0 ? `${dailyMetrics[c.key].unavailableCount} unavailable` : ''].filter(Boolean).join(' · ')} — not final
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -779,13 +798,15 @@ const AdminPayroll: React.FC = () => {
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{r.employee.employee_code} • {r.employee.departments?.name}</div>
                         </td>
                         <td>{r.shift}</td>
-                        <td><span className={`badge badge-${r.status === 'COMPLETED' ? 'success' : r.status === 'WORKING' ? 'primary' : 'warning'}`}>{r.status}</span></td>
+                        <td><span className={`badge badge-${r.status === 'COMPLETED' ? 'success' : r.status === 'WORKING' ? 'primary' : ['ABSENT', 'LOP_LEAVE', 'SANDWICH_LOP'].includes(r.status) ? 'danger' : 'warning'}`}>{String(r.status || '—').replace(/_/g, ' ')}</span></td>
                         <td>{r.clockIn ? new Date(r.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
                         <td>
                           {r.clockOut ? (
                             new Date(r.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                           ) : r.clockOutStatus === 'MISSING' ? (
                             <span className="badge badge-warning" style={{ fontSize: '0.7rem' }}>Missing</span>
+                          ) : r.clockOutStatus === 'NOT_CLOCKED_IN' ? (
+                            '-'
                           ) : (
                             <span style={{ color: 'var(--text-secondary)' }}>In progress</span>
                           )}

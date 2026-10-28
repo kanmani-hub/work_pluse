@@ -42,9 +42,9 @@ export function payrollMonthCards(employees: any[], monthPayrolls: any[]): Recor
   };
 }
 
-/** Daily view: one row per daily report (an attendance record for the date). No hours are invented when clock-out is missing. */
+/** Daily view: one row per employee who clocked in that date (absent / leave rows are not counted). No hours are invented when clock-out is missing. */
 export function clockedInCard(dailyReports: any[]): PayrollCardData {
-  const rows = (dailyReports || []).map(r => {
+  const rows = (dailyReports || []).filter(r => !!r?.clockIn).map(r => {
     const worked = elapsedMinutes(r.clockIn, r.clockOut);
     return {
       __key: r.employee?.id, ...employeeFields(r.employee), shift: r.shift || '—', status: r.status || '—',

@@ -13,7 +13,7 @@ import { globalSettingsService } from '../settings/globalSettingsService';
 import { companyDateStr } from '../../utils/companyDate';
 import {
   detectMissingClockOut, evaluateClockOutClaim, validateMissingClockOutSubmission, validateMissingClockOutReview,
-  duplicateOpenAttendance, missingClockOutPayrollStatus, normalizeLimitHours, isMissingClockOutSchemaError,
+  duplicateOpenAttendance, missingClockOutPayrollStatus, normalizeLimitHours, isMissingClockOutSchemaError, missingClockOutGraceHours,
   type MissingClockOutDetection, type PayrollAdjustment, type ClaimEvaluation,
 } from './missingClockOutRules';
 
@@ -49,7 +49,7 @@ async function loadSettings(): Promise<McoSettings> {
   const s = await globalSettingsService.loadSettings();
   if (!s?.updated_at || !s.app || !s.payroll) return { graceHours: 0, limitHours: 0, error: new Error('Company settings could not be loaded. Please try again.') };
   return {
-    graceHours: Number(s.app.autoClockOutGraceHours ?? 4),
+    graceHours: missingClockOutGraceHours(s.app),
     limitHours: normalizeLimitHours(s.payroll.missingClockOutMaxAdditionalHours),
     error: null,
   };

@@ -20,7 +20,7 @@ vi.mock('../audit/auditService', () => ({ auditService: { recordAuditLog: vi.fn(
 vi.mock('./payrollAuditService', () => ({ payrollAuditService: { logEvent: vi.fn(async () => ({ error: null })) } }));
 vi.mock('../notifications/notificationService', () => ({ notificationService: { notifyEmployee: vi.fn(async () => ({ data: null, error: null })), notifyAdmins: vi.fn() } }));
 vi.mock('../../lib/supabase', () => {
-  const db: any = { tables: { payroll: [], payroll_items: [] }, rpcCalls: [], rpcResult: null, updates: 0 };
+  const db: any = { tables: { payroll: [], payroll_items: [] }, rpcCalls: [], rpcResult: null, updates: 0, replaceCalls: 0 };
   const from = (t: string) => {
     const q: any = { op: 'select', filters: [], payload: null, one: false };
     const run = () => {
@@ -44,7 +44,22 @@ vi.mock('../../lib/supabase', () => {
     };
     return b;
   };
-  const rpc = async (name: string, args: any) => { db.rpcCalls.push({ name, args }); return db.rpcResult ?? { data: 0, error: null }; };
+  const rpc = async (name: string, args: any) => {
+    if (name === 'replace_payroll_calculation') {
+      // mirrors supabase/migrations/20261028090100: one row per employee + month, items replaced with it,
+      // locked months refused, UNDER_REVIEW kept
+      db.replaceCalls++;
+      const p = args.p_payroll; const rows = db.tables.payroll;
+      let row = rows.find((r: any) => r.employee_id === p.employee_id && r.payroll_year === p.payroll_year && r.payroll_month === p.payroll_month);
+      if (row && ['APPROVED', 'PAYMENT_PENDING', 'PAID', 'CLOSED'].includes(row.status)) return { data: null, error: { code: '42501', message: `Payroll is ${row.status} and locked` } };
+      const status = row?.status === 'UNDER_REVIEW' ? 'UNDER_REVIEW' : 'CALCULATED';
+      if (row) Object.assign(row, p, { status }); else { row = { id: `payroll${rows.length + 1}`, ...p, status }; rows.push(row); }
+      db.tables.payroll_items = db.tables.payroll_items.filter((i: any) => i.payroll_id !== row.id)
+        .concat(args.p_items.map((it: any, i: number) => ({ id: `${row.id}-item${i + 1}`, payroll_id: row.id, ...it })));
+      return { data: { id: row.id, status, replaced: status !== 'CALCULATED' }, error: null };
+    }
+    db.rpcCalls.push({ name, args }); return db.rpcResult ?? { data: 0, error: null };
+  };
   return { supabase: { from, rpc, __db: db } };
 });
 
@@ -56,7 +71,7 @@ const snap = (res: any) => JSON.parse(res.data.remarks);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  db.tables = { payroll: [], payroll_items: [] }; db.rpcCalls = []; db.rpcResult = null; db.updates = 0;
+  db.tables = { payroll: [], payroll_items: [] }; db.rpcCalls = []; db.rpcResult = null; db.updates = 0; db.replaceCalls = 0;
   (globalSettingsService.loadSettings as any).mockResolvedValue({
     updated_at: '2026-10-01T00:00:00Z',
     app: { workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] },
@@ -113,6 +128,10 @@ describe('payroll calculation with missing clock-out adjustments', () => {
     expect(second.data.total_deductions).toBe(first.data.total_deductions);
     expect(second.data.net_salary).toBe(25500);
     expect(db.rpcCalls).toHaveLength(0); // calculation never settles or creates adjustments
+    // saved through the atomic function: still one payroll row and one set of items
+    expect(db.replaceCalls).toBe(2);
+    expect(db.tables.payroll).toHaveLength(1);
+    expect(db.tables.payroll_items.filter((i: any) => i.item_type === 'DEDUCTION')).toHaveLength(1);
   });
 
   it('case 14: if the adjustments cannot be read, payroll is not calculated (no silent zero)', async () => {
@@ -134,6 +153,8 @@ describe('payroll calculation with missing clock-out adjustments', () => {
 
 describe('approval settles exactly the included adjustments, atomically', () => {
   const remarks = (ids: string[]) => JSON.stringify({ attendance: { reviewItems: [] }, missingClockOutAdjustments: { ids } });
+  // the figures a fresh calculation gives for the fixture month (₹26,000, nothing deducted): approval re-checks them
+  const AMOUNTS = { basic_salary: 26000, gross_salary: 26000, total_allowances: 0, total_deductions: 0, lop_deduction: 0, overtime_amount: 0, net_salary: 26000 };
 
   it('reads the stored ids safely', () => {
     expect(settledAdjustmentIds(remarks(['d1', 'v1']))).toEqual(['d1', 'v1']);
@@ -142,7 +163,7 @@ describe('approval settles exactly the included adjustments, atomically', () => 
   });
 
   it('a payroll with adjustments is approved only through the database function (no direct update)', async () => {
-    db.tables.payroll = [{ id: 'p1', employee_id: 'e1', payroll_year: 2026, payroll_month: 10, status: 'UNDER_REVIEW', remarks: remarks(['d1']) }];
+    db.tables.payroll = [{ id: 'p1', employee_id: 'e1', payroll_year: 2026, payroll_month: 10, status: 'UNDER_REVIEW', remarks: remarks(['d1']), ...AMOUNTS }];
     const r = await payrollService.updateStatus('p1', 'APPROVED', ['UNDER_REVIEW']);
     expect(r.error).toBeNull();
     expect(db.rpcCalls).toEqual([{ name: 'approve_payroll_with_adjustments', args: { p_payroll_id: 'p1', p_adjustment_ids: ['d1'] } }]);
@@ -150,7 +171,7 @@ describe('approval settles exactly the included adjustments, atomically', () => 
   });
 
   it('cases 7/11: if an adjustment changed since the calculation (e.g. cancelled by an approval), nothing is approved', async () => {
-    db.tables.payroll = [{ id: 'p1', employee_id: 'e1', payroll_year: 2026, payroll_month: 10, status: 'UNDER_REVIEW', remarks: remarks(['d1']) }];
+    db.tables.payroll = [{ id: 'p1', employee_id: 'e1', payroll_year: 2026, payroll_month: 10, status: 'UNDER_REVIEW', remarks: remarks(['d1']), ...AMOUNTS }];
     db.rpcResult = { data: null, error: { code: '40001', message: 'Payroll adjustments changed since this payroll was calculated. Recalculate it, then approve.' } };
     const r = await payrollService.updateStatus('p1', 'APPROVED', ['UNDER_REVIEW']);
     expect(r.error?.message).toBe('Payroll adjustments changed since this payroll was calculated. Recalculate it, then approve.');
@@ -158,7 +179,7 @@ describe('approval settles exactly the included adjustments, atomically', () => 
   });
 
   it('a payroll calculated before a missing clock-out correction of its period was approved cannot be approved', async () => {
-    db.tables.payroll = [{ id: 'p1', employee_id: 'e1', payroll_year: 2026, payroll_month: 10, status: 'UNDER_REVIEW', remarks: remarks([]),
+    db.tables.payroll = [{ id: 'p1', employee_id: 'e1', payroll_year: 2026, payroll_month: 10, status: 'UNDER_REVIEW', remarks: remarks([]), ...AMOUNTS,
       period_start: '2026-10-01', period_end: '2026-10-31', calculated_at: '2026-10-20T10:00:00Z' }];
     db.tables.overtime_requests = [{ employee_id: 'e1', request_type: 'MISSING_CLOCK_OUT', status: 'APPROVED', work_date: '2026-10-05', reviewed_at: '2026-10-21T09:00:00Z' }];
     const r = await payrollService.updateStatus('p1', 'APPROVED', ['UNDER_REVIEW']);
@@ -178,7 +199,7 @@ describe('approval settles exactly the included adjustments, atomically', () => 
   });
 
   it('a payroll without adjustments keeps the existing approval path', async () => {
-    db.tables.payroll = [{ id: 'p1', employee_id: 'e1', payroll_year: 2026, payroll_month: 10, status: 'UNDER_REVIEW', remarks: remarks([]) }];
+    db.tables.payroll = [{ id: 'p1', employee_id: 'e1', payroll_year: 2026, payroll_month: 10, status: 'UNDER_REVIEW', remarks: remarks([]), ...AMOUNTS }];
     const r = await payrollService.updateStatus('p1', 'APPROVED', ['UNDER_REVIEW']);
     expect(r.error).toBeNull();
     expect(db.rpcCalls).toHaveLength(0);

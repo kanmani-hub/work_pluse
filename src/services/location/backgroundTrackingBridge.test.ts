@@ -45,7 +45,8 @@ vi.mock('../../lib/supabase', () => {
     };
     return b;
   };
-  return { supabase: { from, auth: { getUser: async () => ({ data: { user: null }, error: null }) }, __db: db } };
+  const rpc = vi.fn(async (_fn: string, _args: any) => ({ data: { action: 'NONE' }, error: null }));
+  return { supabase: { from, rpc, auth: { getUser: async () => ({ data: { user: null }, error: null }) }, __db: db } };
 });
 
 const db = (supabase as any).__db;
@@ -243,6 +244,17 @@ describe('temporary network loss and app resume', () => {
     await locationService.handleResume();
     expect(locationService.getTrackingState().status).toBe('LOCATION_UNAVAILABLE');
     expect(transition).not.toHaveBeenCalled();
+  });
+
+  it('failed diagnostic RPC does not incorrectly change attendance or break state', async () => {
+    setup({ liveStatus: 'OUTSIDE_GEOFENCE' });
+    ((supabase as any).rpc as any).mockResolvedValueOnce({ data: null, error: { message: 'Network timeout to database' } });
+    locationService.getCurrentLocation = async () => ({ latitude: null, longitude: null, accuracy: null, timestamp: null, status: 'LOCATION_UNAVAILABLE', error: 'off' });
+    await locationService.handleResume();
+    expect(locationService.getTrackingState().status).toBe('LOCATION_UNAVAILABLE');
+    expect(calls('END')).toHaveLength(0);
+    expect(calls('START')).toHaveLength(0);
+    expect(live().location_status).toBe('OUTSIDE_GEOFENCE');
   });
 });
 

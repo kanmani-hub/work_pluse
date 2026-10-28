@@ -2,6 +2,7 @@ import { supabase } from '../../lib/supabase';
 
 /** Makes each employee-breaks subscription a distinct channel (see subscribeToMyBreaks). */
 let myBreaksChannelSeq = 0;
+let payrollImpactChannelSeq = 0;
 
 export const realtimeService = {
   /**
@@ -202,6 +203,13 @@ export const realtimeService = {
       this.subscribeToAdminOvertime(callback),
       this.subscribeToAdminSalary(callback),
       this.subscribeToAdminRoster(callback),
+      // leave and permission approvals change LOP / permission deductions too. Own topics, so this
+      // never reuses the Leave / Permission pages' channels (supabase.channel(topic) returns an
+      // existing channel with the same topic).
+      ...['leave_requests', 'permission_requests'].map(table => supabase
+        .channel(`admin:payroll-impact:${table}:${++payrollImpactChannelSeq}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table }, callback)
+        .subscribe()),
     ].filter(Boolean);
 
     return {

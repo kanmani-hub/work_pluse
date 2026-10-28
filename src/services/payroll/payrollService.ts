@@ -1,4 +1,5 @@
 import { supabase } from '../../lib/supabase';
+import { buildPayrollWrite, payrollWriteError, isMissingReplaceFunction, stalePayrollReason, type PayrollWrite } from './payrollWriteRules';
 import { canManagePayroll } from '../../lib/roles';
 import { salaryService } from './salaryService';
 import { auditService } from '../audit/auditService';
@@ -15,6 +16,7 @@ import { companyDateStr } from '../../utils/companyDate';
 import { missingClockOutPayrollLines, isMissingClockOutSchemaError, staleMissingClockOutReason } from '../attendance/missingClockOutRules';
 import { calculateLateDeduction } from './payrollLateDeductionRules';
 import { evaluateDailyImpact } from './payrollImpactRules';
+import { marginalDailyCalculation, NO_ATTENDANCE_LISTED_KINDS, isoDayBefore, mapLimited } from './dailyImpactRules';
 
 /** Missing clock-out adjustment ids a calculated payroll included (stored with the calculation). */
 export function settledAdjustmentIds(remarks: unknown): string[] {
@@ -105,7 +107,7 @@ export const payrollService = {
       return { data: null, error: new Error('Access Denied: Admin/HR only') };
     }
 
-    // Find all attendance records for this date
+    // Attendance rows of the date (who clocked in, shift, breaks)
     const { data: attendanceRecords, error: attErr } = await supabase
       .from('attendance')
       .select('*, shift_template:shift_template_id(*)')
@@ -115,10 +117,21 @@ export const payrollService = {
       return { data: null, error: new Error(`Attendance could not be loaded: ${attErr?.message || 'no data returned'}`) };
     }
 
-    const { data: employees, error: empErr } = await supabase
+    // Payroll population (same as Generate payroll: active salary structures), so employees who are
+    // absent or on leave — and therefore have no attendance row — are part of the day too.
+    const { data: structures, error: structErr } = await supabase.from('salary_structures').select('employee_id').eq('is_active', true) as any;
+    if (structErr || !Array.isArray(structures)) {
+      return { data: null, error: new Error(`Salary structures could not be loaded: ${structErr?.message || 'no data returned'}`) };
+    }
+    const employeeIds = Array.from(new Set<string>([
+      ...attendanceRecords.map((a: any) => a.employee_id),
+      ...structures.map((s: any) => s.employee_id),
+    ].filter(Boolean)));
+
+    const { data: employees, error: empErr } = employeeIds.length === 0 ? { data: [], error: null } : await supabase
       .from('employees')
       .select('id, first_name, last_name, employee_code, departments(name), office:office_id(name)')
-      .in('id', attendanceRecords.map((a: any) => a.employee_id)) as any;
+      .in('id', employeeIds) as any;
 
     // Overtime requests for the date (display only: approval status / hours). A failed lookup is
     // reported on the rows as unavailable — never shown as "no request".
@@ -130,75 +143,84 @@ export const payrollService = {
 
     if (empErr || !employees) return { data: null, error: new Error(`Employees could not be loaded: ${empErr?.message || 'no data returned'}`) };
 
-    // Get the year and month for the given date to pass to the calculation engine
-    const d = new Date(dateStr);
-    const year = d.getFullYear();
-    const month = d.getMonth() + 1;
+    // The date's share of the month: month-to-date through the date minus month-to-date through the
+    // previous day, with the same calculation as the monthly payroll (see dailyImpactRules). Limits,
+    // interval rounding, once-a-month charges and adjustments therefore match the monthly payroll.
+    const [yStr, mStr] = dateStr.split('-');
+    const year = Number(yStr);
+    const month = Number(mStr);
+    const monthStart = `${yStr}-${mStr}-01`;
+    const previousDay = dateStr > monthStart ? isoDayBefore(dateStr) : null;
 
-    const reports = [];
     const failures: string[] = [];
-
-    for (const emp of employees) {
-      const att = attendanceRecords.find((a: any) => a.employee_id === emp.id);
-      if (!att) continue;
-
-      const calc = await this.calculatePayrollDetails(emp.id, year, month, dateStr, dateStr);
-      if (calc.error || !calc.data) {
-        failures.push(`${emp.employee_code || emp.id}: ${calc.error?.message || 'not calculated'}`);
-        continue;
+    const results = await mapLimited(employees as any[], 4, async (emp: any) => {
+      const att = attendanceRecords.find((a: any) => a.employee_id === emp.id) || null;
+      const [through, before] = await Promise.all([
+        this.calculatePayrollDetails(emp.id, year, month, monthStart, dateStr),
+        previousDay ? this.calculatePayrollDetails(emp.id, year, month, monthStart, previousDay) : Promise.resolve({ data: null, error: null }),
+      ]);
+      if (through.error || !through.data || (previousDay && (before.error || !before.data))) {
+        const err = through.error || before.error;
+        // an employee whose salary structure starts later, without attendance, is simply not on payroll yet
+        if (!att && /No active salary structure/.test(err?.message || '')) return null;
+        failures.push(`${emp.employee_code || emp.id}: ${err?.message || 'not calculated'}`);
+        return null;
       }
-      
-      if (!calc.error && calc.data) {
-        const c = calc.data as any;
-        const empOtRequests = otRequests.filter((o: any) => o.employee_id === emp.id);
+      const c = marginalDailyCalculation(through.data as any, before.data as any, dateStr);
+      if (!att && !NO_ATTENDANCE_LISTED_KINDS.includes(String(c.dayKind)) && !(Number(c.totalDeductions) > 0)) return null; // week off, holiday, not employed
 
-        const evaluated = evaluateDailyImpact({
-          attendance: att,
-          calculation: c,
-          overtimeRequests: empOtRequests,
-          overtimeRequestsError: otRequestsError,
-        });
+      const empOtRequests = otRequests.filter((o: any) => o.employee_id === emp.id);
+      const attendanceForDay = att || { attendance_date: dateStr, clock_in_at: null, clock_out_at: null, status: c.dayKind, shift_template: null };
+      const evaluated = evaluateDailyImpact({
+        attendance: attendanceForDay,
+        calculation: c,
+        overtimeRequests: empOtRequests,
+        overtimeRequestsError: otRequestsError,
+        dayKind: c.dayKind,
+      });
 
-        reports.push({
-          employee: emp,
-          shift: att.shift_template?.name || 'Standard',
-          status: att.status,
-          clockIn: att.clock_in_at,
-          clockOut: att.clock_out_at,
-          lateMinutes: evaluated.lateMinutes,
-          lateDeduction: evaluated.lateDeduction,
-          breakOverrunMinutes: evaluated.breakOverrunMinutes,
-          breakDeduction: evaluated.breakDeduction,
-          overtimeMinutes: evaluated.overtimeMinutes,
-          overtimePay: evaluated.overtimePay,
-          lopImpact: evaluated.lopImpact,
-          otherDeductions: evaluated.otherDeductions,
-          totalDailyImpact: evaluated.totalDailyImpact,
-          totalDeductions: evaluated.totalDeductions,
-          totalAdditions: evaluated.totalAdditions,
-          netDailyImpact: evaluated.netDailyImpact,
-          impactStatus: evaluated.impactStatus,
-          clockOutStatus: evaluated.clockOutStatus,
-          lateStatus: evaluated.lateStatus,
-          breakStatus: evaluated.breakStatus,
-          overtimeStatus: evaluated.overtimeStatus,
-          lopStatus: evaluated.lopStatus,
-          pendingOvertimeHours: evaluated.pendingOvertimeHours,
-          isShiftInProgress: evaluated.isShiftInProgress,
-          rawCalc: c,
-          // Display details for the summary-card breakdowns (no effect on any amount)
-          attendance: att,
-          overtimeRequests: empOtRequests,
-          overtimeRequestsError: otRequestsError,
-        });
-      }
-    }
+      return {
+        employee: emp,
+        shift: att?.shift_template?.name || (att ? 'Standard' : '—'),
+        status: att?.status || c.dayKind || '—',
+        dayKind: c.dayKind,
+        hasAttendance: !!att,
+        clockIn: att?.clock_in_at ?? null,
+        clockOut: att?.clock_out_at ?? null,
+        lateMinutes: evaluated.lateMinutes,
+        lateDeduction: evaluated.lateDeduction,
+        breakOverrunMinutes: evaluated.breakOverrunMinutes,
+        breakDeduction: evaluated.breakDeduction,
+        overtimeMinutes: evaluated.overtimeMinutes,
+        overtimePay: evaluated.overtimePay,
+        lopImpact: evaluated.lopImpact,
+        otherDeductions: evaluated.otherDeductions,
+        totalDailyImpact: evaluated.totalDailyImpact,
+        totalDeductions: evaluated.totalDeductions,
+        totalAdditions: evaluated.totalAdditions,
+        netDailyImpact: evaluated.netDailyImpact,
+        impactStatus: evaluated.impactStatus,
+        clockOutStatus: evaluated.clockOutStatus,
+        lateStatus: evaluated.lateStatus,
+        breakStatus: evaluated.breakStatus,
+        overtimeStatus: evaluated.overtimeStatus,
+        lopStatus: evaluated.lopStatus,
+        pendingOvertimeHours: evaluated.pendingOvertimeHours,
+        isShiftInProgress: evaluated.isShiftInProgress,
+        lateMonthToDate: c.monthToDate.late,
+        rawCalc: c,
+        // Display details for the summary-card breakdowns (no effect on any amount)
+        attendance: att,
+        overtimeRequests: empOtRequests,
+        overtimeRequestsError: otRequestsError,
+      };
+    });
 
     // A preview that silently drops employees would understate deductions: report them instead.
     if (failures.length > 0) {
       return { data: null, error: new Error(`Deductions could not be calculated for ${failures.length} employee(s). ${failures[0]}`) };
     }
-    return { data: reports, error: null };
+    return { data: results.filter(Boolean) as any[], error: null };
   },
 
   /**
@@ -300,18 +322,18 @@ export const payrollService = {
       if (['APPROVED', 'PAYMENT_PENDING', 'PAID', 'CLOSED'].includes(existing.status)) {
         return { error: new Error(`Cannot recalculate payroll in ${existing.status} status.`) };
       }
-      
-      // Delete existing to recalculate
-      await supabase.from('payroll_items').delete().eq('payroll_id', existing.id);
-      await supabase.from('payroll').delete().eq('id', existing.id);
+      // Nothing is deleted here: the new figures are calculated first and then replace the stored
+      // payroll in one database transaction (replace_payroll_calculation). A failed calculation or
+      // save leaves the previous payroll and its items as they were.
     }
 
     // Admin decisions on review flags survive recalculation
     const resolutions: ReviewResolution[] = opts?.resolutions ?? (parsePayrollSnapshot(existing?.remarks)?.reviewResolutions || []);
-    const res: any = await this._doCalculate(employeeId, year, month, periodStart, periodEnd, { resolutions });
+    const res: any = await this._doCalculate(employeeId, year, month, periodStart, periodEnd, { resolutions, existingId: existing?.id ?? null });
     
-    // Restore UNDER_REVIEW if it was previously UNDER_REVIEW
-    if (res.data?.id && existing?.status === 'UNDER_REVIEW') {
+    // The database function keeps UNDER_REVIEW itself; only the fallback path (migration not applied)
+    // re-created the row as CALCULATED and has to submit it again.
+    if (res.data?.id && existing?.status === 'UNDER_REVIEW' && res.atomic === false) {
       await this.submitPayrollForReview(res.data.id);
       res.data.status = 'UNDER_REVIEW';
     }
@@ -648,13 +670,15 @@ export const payrollService = {
         settings,
         lateCalculation,
         // The app settings this calculation used (break allowance, grace period) — for display
-        appSettings
+        appSettings,
+        // Day classification of the period (one entry per date) — the daily view reads the date's kind
+        days: Array.isArray((daysResult as any).days) ? (daysResult as any).days.map((d: any) => ({ date: d.date, kind: d.kind })) : [],
       },
       error: null
     };
   },
 
-  async _doCalculate(employeeId: string, year: number, month: number, periodStart: string, periodEnd: string, opts?: { resolutions?: ReviewResolution[] }) {
+  async _doCalculate(employeeId: string, year: number, month: number, periodStart: string, periodEnd: string, opts?: { resolutions?: ReviewResolution[]; existingId?: string | null }) {
     const resolutions = opts?.resolutions || [];
     const calc = await this.calculatePayrollDetails(employeeId, year, month, periodStart, periodEnd, { resolutions });
     if (calc.error) return { data: null, error: calc.error };
@@ -686,39 +710,31 @@ export const payrollService = {
       reviewResolutions: resolutions,
     });
 
-    // 10. Insert Payroll
-    const { data: payroll, error: insErr } = await supabase
-      .from('payroll')
-      .insert({
-        employee_id: employeeId,
-        payroll_year: year,
-        payroll_month: month,
-        period_start: periodStart,
-        period_end: periodEnd,
-        basic_salary: basic,
-        gross_salary: grossSalary,
-        total_allowances: totalAllowances,
-        total_deductions: totalDeductions,
-        lop_deduction: lopDeduction,
-        overtime_amount: overtime,
-        net_salary: netSalary,
-        status: 'CALCULATED',
-        calculated_at: new Date().toISOString(),
-        remarks: dataSummary
-      } as any)
-      .select()
-      .single<any>();
+    // 10. Build row + items from the finished calculation, then save them together
+    const write = buildPayrollWrite({
+      employeeId, year, month, periodStart, periodEnd,
+      basic, grossSalary, totalAllowances, totalDeductions, lopDeduction, overtime, netSalary,
+      remarks: dataSummary,
+      deductionItems,
+      earningAdjustmentItems: earningAdjustmentItems || [],
+      standardDeduction: Number(salary?.standard_deduction || 0),
+      lateFormula: lateCalculation?.formula ?? null,
+    });
+    const invalid = payrollWriteError(write);
+    if (invalid) return { data: null, error: new Error(invalid) };
 
-    if (insErr || !payroll) {
-      return { error: insErr || new Error('Failed to create payroll record.') };
+    const saved = await this._savePayrollCalculation(write, opts?.existingId ?? null);
+    if (saved.error || !saved.payroll) {
+      return { data: null, error: saved.error || new Error('Failed to create payroll record.') };
     }
+    const payroll = saved.payroll;
 
     await payrollAuditService.logEvent({
       payrollId: payroll.id,
       action: 'PAYROLL_GENERATED',
       title: `System generated ${year}-${String(month).padStart(2, '0')} payroll`,
       description: `Base Salary: ₹${basic.toLocaleString('en-IN')}\nNet Salary: ₹${netSalary.toLocaleString('en-IN')}`,
-      newStatus: 'CALCULATED'
+      newStatus: payroll.status || 'CALCULATED'
     });
 
     await payrollAuditService.logEvent({
@@ -728,36 +744,50 @@ export const payrollService = {
       description: `Working Days: ${workingDays}\nDaily Rate: ₹${payrollSettingsService.applyRounding(dailyRate, settings)}\nPaid Days: ${empData.attendance.presentDays}\nUnpaid Days: ${empData.attendance.lopDays}`,
     });
 
-    // 11. Insert Payroll Items
-    const items: any[] = [];
-    if (grossSalary > 0) items.push({ payroll_id: payroll.id, item_type: 'EARNING', item_name: 'Gross Salary', amount: grossSalary });
-    if (overtime > 0) items.push({ payroll_id: payroll.id, item_type: 'EARNING', item_name: 'Approved Overtime', amount: overtime });
-    for (const e of earningAdjustmentItems || []) {
-      items.push({ payroll_id: payroll.id, item_type: 'EARNING', item_name: e.name, amount: e.amount });
+    // 11. Payroll items were saved with the row (see _savePayrollCalculation)
+
+    return { data: payroll, error: null, reviewItems: empData.attendance.reviewItems || [], atomic: saved.atomic };
+  },
+
+  /**
+   * Saves one calculated payroll (row + items). With migration 20261028090100 this is one database
+   * transaction that also refuses a locked month. Without it (not applied yet) the previous behaviour
+   * remains, but only after the new figures exist, and every step is checked.
+   */
+  async _savePayrollCalculation(write: PayrollWrite, existingId: string | null): Promise<{ payroll: any | null; error: Error | null; atomic: boolean }> {
+    const { data: rpcRes, error: rpcErr } = await (supabase as any).rpc('replace_payroll_calculation', { p_payroll: write.row, p_items: write.items });
+    if (!rpcErr) {
+      const id = rpcRes?.id;
+      const { data: payroll, error: readErr } = await supabase.from('payroll').select('*').eq('id', id).single<any>();
+      if (readErr || !payroll) return { payroll: null, error: new Error(`Payroll was saved but could not be read back (${readErr?.message || 'no data returned'}). Please refresh.`), atomic: true };
+      return { payroll, error: null, atomic: true };
     }
-    
-    // Add individual deduction items
-    for (const d of deductionItems) {
-      items.push({
-        payroll_id: payroll.id,
-        item_type: 'DEDUCTION',
-        item_name: d.name,
-        amount: d.amount,
-        calculation_basis: d.name.includes('Late Deduction') && lateCalculation?.formula
-          ? lateCalculation.formula
-          : 'System calculated from settings and attendance',
-      });
-    }
-    // Standard deduction if any
-    if (Number(salary.standard_deduction || 0) > 0) {
-      items.push({ payroll_id: payroll.id, item_type: 'DEDUCTION', item_name: 'Standard Deduction', amount: Number(salary.standard_deduction) });
+    if (!isMissingReplaceFunction(rpcErr)) {
+      return { payroll: null, error: new Error(rpcErr.message || 'Payroll could not be saved.'), atomic: true };
     }
 
-    if (items.length > 0) {
-      await supabase.from('payroll_items').insert(items as any);
+    // Fallback: database function not available
+    if (existingId) {
+      const { error: delItemsErr } = await supabase.from('payroll_items').delete().eq('payroll_id', existingId);
+      if (delItemsErr) return { payroll: null, error: new Error(`The previous payroll items could not be replaced (${delItemsErr.message}). Nothing was changed.`), atomic: false };
+      const { error: delErr } = await supabase.from('payroll').delete().eq('id', existingId);
+      if (delErr) return { payroll: null, error: new Error(`The previous payroll could not be replaced (${delErr.message}). Please recalculate.`), atomic: false };
     }
-
-    return { data: payroll, error: null, reviewItems: empData.attendance.reviewItems || [] };
+    const { data: payroll, error: insErr } = await supabase
+      .from('payroll')
+      .insert({ ...write.row, status: 'CALCULATED', calculated_at: new Date().toISOString() } as any)
+      .select()
+      .single<any>();
+    if (insErr || !payroll) return { payroll: null, error: insErr ? new Error(insErr.message) : new Error('Failed to create payroll record.'), atomic: false };
+    if (write.items.length > 0) {
+      const { error: itemsErr } = await supabase.from('payroll_items').insert(write.items.map(it => ({ ...it, payroll_id: payroll.id })) as any);
+      if (itemsErr) {
+        // never leave a payroll without its items
+        await supabase.from('payroll').delete().eq('id', payroll.id);
+        return { payroll: null, error: new Error(`Payroll items could not be saved (${itemsErr.message}). Please recalculate.`), atomic: false };
+      }
+    }
+    return { payroll, error: null, atomic: false };
   },
 
   /**
@@ -767,7 +797,7 @@ export const payrollService = {
     const adminId = await salaryService.getCurrentEmployeeId();
     if (!adminId) return { error: new Error('Unauthorized') };
 
-    const { data: existing } = await supabase.from('payroll').select('status, remarks, employee_id, period_start, period_end, calculated_at').eq('id', id).single<any>();
+    const { data: existing } = await supabase.from('payroll').select('status, remarks, employee_id, payroll_year, payroll_month, period_start, period_end, calculated_at, basic_salary, gross_salary, total_allowances, total_deductions, lop_deduction, overtime_amount, net_salary').eq('id', id).single<any>();
     if (!existing) return { error: new Error('Not found') };
 
     // Unresolved attendance review flags block approval (single and bulk approval both come here)
@@ -788,6 +818,10 @@ export const payrollService = {
     if (newStatus === 'APPROVED') {
       const stale = await this._staleMissingClockOutCheck(existing);
       if (stale) return { error: new Error(stale) };
+      // Any other change after calculation (attendance correction, leave approved, overtime approved,
+      // settings): the stored figures must still equal a fresh calculation.
+      const drift = await this._staleCalculationCheck(existing);
+      if (drift) return { error: new Error(drift) };
     }
 
     // A payroll that included missing clock-out adjustments is approved by one database function that
@@ -848,6 +882,19 @@ export const payrollService = {
     }
 
     return { error };
+  },
+
+  /** Refusal message when the stored payroll differs from a fresh calculation of the same period; null when it matches. */
+  async _staleCalculationCheck(p: any): Promise<string | null> {
+    if (!p?.employee_id || !p.payroll_year || !p.payroll_month) return null;
+    const resolutions: ReviewResolution[] = parsePayrollSnapshot(p.remarks)?.reviewResolutions || [];
+    try {
+      const fresh: any = await this.calculatePayrollDetails(p.employee_id, p.payroll_year, p.payroll_month, p.period_start, p.period_end, { resolutions });
+      if (fresh?.error || !fresh?.data) return stalePayrollReason(p, null, fresh?.error?.message || null);
+      return stalePayrollReason(p, fresh.data);
+    } catch (e: any) {
+      return stalePayrollReason(p, null, e?.message || null);
+    }
   },
 
   /** Refusal message when a missing clock-out correction of the period was approved after calculation; null otherwise. */

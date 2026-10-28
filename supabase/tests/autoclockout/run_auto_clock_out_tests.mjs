@@ -203,7 +203,9 @@ console.log('\n== correction after flagging');
   const today = await as(db, 'emp', `UPDATE attendance SET notes = 'ok' WHERE id='${id(12)}'`);
   check('COR-5 ordinary employee updates on an open, unflagged day still work', today.n === 1 || (await one(db, `SELECT status FROM attendance WHERE id=$1`, [id(12)])).status === 'MISSING_CLOCK_OUT', today.error || '');
   const forgeFlag = await as(db, 'emp', `UPDATE attendance SET status='MISSING_CLOCK_OUT' WHERE id='${id(12)}'`);
-  check('COR-6 the employee cannot set the flag themselves', !!forgeFlag.error || forgeFlag.n === 0, forgeFlag.error || 'updated');
+  const s3 = await one(db, `SELECT status FROM attendance WHERE id=$1`, [id(12)]);
+  // refused, or ignored by the server-values guard (20261028090000): the flag is never set by the employee
+  check('COR-6 the employee cannot set the flag themselves', !!forgeFlag.error || forgeFlag.n === 0 || s3.status !== 'MISSING_CLOCK_OUT', forgeFlag.error || JSON.stringify(s3));
 }
 
 console.log('\n== settings and permissions');
@@ -212,7 +214,9 @@ console.log('\n== settings and permissions');
   await setApp(db, { autoClockOut: false });
   check('SET-1 autoClockOut = false: the job flags nothing', (await run(db)) === 0 && (await one(db, `SELECT status FROM attendance WHERE id=$1`, [id(30)])).status === 'WORKING');
   await setApp(db, { autoClockOut: true, autoClockOutMode: 'at_shift_end', autoClockOutGraceHours: 48 });
-  check('SET-2 mode at_shift_end ignores the grace hours', (await run(db)) === 1);
+  // checks its own row: other open rows (e.g. last night's night shift) may also be due, depending on the time of day
+  await run(db);
+  check('SET-2 mode at_shift_end ignores the grace hours', (await one(db, `SELECT status FROM attendance WHERE id=$1`, [id(30)])).status === 'MISSING_CLOCK_OUT');
   for (const who of ['anon', 'emp', 'hr', 'admin']) {
     const r = await as(db, who, `SELECT public.process_auto_clock_out()`);
     check(`PERM-${who} ${who} cannot run the job through the API`, !!r.error, r.error || 'ran');

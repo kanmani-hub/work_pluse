@@ -13,14 +13,14 @@
  *  - Total Impact combining applicable deductions and approved additions without double-counting.
  */
 
-import { detectMissingClockOut } from '../attendance/missingClockOutRules';
+import { detectMissingClockOut, missingClockOutGraceHours } from '../attendance/missingClockOutRules';
 
 export type ImpactCalculationStatus = 'FINAL' | 'PENDING' | 'UNAVAILABLE';
-export type ClockOutStatus = 'COMPLETED' | 'IN_PROGRESS' | 'MISSING';
+export type ClockOutStatus = 'COMPLETED' | 'IN_PROGRESS' | 'MISSING' | 'NOT_CLOCKED_IN';
 export type LateDeductionStatus = 'DISABLED' | 'ON_TIME' | 'BELOW_THRESHOLD' | 'EXEMPT' | 'FINAL' | 'ZERO';
 export type BreakCalculationStatus = 'DISABLED' | 'PENDING' | 'NO_OVERRUN' | 'FINAL';
 export type OvertimeCalculationStatus = 'DISABLED' | 'UNAVAILABLE' | 'PENDING' | 'APPROVED' | 'NONE';
-export type LopCalculationStatus = 'DISABLED' | 'PRESENT' | 'FINAL' | 'NONE';
+export type LopCalculationStatus = 'DISABLED' | 'PRESENT' | 'FINAL' | 'NONE' | 'PENDING';
 
 export interface EvaluateDailyImpactInput {
   attendance: {
@@ -86,6 +86,8 @@ export interface EvaluateDailyImpactInput {
   }[];
   overtimeRequestsError?: string | null;
   nowMs?: number;
+  /** Payroll day classification of this date (e.g. ABSENT, LOP_LEAVE, TODAY_PENDING) when known */
+  dayKind?: string | null;
 }
 
 export interface EvaluatedDailyImpact {
@@ -136,11 +138,16 @@ export function evaluateDailyImpact(input: EvaluateDailyImpactInput): EvaluatedD
 
   // 1. Clock-out and shift progress
   let clockOutStatus: ClockOutStatus = 'COMPLETED';
-  if (!clockOut) {
+  if (!clockIn) {
+    clockOutStatus = 'NOT_CLOCKED_IN'; // absence / leave / not clocked in yet: no shift is in progress
+  } else if (!clockOut) {
     if (statusStr === 'COMPLETED') {
       clockOutStatus = 'COMPLETED';
+    } else if (statusStr === 'MISSING_CLOCK_OUT') {
+      clockOutStatus = 'MISSING'; // flagged by the server job
     } else {
-      const graceHours = appSettings.autoClockOutGraceHours ?? 2;
+      // same threshold as the server job and the employee correction screen (Settings mode + grace, default 4 h)
+      const graceHours = missingClockOutGraceHours(appSettings);
       const shiftObj = att.shift_template ? {
         start_time: att.shift_template.start_time ?? null,
         end_time: att.shift_template.end_time ?? null,
@@ -245,6 +252,8 @@ export function evaluateDailyImpact(input: EvaluateDailyImpactInput): EvaluatedD
     lopStatus = 'FINAL';
   } else if (clockIn) {
     lopStatus = 'PRESENT'; // Worked day, no unexcused absence
+  } else if (input.dayKind === 'TODAY_PENDING') {
+    lopStatus = 'PENDING'; // today, not clocked in yet: absence is decided after the day
   } else {
     lopStatus = 'NONE';
   }
@@ -269,6 +278,7 @@ export function evaluateDailyImpact(input: EvaluateDailyImpactInput): EvaluatedD
   if (overtimeStatus === 'UNAVAILABLE') {
     impactStatus = 'UNAVAILABLE';
   } else if (
+    lopStatus === 'PENDING' ||
     isShiftInProgress ||
     clockOutStatus === 'MISSING' ||
     breakStatus === 'PENDING' ||

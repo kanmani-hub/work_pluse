@@ -105,6 +105,9 @@ beforeEach(() => {
   db.tables = { payroll: [], payroll_payments: [] };
   db.rpcMissing = false; db.failPaymentInsert = false; db.rpcCalls = 0; db.locks = {};
   setRole('ADMIN');
+  // These tests cover the status workflow with placeholder amounts. The approval re-check against a fresh
+  // calculation has its own tests (payrollWriteRules.test.ts, payrollMissingClockOut.test.ts).
+  vi.spyOn(payrollService, '_staleCalculationCheck').mockResolvedValue(null);
 });
 
 describe('markPayrollPaid: one exact payment per payroll, through the database function', () => {

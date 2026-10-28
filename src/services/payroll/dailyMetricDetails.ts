@@ -2,8 +2,9 @@
  * Breakdowns behind the five summary cards of the Payroll → Today / Custom date view (pure, unit-tested).
  *
  * Source: the rows of payrollService.getDailyDeductionReport(date) — one per employee with an
- * attendance record that date, each carrying the same calculation payroll uses (rawCalc =
- * calculatePayrollDetails for that single date). The cards and these breakdowns are computed from
+ * attendance record that date, plus employees on payroll who are absent, on leave or (today) not
+ * clocked in yet. rawCalc is the date's share of the month: the monthly calculation through the date
+ * minus the monthly calculation through the previous day (dailyImpactRules). The cards and these breakdowns are computed from
  * the same rows by the same functions, so a breakdown's total always equals its card.
  * Nothing here calculates money: amounts are read from the calculation; formulas are explained
  * from the saved settings that calculation used.
@@ -26,6 +27,10 @@ export interface MetricDetail {
   /** Missing configuration, data gaps or scope notes */
   notes: string[];
   emptyMessage: string;
+  /** Rows whose amount may still change (shift in progress, not clocked in yet, overtime awaiting approval) */
+  pendingCount: number;
+  /** Rows whose amount could not be determined (e.g. overtime requests could not be loaded) */
+  unavailableCount: number;
 }
 
 const r2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
@@ -120,13 +125,41 @@ export function overtimeFormula(s: any, approvedMinutes: number, dailyRate: numb
   return Number(s.overtimeFixedRate) > 0 ? `${h}h × ${inr(s.overtimeFixedRate)}/h` : 'Rate not configured';
 }
 
+// ---------------------------------------------------------------- pending / unavailable rows
+const isPending = (r: any) => r?.impactStatus === 'PENDING';
+const isUnavailable = (r: any) => r?.impactStatus === 'UNAVAILABLE';
+/** Counts and a note so a ₹0 total is never read as final while rows are still open. */
+function withStatus(m: Omit<MetricDetail, 'pendingCount' | 'unavailableCount'>, rows: any[]): MetricDetail {
+  const pendingCount = rows.filter(isPending).length;
+  const unavailableCount = rows.filter(isUnavailable).length;
+  const notes = [...m.notes];
+  if (pendingCount > 0) notes.push(`${pendingCount} employee(s) are still pending (shift in progress, not clocked in yet, open break or overtime awaiting approval): this total can still change.`);
+  if (unavailableCount > 0) notes.push(`${unavailableCount} employee(s) could not be fully calculated (data unavailable): this total is incomplete.`);
+  return { ...m, notes, pendingCount, unavailableCount };
+}
+
+/**
+ * Calculation text for one day's late deduction. The amount is the day's share of the month
+ * (month-to-date through the date − through the previous day), so monthly limits, interval rounding
+ * and once-a-month charges are shown as such instead of a single-day formula that would not match.
+ */
+export function lateDayFormula(r: any): string {
+  const s = pset(r);
+  const base = lateFormula(s, r.lateMinutes || 0, calc(r).dailyRate || 0);
+  const mtd = r?.lateMonthToDate;
+  if (!s?.enableLateLoginDeduction || !mtd || !((r.lateMinutes || 0) > 0)) return base;
+  if (r.lateStatus === 'EXEMPT') return `exempt (within the monthly late-login limit of ${s.monthlyLateLoginLimit ?? 0})`;
+  if (!(r.lateDeduction > 0) && (s.lateDeductionMethod === 'fixed' || s.lateDeductionMethod === 'half_day') && mtd.before > 0) return 'already charged this month (once per month)';
+  return `month to date ${inr(mtd.through)} − ${inr(mtd.before)} before this day`;
+}
+
 // ---------------------------------------------------------------- the five metrics
 export function lateMetric(rows: any[]): MetricDetail {
   const any = rows[0];
   const s = pset(any);
   const rule = lateRuleText(s);
   const grace = calc(any).appSettings?.gracePeriodMins;
-  return {
+  return withStatus({
     key: 'late', title: 'Late Deductions', isDeduction: true,
     total: sum(rows, r => r.lateDeduction),
     columns: [
@@ -140,13 +173,13 @@ export function lateMetric(rows: any[]): MetricDetail {
       clockIn: istTime(r.clockIn),
       lateMinutes: r.lateMinutes || 0,
       grace: grace === undefined || grace === null ? '—' : `${grace} min`,
-      formula: lateFormula(pset(r), r.lateMinutes || 0, calc(r).dailyRate || 0),
+      formula: lateDayFormula(r),
       amount: r2(r.lateDeduction),
     })),
-    explanation: rows.length ? [rule.text, 'Late minutes are recorded at clock-in: minutes after shift start beyond the grace period (Admin → Settings).', roundingNote(s)] : [],
+    explanation: rows.length ? [rule.text, 'Late minutes are recorded at clock-in: minutes after shift start beyond the grace period (Admin → Settings).', "The day's amount is what this day adds to the month (month-to-date through this day − through the previous day), so it matches the monthly payroll, including the monthly late-login limit and once-a-month charges.", roundingNote(s)] : [],
     notes: [],
     emptyMessage: 'No late arrivals with a deduction were found for this date.',
-  };
+  }, rows);
 }
 
 export function breakMetric(rows: any[]): MetricDetail {
@@ -156,7 +189,7 @@ export function breakMetric(rows: any[]): MetricDetail {
   // Same allowance rule payroll uses (payrollDataService.payrollBreakAllowance / breakRules): shift first, then Settings
   const allowedFor = (r: any) => resolveAllowedBreakMinutes(r.attendance?.shift_template?.break_duration_minutes, calc(r).appSettings?.breakDurationMins);
   const missing = rows.some(r => (Number(r.attendance?.break_minutes) || 0) > 0 && allowedFor(r) === null);
-  return {
+  return withStatus({
     key: 'break', title: 'Break Overrun Deductions', isDeduction: true,
     total: sum(rows, r => r.breakDeduction),
     columns: [
@@ -174,13 +207,13 @@ export function breakMetric(rows: any[]): MetricDetail {
     explanation: rows.length ? [rule.text, 'Overrun = max(0, actual break minutes − allowed minutes). Allowed = the shift’s break duration, or Admin → Settings → Break duration when the shift has none (same rule as Break Management).', roundingNote(s)] : [],
     notes: missing ? ['Some employees have no break allowance configured (shift or Settings); no overrun is counted for them.'] : [],
     emptyMessage: 'No break overruns with a deduction were found for this date.',
-  };
+  }, rows);
 }
 
 export function lopMetric(rows: any[]): MetricDetail {
   const any = rows[0];
   const s = pset(any);
-  return {
+  return withStatus({
     key: 'lop', title: 'LOP Impact', isDeduction: true,
     total: sum(rows, r => r.lopImpact),
     columns: [
@@ -216,9 +249,9 @@ export function lopMetric(rows: any[]): MetricDetail {
       `Working-days basis: ${BASIS_LABEL[s.workingDaysBasis] || s.workingDaysBasis || '—'}${s.workingDaysBasis === 'configured' ? ` (${s.configuredWorkingDays} days)` : ''} — Admin → Settings → Payroll.`,
       roundingNote(s),
     ] : [],
-    notes: ['Only employees with an attendance record for this date are listed (same scope as the summary cards); an employee with no record at all for the date is not included here.'],
+    notes: ['Employees on payroll without an attendance record (absent, on leave) are included; today, an employee who has not clocked in yet is shown as pending, not as absent.'],
     emptyMessage: 'No LOP was found for this date.',
-  };
+  }, rows);
 }
 
 export function overtimeMetric(rows: any[]): MetricDetail {
@@ -228,7 +261,7 @@ export function overtimeMetric(rows: any[]): MetricDetail {
   const lookupFailed = rows.some(r => r.overtimeRequestsError);
   const listed = rows.filter(r => (r.overtimeRequests || []).length > 0 || (r.overtimeMinutes || 0) > 0 || (r.overtimePay || 0) > 0
     || (Number(r.rawCalc?.empData?.attendance?.recordedOvertimeMinutes) || 0) > 0);
-  return {
+  return withStatus({
     key: 'overtime', title: 'Overtime Pay', isDeduction: false,
     total: sum(rows, r => r.overtimePay),
     columns: [
@@ -266,13 +299,13 @@ export function overtimeMetric(rows: any[]): MetricDetail {
       ...(!rule.configured ? [rule.text] : []),
     ],
     emptyMessage: 'No overtime requests or approved overtime were found for this date.',
-  };
+  }, rows);
 }
 
 export function totalMetric(rows: any[]): MetricDetail {
   const s = pset(rows[0]);
   const mismatches = rows.filter(r => r2(r.lateDeduction + r.breakDeduction + r.lopImpact + r.otherDeductions) !== r2(r.totalDailyImpact));
-  return {
+  return withStatus({
     key: 'total', title: 'Total Daily Deduction Impact', isDeduction: true,
     total: sum(rows, r => r.totalDailyImpact),
     columns: [
@@ -296,8 +329,8 @@ export function totalMetric(rows: any[]): MetricDetail {
       roundingNote(s),
     ] : [],
     notes: mismatches.length ? [`${mismatches.length} employee row(s) do not add up — please report this.`] : [],
-    emptyMessage: 'No attendance records were found for this date.',
-  };
+    emptyMessage: 'No attendance, absence or leave was found for this date.',
+  }, rows);
 }
 
 /** All five, from the same rows the cards use. */

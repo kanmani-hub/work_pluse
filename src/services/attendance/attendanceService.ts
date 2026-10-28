@@ -413,14 +413,22 @@ export const attendanceService = {
       return { data: null, error: new Error(error.message) };
     }
 
+    // The database sets clock-in time, date, late minutes and status for employees
+    // (20261028090000_attendance_server_values): audit and events use the stored row.
+    const storedIn = newAttendance as any;
+    const storedStatus = storedIn?.status ?? initialStatus;
+    const storedLate = storedIn?.late_minutes ?? lateMinutes;
+    const storedDate = storedIn?.attendance_date ?? input.localDateStr;
+    const storedClockIn = storedIn?.clock_in_at ?? nowIso;
+
     // Audit: CLOCK_IN
     auditService.recordAuditLog({
       action: 'CLOCK_IN',
       module: 'ATTENDANCE',
       entity_type: 'attendance',
-      entity_id: (newAttendance as any).id,
-      description: `Employee clocked in at ${now.toLocaleTimeString('en-IN')}. Status: ${initialStatus}. Late minutes: ${lateMinutes}.`,
-      new_values: { status: initialStatus, late_minutes: lateMinutes, date: input.localDateStr }
+      entity_id: storedIn.id,
+      description: `Employee clocked in at ${new Date(storedClockIn).toLocaleTimeString('en-IN')}. Status: ${storedStatus}. Late minutes: ${storedLate}.`,
+      new_values: { status: storedStatus, late_minutes: storedLate, date: storedDate }
     }).catch(e => console.error('[AUDIT] CLOCK_IN failed:', e));
 
     // 4. Create Event
@@ -429,7 +437,7 @@ export const attendanceService = {
       attendance_id: (newAttendance as any).id,
       employee_id: empId,
       event_type: 'CLOCK_IN',
-      event_at: nowIso,
+      event_at: storedClockIn,
       source: 'WEB',
       metadata: {
         locationVerificationId: input.locationVerificationId,
@@ -565,14 +573,22 @@ export const attendanceService = {
       return { data: null, error: new Error('Attendance is already completed.') };
     }
 
+    // The database sets clock-out time, worked hours, early logout, half day and status for employees
+    // (20261028090000_attendance_server_values): audit and events use the stored row.
+    const storedStatus = updated.status ?? status;
+    const storedWorkedMins = updated.worked_hours != null ? Math.round(Number(updated.worked_hours) * 60) : effectiveWorkedMins;
+    const storedEarly = updated.early_logout_minutes ?? earlyLogoutMins;
+    const storedBreak = updated.break_minutes ?? actualBreakMins;
+    const storedClockOut = updated.clock_out_at ?? nowIso;
+
     // Audit: CLOCK_OUT
     auditService.recordAuditLog({
       action: 'CLOCK_OUT',
       module: 'ATTENDANCE',
       entity_type: 'attendance',
       entity_id: attendanceId,
-      description: `Employee clocked out. Status: ${status}. Worked: ${effectiveWorkedMins}m. Extra time (not overtime): ${extraMins}m. Early logout: ${earlyLogoutMins}m.`,
-      new_values: { status, worked_minutes: effectiveWorkedMins, break_minutes: actualBreakMins, overtime_minutes: overtimeMins }
+      description: `Employee clocked out. Status: ${storedStatus}. Worked: ${storedWorkedMins}m. Extra time (not overtime): ${extraMins}m. Early logout: ${storedEarly}m.`,
+      new_values: { status: storedStatus, worked_minutes: storedWorkedMins, break_minutes: storedBreak, overtime_minutes: updated.overtime_minutes ?? overtimeMins }
     }).catch(e => console.error('[AUDIT] CLOCK_OUT failed:', e));
 
     // @ts-ignore
@@ -580,7 +596,7 @@ export const attendanceService = {
       attendance_id: attendanceId,
       employee_id: empId,
       event_type: 'CLOCK_OUT',
-      event_at: nowIso,
+      event_at: storedClockOut,
       source: 'WEB',
       ...(closedAutoBreak ? { metadata: { during_auto_break: true } } : {}),
     } as any);
