@@ -15,7 +15,7 @@
 
 import { detectMissingClockOut, missingClockOutGraceHours } from '../attendance/missingClockOutRules';
 
-export type ImpactCalculationStatus = 'FINAL' | 'PENDING' | 'UNAVAILABLE';
+export type ImpactCalculationStatus = 'FINAL' | 'PENDING' | 'UNAVAILABLE' | 'CONFIGURATION_ERROR';
 export type ClockOutStatus = 'COMPLETED' | 'IN_PROGRESS' | 'MISSING' | 'NOT_CLOCKED_IN';
 export type LateDeductionStatus = 'DISABLED' | 'ON_TIME' | 'BELOW_THRESHOLD' | 'EXEMPT' | 'FINAL' | 'ZERO';
 export type BreakCalculationStatus = 'DISABLED' | 'PENDING' | 'NO_OVERRUN' | 'FINAL';

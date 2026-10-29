@@ -42,6 +42,7 @@ const AdminPayroll: React.FC = () => {
   
   // Daily reports
   const [dailyReports, setDailyReports] = useState<any[]>([]);
+  const [dailyFailures, setDailyFailures] = useState<{ employeeId: string; employeeCode: string; name: string; error: string }[]>([]);
 
   // Month selector
   const now = new Date();
@@ -138,10 +139,11 @@ const AdminPayroll: React.FC = () => {
           ? new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) 
           : customDate;
 
-        const { data, error } = await payrollService.getDailyDeductionReport(targetDate);
+        const res = await payrollService.getDailyDeductionReport(targetDate);
         if (!current()) return;
-        if (error) throw error;
-        setDailyReports(data || []);
+        if (res.error) throw res.error;
+        setDailyReports(res.data || []);
+        setDailyFailures((res as any).failures || []);
       }
     } catch (err: any) {
       if (!current()) return;
@@ -530,6 +532,29 @@ const AdminPayroll: React.FC = () => {
         </div>
       )}
 
+      {viewMode !== 'MONTH' && dailyFailures.length > 0 && (
+        <div role="alert" style={{ padding: '1rem', border: '1px solid var(--warning, #f59e0b)', backgroundColor: 'var(--warning-50, #fffbeb)', borderRadius: 'var(--radius-md)', color: 'var(--warning-800, #92400e)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 600, marginBottom: '0.5rem' }}>
+            <span><AlertTriangle size={16} style={{ verticalAlign: 'middle', marginRight: '0.5rem', color: 'var(--warning-700, #b45309)' }} />{dailyFailures.length} employee{dailyFailures.length > 1 ? 's' : ''} require salary configuration</span>
+            <button className="icon-button" aria-label="Dismiss" onClick={() => setDailyFailures([])}><X size={16} /></button>
+          </div>
+          <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.875rem' }}>
+            {dailyFailures.map(f => (
+              <li key={f.employeeId} style={{ marginTop: '0.375rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <span><strong>{f.name} ({f.employeeCode})</strong>: {f.error}</span>
+                <button
+                  onClick={() => setShowSalaryEditor(f.employeeId)}
+                  className="btn btn-outline"
+                  style={{ fontSize: '0.75rem', padding: '0.2rem 0.6rem', borderColor: 'var(--warning-700, #b45309)', color: 'var(--warning-800, #92400e)' }}
+                >
+                  Configure Salary
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {error ? (
         <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--danger)', backgroundColor: 'var(--danger-50)', borderRadius: 'var(--radius-md)' }}>
           <AlertTriangle size={48} style={{ margin: '0 auto 1rem auto' }} />
@@ -669,7 +694,12 @@ const AdminPayroll: React.FC = () => {
                   <tbody>
                     {filteredData.map(({ emp, payroll }) => {
                       if (!payroll) {
-                        const hasActiveSalary = emp.salary_structures && emp.salary_structures.some((s: any) => s.is_active && Number(s.basic_salary) > 0);
+                        const hasActiveSalary = emp.salary_structures && emp.salary_structures.some((s: any) => {
+                          if (!s.is_active) return false;
+                          const gross = Number(s.basic_salary || 0) + Number(s.hra || 0) + Number(s.transport_allowance || 0) +
+                                        Number(s.medical_allowance || 0) + Number(s.special_allowance || 0) + Number(s.other_allowances || 0);
+                          return gross > 0;
+                        });
                         return (
                           <tr key={emp.id}>
                             <td>
@@ -818,7 +848,15 @@ const AdminPayroll: React.FC = () => {
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{r.employee.employee_code} • {r.employee.departments?.name}</div>
                         </td>
                         <td>{r.shift}</td>
-                        <td><span className={`badge badge-${r.status === 'COMPLETED' ? 'success' : r.status === 'WORKING' ? 'primary' : ['ABSENT', 'LOP_LEAVE', 'SANDWICH_LOP'].includes(r.status) ? 'danger' : 'warning'}`}>{String(r.status || '—').replace(/_/g, ' ')}</span></td>
+                        <td>
+                          {r.impactStatus === 'CONFIGURATION_ERROR' ? (
+                            <span className="badge badge-warning" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: 'var(--warning-800, #b45309)', borderColor: 'rgba(245, 158, 11, 0.3)' }} title={r.configurationError}>
+                              Config Error
+                            </span>
+                          ) : (
+                            <span className={`badge badge-${r.status === 'COMPLETED' ? 'success' : r.status === 'WORKING' ? 'primary' : ['ABSENT', 'LOP_LEAVE', 'SANDWICH_LOP'].includes(r.status) ? 'danger' : 'warning'}`}>{String(r.status || '—').replace(/_/g, ' ')}</span>
+                          )}
+                        </td>
                         <td>{r.clockIn ? new Date(r.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}</td>
                         <td>
                           {r.clockOut ? (
@@ -835,7 +873,9 @@ const AdminPayroll: React.FC = () => {
                           {r.lateMinutes > 0 ? `${r.lateMinutes}m` : r.clockIn ? '0m' : '-'}
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          {r.lateStatus === 'DISABLED' ? (
+                          {r.impactStatus === 'CONFIGURATION_ERROR' ? (
+                            <span style={{ color: 'var(--text-secondary)' }} title={r.configurationError}>—</span>
+                          ) : r.lateStatus === 'DISABLED' ? (
                             <span style={{ color: 'var(--text-secondary)' }} title="Late deduction is disabled in Settings">—</span>
                           ) : r.lateDeduction > 0 ? (
                             <span style={{ color: 'var(--danger)', fontWeight: 500 }}>₹{r.lateDeduction.toLocaleString('en-IN')}</span>
@@ -859,7 +899,9 @@ const AdminPayroll: React.FC = () => {
                           )}
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          {r.breakStatus === 'DISABLED' ? (
+                          {r.impactStatus === 'CONFIGURATION_ERROR' ? (
+                            <span style={{ color: 'var(--text-secondary)' }} title={r.configurationError}>—</span>
+                          ) : r.breakStatus === 'DISABLED' ? (
                             <span style={{ color: 'var(--text-secondary)' }} title="Break deduction is disabled">—</span>
                           ) : r.breakStatus === 'PENDING' ? (
                             <span style={{ color: 'var(--warning-700)' }} title="Pending shift or break completion">Pending</span>
@@ -885,7 +927,9 @@ const AdminPayroll: React.FC = () => {
                           )}
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          {r.overtimeStatus === 'DISABLED' ? (
+                          {r.impactStatus === 'CONFIGURATION_ERROR' ? (
+                            <span style={{ color: 'var(--text-secondary)' }} title={r.configurationError}>—</span>
+                          ) : r.overtimeStatus === 'DISABLED' ? (
                             <span style={{ color: 'var(--text-secondary)' }}>—</span>
                           ) : r.overtimeStatus === 'UNAVAILABLE' ? (
                             <span style={{ color: 'var(--danger)' }}>Unavailable</span>
@@ -898,21 +942,27 @@ const AdminPayroll: React.FC = () => {
                           )}
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          {r.lopImpact > 0 ? (
+                          {r.impactStatus === 'CONFIGURATION_ERROR' ? (
+                            <span style={{ color: 'var(--text-secondary)' }} title={r.configurationError}>—</span>
+                          ) : r.lopImpact > 0 ? (
                             <span style={{ color: 'var(--danger)', fontWeight: 500 }}>₹{r.lopImpact.toLocaleString('en-IN')}</span>
                           ) : (
                             <span style={{ color: 'var(--text-secondary)' }}>—</span>
                           )}
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          {r.otherDeductions > 0 ? (
+                          {r.impactStatus === 'CONFIGURATION_ERROR' ? (
+                            <span style={{ color: 'var(--text-secondary)' }} title={r.configurationError}>—</span>
+                          ) : r.otherDeductions > 0 ? (
                             <span style={{ color: 'var(--danger)', fontWeight: 500 }}>₹{r.otherDeductions.toLocaleString('en-IN')}</span>
                           ) : (
                             <span style={{ color: 'var(--text-secondary)' }}>—</span>
                           )}
                         </td>
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>
-                          {r.impactStatus === 'UNAVAILABLE' ? (
+                          {r.impactStatus === 'CONFIGURATION_ERROR' ? (
+                            <span style={{ color: 'var(--warning-800, #b45309)', fontSize: '0.8125rem' }}>Config Required</span>
+                          ) : r.impactStatus === 'UNAVAILABLE' ? (
                             <span style={{ color: 'var(--danger)' }}>Unavailable</span>
                           ) : r.impactStatus === 'PENDING' ? (
                             <span style={{ color: 'var(--warning-700)' }}>Pending</span>
@@ -925,7 +975,12 @@ const AdminPayroll: React.FC = () => {
                           )}
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          <button onClick={() => setDailyDetailModal(r)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>Details</button>
+                          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                            {r.impactStatus === 'CONFIGURATION_ERROR' && (
+                              <button onClick={() => setShowSalaryEditor(r.employee.id)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', borderColor: 'var(--warning-700, #b45309)', color: 'var(--warning-800, #92400e)' }}>Configure</button>
+                            )}
+                            <button onClick={() => setDailyDetailModal(r)} className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.25rem 0.75rem' }}>Details</button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1475,24 +1530,46 @@ const AdminPayroll: React.FC = () => {
                 </div>
               </div>
 
-              <div className="card" style={{ padding: '1rem' }}>
-                <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--danger-700)', marginBottom: '0.75rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Deductions Applied</h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
-                  {dailyDetailModal.rawCalc.deductionItems.map((item: any, i: number) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>{item.name}</span>
-                      <span style={{ fontWeight: 500, color: 'var(--danger)' }}>₹{item.amount.toLocaleString('en-IN')}</span>
+              {dailyDetailModal.impactStatus === 'CONFIGURATION_ERROR' ? (
+                <div className="card" style={{ padding: '1rem', border: '1px solid var(--warning, #f59e0b)', backgroundColor: 'var(--warning-50, #fffbeb)' }}>
+                  <div style={{ fontWeight: 600, color: 'var(--warning-800, #92400e)', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                    <AlertTriangle size={16} /> Salary Configuration Required
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--warning-800, #92400e)' }}>
+                    {dailyDetailModal.configurationError || 'Salary configuration is missing or invalid. Gross salary must be greater than zero.'}
+                  </p>
+                  <button
+                    onClick={() => {
+                      const empId = dailyDetailModal.employee.id;
+                      setDailyDetailModal(null);
+                      setShowSalaryEditor(empId);
+                    }}
+                    className="btn btn-primary"
+                    style={{ marginTop: '0.75rem', fontSize: '0.875rem' }}
+                  >
+                    Configure Salary Now
+                  </button>
+                </div>
+              ) : (
+                <div className="card" style={{ padding: '1rem' }}>
+                  <h4 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--danger-700)', marginBottom: '0.75rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Deductions Applied</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
+                    {(dailyDetailModal.rawCalc?.deductionItems || []).map((item: any, i: number) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>{item.name}</span>
+                        <span style={{ fontWeight: 500, color: 'var(--danger)' }}>₹{item.amount.toLocaleString('en-IN')}</span>
+                      </div>
+                    ))}
+                    {(!dailyDetailModal.rawCalc?.deductionItems || dailyDetailModal.rawCalc.deductionItems.length === 0) && (
+                      <div style={{ color: 'var(--text-secondary)' }}>No deductions for this date.</div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed var(--border-color)', paddingTop: '0.5rem', marginTop: '0.25rem', fontWeight: 600 }}>
+                      <span>Total Deductions</span>
+                      <span style={{ color: 'var(--danger)' }}>₹{(dailyDetailModal.totalDeductions ?? dailyDetailModal.totalDailyImpact).toLocaleString('en-IN')}</span>
                     </div>
-                  ))}
-                  {dailyDetailModal.rawCalc.deductionItems.length === 0 && (
-                    <div style={{ color: 'var(--text-secondary)' }}>No deductions for this date.</div>
-                  )}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed var(--border-color)', paddingTop: '0.5rem', marginTop: '0.25rem', fontWeight: 600 }}>
-                    <span>Total Deductions</span>
-                    <span style={{ color: 'var(--danger)' }}>₹{(dailyDetailModal.totalDeductions ?? dailyDetailModal.totalDailyImpact).toLocaleString('en-IN')}</span>
                   </div>
                 </div>
-              </div>
+              )}
               
               {dailyDetailModal.overtimePay > 0 && (
                 <div className="card" style={{ padding: '1rem', borderColor: 'var(--success-200)', backgroundColor: 'var(--success-50)' }}>
@@ -1508,7 +1585,9 @@ const AdminPayroll: React.FC = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontWeight: 600 }}>Total Impact</span>
                   <span style={{ fontWeight: 700, fontSize: '1rem' }}>
-                    {dailyDetailModal.impactStatus === 'UNAVAILABLE' ? (
+                    {dailyDetailModal.impactStatus === 'CONFIGURATION_ERROR' ? (
+                      <span style={{ color: 'var(--warning-800, #b45309)' }}>Configuration Required</span>
+                    ) : dailyDetailModal.impactStatus === 'UNAVAILABLE' ? (
                       <span style={{ color: 'var(--danger)' }}>Unavailable</span>
                     ) : dailyDetailModal.impactStatus === 'PENDING' ? (
                       <span style={{ color: 'var(--warning-700)' }}>Pending (Incomplete / Pending Approval)</span>

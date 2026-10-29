@@ -58,7 +58,7 @@ export const employeeService = {
           office:office_id (name),
           role:role_id (name),
           shift_assignments!shift_assignments_employee_id_fkey(effective_date, shift_templates(id, name, start_time, end_time)),
-          salary_structures(id, is_active, basic_salary)
+          salary_structures(id, is_active, basic_salary, hra, transport_allowance, medical_allowance, special_allowance, other_allowances)
         `)
         .order('first_name', { ascending: true });
 

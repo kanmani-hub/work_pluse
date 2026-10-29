@@ -24,6 +24,13 @@ export function settledAdjustmentIds(remarks: unknown): string[] {
   return Array.isArray(ids) ? ids.filter((x: unknown) => typeof x === 'string' && x.length > 0) : [];
 }
 
+export interface DailyReportFailure {
+  employeeId: string;
+  employeeCode: string;
+  name: string;
+  error: string;
+}
+
 export const payrollService = {
   /**
    * Employee: Get their own payroll records
@@ -152,9 +159,10 @@ export const payrollService = {
     const monthStart = `${yStr}-${mStr}-01`;
     const previousDay = dateStr > monthStart ? isoDayBefore(dateStr) : null;
 
-    const failures: string[] = [];
+    const failures: DailyReportFailure[] = [];
     const results = await mapLimited(employees as any[], 4, async (emp: any) => {
       const att = attendanceRecords.find((a: any) => a.employee_id === emp.id) || null;
+      const empOtRequests = otRequests.filter((o: any) => o.employee_id === emp.id);
       const [through, before] = await Promise.all([
         this.calculatePayrollDetails(emp.id, year, month, monthStart, dateStr),
         previousDay ? this.calculatePayrollDetails(emp.id, year, month, monthStart, previousDay) : Promise.resolve({ data: null, error: null }),
@@ -163,13 +171,59 @@ export const payrollService = {
         const err = through.error || before.error;
         // an employee whose salary structure starts later, without attendance, is simply not on payroll yet
         if (!att && /No active salary structure/.test(err?.message || '')) return null;
-        failures.push(`${emp.employee_code || emp.id}: ${err?.message || 'not calculated'}`);
+
+        const failureObj: DailyReportFailure = {
+          employeeId: emp.id,
+          employeeCode: emp.employee_code || emp.id,
+          name: `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.employee_code || emp.id,
+          error: err?.message || 'not calculated',
+        };
+        failures.push(failureObj);
+
+        // If the employee has attendance for the day, preserve their attendance row with CONFIGURATION_ERROR
+        // so clocked-in count remains truthful and the admin can click to configure their salary directly.
+        if (att) {
+          return {
+            employee: emp,
+            shift: att?.shift_template?.name || (att ? 'Standard' : '—'),
+            status: att?.status || '—',
+            dayKind: 'WORK',
+            hasAttendance: true,
+            clockIn: att?.clock_in_at ?? null,
+            clockOut: att?.clock_out_at ?? null,
+            lateMinutes: 0,
+            lateDeduction: 0,
+            breakOverrunMinutes: 0,
+            breakDeduction: 0,
+            overtimeMinutes: 0,
+            overtimePay: 0,
+            lopImpact: 0,
+            otherDeductions: 0,
+            totalDailyImpact: 0,
+            totalDeductions: 0,
+            totalAdditions: 0,
+            netDailyImpact: 0,
+            impactStatus: 'CONFIGURATION_ERROR',
+            configurationError: err?.message || 'Salary configuration is invalid',
+            clockOutStatus: att?.clock_in_at && !att?.clock_out_at ? 'IN_PROGRESS' : 'COMPLETED',
+            lateStatus: 'DISABLED',
+            breakStatus: 'DISABLED',
+            overtimeStatus: 'DISABLED',
+            lopStatus: 'DISABLED',
+            pendingOvertimeHours: 0,
+            isShiftInProgress: false,
+            lateMonthToDate: { through: 0, before: 0 },
+            rawCalc: null,
+            attendance: att,
+            overtimeRequests: empOtRequests,
+            overtimeRequestsError: otRequestsError,
+          };
+        }
         return null;
       }
       const c = marginalDailyCalculation(through.data as any, before.data as any, dateStr);
       if (!att && !NO_ATTENDANCE_LISTED_KINDS.includes(String(c.dayKind)) && !(Number(c.totalDeductions) > 0)) return null; // week off, holiday, not employed
 
-      const empOtRequests = otRequests.filter((o: any) => o.employee_id === emp.id);
       const attendanceForDay = att || { attendance_date: dateStr, clock_in_at: null, clock_out_at: null, status: c.dayKind, shift_template: null };
       const evaluated = evaluateDailyImpact({
         attendance: attendanceForDay,
@@ -216,11 +270,9 @@ export const payrollService = {
       };
     });
 
-    // A preview that silently drops employees would understate deductions: report them instead.
-    if (failures.length > 0) {
-      return { data: null, error: new Error(`Deductions could not be calculated for ${failures.length} employee(s). ${failures[0]}`) };
-    }
-    return { data: results.filter(Boolean) as any[], error: null };
+    // Valid employee records are returned and can be viewed normally.
+    // Invalid/missing salary structure failures are returned in failures for actionable warning presentation.
+    return { data: results.filter(Boolean) as any[], error: null, failures };
   },
 
   /**
