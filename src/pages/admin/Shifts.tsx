@@ -15,7 +15,8 @@ import {
   validateShiftCode, 
   findShiftCodeConflict, 
   suggestNextShiftCode, 
-  generateUniqueShiftCode 
+  generateUniqueShiftCode,
+  requiredHoursError
 } from '../../services/shifts/shiftValidation';
 import { useStoredAppSettings } from '../../components/settings/PersistedSettingToggle';
 import RecordsModal from '../../components/common/RecordsModal';
@@ -144,6 +145,8 @@ const AdminShifts: React.FC = () => {
 
     const timeError = validateShiftTimes(formData.start, formData.end, !!formData.overnight);
     if (timeError) return setFormError(timeError);
+    const hoursError = requiredHoursError(getShiftDurationMinutes(formData.start, formData.end, !!formData.overnight), formData.reqHours);
+    if (hoursError) return setFormError(hoursError);
     
     const startHour = parseInt(formData.start.split(':')[0], 10);
     let shiftType = 'GENERAL';
@@ -388,9 +391,19 @@ const AdminShifts: React.FC = () => {
                     <td style={{ fontWeight: 600, fontFamily: 'monospace' }}>{shift.code}</td>
                     <td style={{ fontSize: '0.875rem' }}>{formatTimeAMPM(shift.start)}</td>
                     <td style={{ fontSize: '0.875rem' }}>{formatTimeAMPM(shift.end)} {shift.overnight && <span style={{ color: 'var(--purple-600)', fontSize: '0.75rem', fontWeight: 600 }}>+1d</span>}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{shift.reqHours}h</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>
+                      {shift.reqHours}h
+                      {requiredHoursError(getShiftDurationMinutes(shift.start, shift.end, !!shift.overnight), shift.reqHours) && (
+                        <div style={{ fontSize: '0.6875rem', fontWeight: 600, color: 'var(--danger)' }} title={requiredHoursError(getShiftDurationMinutes(shift.start, shift.end, !!shift.overnight), shift.reqHours) || ''}>Longer than shift</div>
+                      )}
+                    </td>
                     <td style={{ textAlign: 'right', fontSize: '0.875rem' }}>{shift.breakMins}m</td>
-                    <td style={{ textAlign: 'right', fontSize: '0.875rem' }}>{shift.grace}m</td>
+                    <td style={{ textAlign: 'right', fontSize: '0.875rem' }} title="Late is measured with the company grace period (Settings → Attendance), not this per-shift value">
+                      {shift.grace}m
+                      {typeof companySettings.app?.gracePeriodMins === 'number' && companySettings.app.gracePeriodMins !== Number(shift.grace) && (
+                        <div style={{ fontSize: '0.6875rem', color: 'var(--warning)' }}>Not used: {companySettings.app.gracePeriodMins}m applies</div>
+                      )}
+                    </td>
                     <td style={{ textAlign: 'center' }}>
                       {shift.overnight ? <span className="badge" style={{ backgroundColor: 'var(--purple-100)', color: 'var(--purple-700)' }}>Yes</span> : <span className="badge badge-gray">No</span>}
                     </td>

@@ -40,6 +40,8 @@ export interface PayrollAttendanceSummary {
   lateRecords?: { date: string; lateMinutes: number; requiredHours?: number | null }[];
   /** Early logout is recorded for information only (no deduction under the current policy). */
   earlyLogoutMinutes?: number;
+  /** Days whose missing clock-out deduction an Admin applied (MISSING_CLOCK_OUT flag resolved APPLY). */
+  missingClockOutDeductionDays?: number;
   /** Unresolved days an Admin must review before approval; nothing was deducted for the uncertain part. */
   reviewItems?: { date: string; type?: string; reason: string }[];
   /** Flags an Admin has resolved (APPLY / WAIVE). */
@@ -255,7 +257,8 @@ export const payrollDataService = {
     endDate: string,
     appSettings?: any,
     today: string = companyDateStr(),
-    resolutions: Record<string, 'APPLY' | 'WAIVE'> = {}
+    resolutions: Record<string, 'APPLY' | 'WAIVE'> = {},
+    opts: { missingClockOutReview?: boolean } = {}
   ): Promise<PayrollDaysResult> {
     const empty = (error: Error): PayrollDaysResult => ({ attendance: { ...EMPTY_ATTENDANCE }, leave: { ...EMPTY_LEAVE }, days: [], error });
     const workingDays: string[] = Array.isArray(appSettings?.workingDays) ? appSettings.workingDays : [];
@@ -263,14 +266,17 @@ export const payrollDataService = {
     const start = day10(startDate);
     const end = day10(endDate);
     try {
-      const [att, lv, emp, ros] = await Promise.all([
-        supabase.from('attendance').select('*, shift_template:shift_template_id(break_duration_minutes)')
+      const [att, lv, emp, ros, pend] = await Promise.all([
+        supabase.from('attendance').select('*, shift_template:shift_template_id(break_duration_minutes, crosses_midnight)')
           .eq('employee_id', employeeId).gte('attendance_date', start).lte('attendance_date', end) as any,
         supabase.from('leave_requests').select('start_date, end_date, is_half_day, half_day_type, status, leave_types(name, code)')
           .eq('employee_id', employeeId).eq('status', 'APPROVED').lte('start_date', end).gte('end_date', start) as any,
         supabase.from('employees').select('joining_date').eq('id', employeeId).maybeSingle() as any,
         supabase.from('roster_assignments').select('*, rosters(status, start_date, end_date)')
           .eq('employee_id', employeeId).gte('assignment_date', start).lte('assignment_date', end) as any,
+        // PENDING leave never counts as leave, but it blocks approval of the days it covers
+        supabase.from('leave_requests').select('start_date, end_date, is_half_day, half_day_type, status, leave_types(name, code)')
+          .eq('employee_id', employeeId).eq('status', 'PENDING').lte('start_date', end).gte('end_date', start) as any,
       ]);
       if (att?.error || !Array.isArray(att?.data)) return empty(fail('Attendance', att?.error || 'no data returned'));
       if (lv?.error || !Array.isArray(lv?.data)) return empty(fail('Approved leave', lv?.error || 'no data returned'));
@@ -278,6 +284,7 @@ export const payrollDataService = {
       if (!emp?.data) return empty(new Error('Employee record could not be loaded for payroll.'));
       // Never assume the company schedule (and so absences) when the roster could not be read
       if (ros?.error || !Array.isArray(ros?.data)) return empty(fail('Roster', ros?.error || 'no data returned'));
+      if (pend?.error || !Array.isArray(pend?.data)) return empty(fail('Pending leave', pend?.error || 'no data returned'));
 
       const rows: any[] = att.data;
       const days = classifyPayrollDays({
@@ -293,6 +300,10 @@ export const payrollDataService = {
         leaves: (lv.data as any[]).filter(r => r.status === 'APPROVED').map(r => ({
           start_date: day10(r.start_date), end_date: day10(r.end_date), is_half_day: r.is_half_day, half_day_type: r.half_day_type, isLop: isLopLeaveType(r.leave_types),
         })),
+        pendingLeaves: (pend.data as any[]).filter(r => r.status === 'PENDING').map(r => ({
+          start_date: day10(r.start_date), end_date: day10(r.end_date), is_half_day: r.is_half_day, half_day_type: r.half_day_type, isLop: isLopLeaveType(r.leave_types),
+        })),
+        missingClockOutReview: !!opts.missingClockOutReview,
       });
       const sum = summarizeDays(days);
       return {
@@ -309,6 +320,7 @@ export const payrollDataService = {
           weeklyOffDays: sum.weeklyOffDays,
           rosterDays: sum.rosterDays,
           earlyLogoutMinutes: sum.earlyLogoutMinutes,
+          missingClockOutDeductionDays: sum.missingClockOutDeductionDays,
           reviewItems: sum.reviewItems,
           resolvedReviews: sum.resolvedReviews,
         },

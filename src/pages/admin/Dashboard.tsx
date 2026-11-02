@@ -52,7 +52,7 @@ const AdminDashboard: React.FC = () => {
           supabase.from('wfh_requests').select('id, employee_id, request_date, status, employees!wfh_requests_employee_id_fkey(first_name, last_name, employee_code, departments(name))').eq('status', 'PENDING'),
           supabase.from('leave_requests').select('id, employee_id, start_date, end_date, status, leave_types(name), employees!leave_requests_employee_id_fkey(first_name, last_name, employee_code, departments(name))').eq('status', 'PENDING'),
           supabase.from('permission_requests').select('id, employee_id, permission_date, start_time, end_time, status, employees!permission_requests_employee_id_fkey(first_name, last_name, employee_code, departments(name))').eq('status', 'PENDING'),
-          supabase.from('attendance').select('employee_id, status, clock_in_at, clock_out_at').eq('attendance_date', today),
+          supabase.from('attendance').select('employee_id, attendance_date, status, clock_in_at, clock_out_at, shift_templates(start_time, end_time, crosses_midnight)').eq('attendance_date', today),
           supabase.from('shift_templates').select('*').eq('is_active', true).order('start_time'),
           supabase.from('wfh_requests').select('employee_id').eq('status', 'APPROVED').eq('request_date', today),
           // Approved leave covering today (pending requests are not "on leave")
@@ -80,6 +80,8 @@ const AdminDashboard: React.FC = () => {
           leaves: (approvedLeaveData as any[]) || [],
           approvedWfhToday: (approvedWfhData as any[]) || [],
           today,
+          // Open sessions past the shift end are missing clock-outs, not "working now" (same as Attendance)
+          nowMs: Date.now(),
         };
         const d = computeDashboardStats(dashInput);
         const wfhCount = (wfhPendingRows as any[] || []).length;
@@ -397,7 +399,7 @@ const AdminDashboard: React.FC = () => {
           : [...EMPLOYEE_COLUMNS, { key: 'leaveType', label: 'Leave type' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }]}
         emptyMessage={openCard === 'working' ? 'Nobody is clocked in right now.' : openCard === 'pending' ? 'There are no pending requests.' : openCard === 'onLeave' ? 'Nobody is on approved leave today.' : 'No active employees were found.'}
         explanation={openCard === 'employees' ? ['Active employees whose role is not Admin (the same workforce used by Attendance and Reports).']
-          : openCard === 'working' ? ['Clocked in today and not yet clocked out. Working hours are not shown until the employee clocks out.']
+          : openCard === 'working' ? ['Clocked in today, not yet clocked out, and the shift has not ended. After the shift end an open session is a missing clock-out (Admin → Attendance). Working hours are not shown until the employee clocks out.']
           : openCard === 'pending' ? ['Leave, WFH and permission requests with status PENDING. Opening this list does not approve or reject anything — use Review to open the module.']
           : ['Employees with an APPROVED leave covering today. Pending requests are not counted.']}
       />

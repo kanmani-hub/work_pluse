@@ -9,6 +9,7 @@
  *    recording a payment (markPayrollPaid), never through a generic status change.
  */
 import { approvedOvertimeHours } from '../overtime/overtimeRules';
+import { NON_RESOLVABLE_REVIEW_TYPES } from './attendanceClassification';
 
 export type PayrollStatus = 'DRAFT' | 'CALCULATED' | 'UNDER_REVIEW' | 'APPROVED' | 'PAYMENT_PENDING' | 'PAID' | 'CLOSED';
 
@@ -186,8 +187,52 @@ export function resolutionMap(list: ReviewResolution[] | undefined | null): Reco
 export function resolutionError(p: { status?: string | null; remarks?: unknown } | null, date: string, type: string, decision: string, note: string): string | null {
   if (!p) return 'Payroll not found.';
   if (!['CALCULATED', 'UNDER_REVIEW'].includes(String(p.status))) return `Review flags can only be resolved before approval (current status: ${p.status}).`;
+  if (NON_RESOLVABLE_REVIEW_TYPES.includes(type)) return 'This flag clears when the pending leave request is approved or rejected in Leave Management and the payroll is recalculated.';
   if (decision !== 'APPLY' && decision !== 'WAIVE') return 'Choose Apply or Waive.';
   if (!String(note || '').trim()) return 'Enter a note explaining the decision.';
   if (!unresolvedReviewItems(p.remarks).some(i => i.date === date && (i.type || '') === type)) return 'This review flag is not open on this payroll (it may already be resolved). Refresh and try again.';
   return null;
+}
+
+// ---- 2026-11-02 fixes -------------------------------------------------------------------------------
+
+const fmtDate = (d: string) => String(d || '').slice(0, 10);
+
+/** Approval is refused while a leave request overlapping the period is PENDING (it would change LOP). */
+export function pendingLeaveBlockReason(pending: { start_date: string; end_date: string }[] | null | undefined): string | null {
+  const list = (pending || []).filter(r => r && r.start_date && r.end_date);
+  if (list.length === 0) return null;
+  const ranges = list.map(r => fmtDate(r.start_date) === fmtDate(r.end_date) ? fmtDate(r.start_date) : `${fmtDate(r.start_date)} – ${fmtDate(r.end_date)}`);
+  return `Cannot approve: ${list.length} leave request(s) in this period are still pending (${ranges.join(', ')}). Approve or reject them in Leave Management, then recalculate this payroll.`;
+}
+
+/**
+ * Deductions actually taken from a payroll: net is never below 0, so a deduction larger than the
+ * earnings is only partly applied. Totals built from this always satisfy gross + earnings − deductions = net.
+ */
+export function appliedDeductions(p: { gross_salary?: unknown; overtime_amount?: unknown; total_deductions?: unknown; net_salary?: unknown }): number {
+  const gross = Number(p?.gross_salary) || 0;
+  const overtime = Number(p?.overtime_amount) || 0;
+  const ded = Number(p?.total_deductions) || 0;
+  const net = Number(p?.net_salary);
+  const earnings = gross + overtime;
+  // Rows whose net is 0 because deductions exceeded the earnings: only the earnings were deducted
+  if (Number.isFinite(net) && net === 0 && ded > earnings) return Math.max(0, earnings);
+  return ded;
+}
+
+const STATUS_ORDER = ['DRAFT', 'CALCULATED', 'UNDER_REVIEW', 'APPROVED', 'PAYMENT_PENDING', 'PAID', 'CLOSED'];
+
+/**
+ * Month-level workflow status: the LEAST advanced status among the month's payrolls, so the month is
+ * never shown as further along than its slowest record (e.g. "Payment pending" while some are still
+ * under review). `mixed` is true when the records are not all at the same status.
+ */
+export function monthWorkflowStatus(rows: { status?: string | null }[]): { status: string; mixed: boolean; counts: Record<string, number> } {
+  const counts: Record<string, number> = {};
+  for (const r of rows || []) { const s = String(r?.status || 'DRAFT').toUpperCase(); counts[s] = (counts[s] || 0) + 1; }
+  const present = Object.keys(counts).filter(s => STATUS_ORDER.includes(s));
+  if (present.length === 0) return { status: 'DRAFT', mixed: false, counts };
+  const status = present.sort((a, b) => STATUS_ORDER.indexOf(a) - STATUS_ORDER.indexOf(b))[0];
+  return { status, mixed: present.length > 1, counts };
 }

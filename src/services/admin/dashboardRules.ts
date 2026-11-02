@@ -2,17 +2,21 @@
  * Admin Dashboard: pure rules (unit-tested). Uses the SAME employee eligibility as
  * Admin → Attendance and Reports: the workforce is ACTIVE employees whose role is not ADMIN.
  *  - Present: attendance record with a clock-in (Admin → Attendance definition).
- *  - Working now: clocked in, not clocked out.
+ *  - Working now: clocked in, not clocked out, and the shift end has not passed (an open session
+ *    after shift end is a missing clock-out, same rule as Admin → Attendance and Live Tracking).
  *  - On leave: workforce employees with an APPROVED leave request covering today
  *    (start_date <= today <= end_date), counted once each. Pending requests are NOT leave.
  *  - Attendance rate: present / workforce.
  */
 import { isWorkforceEmployee } from '../reports/reportRules';
+import { openSessionPastShiftEnd } from '../attendance/adminAttendanceRules';
 import { employeeFields, istTime } from '../common/cardDetails';
 
 export interface DashboardInput {
   employees: any[];   // { id, status, role:{name}, employment_type, office_id }
-  attendance: any[];  // today's rows: { employee_id, clock_in_at, clock_out_at }
+  attendance: any[];  // today's rows: { employee_id, attendance_date, clock_in_at, clock_out_at, shift_templates? }
+  /** Current time (ms); when given, open sessions past their shift end are not "working now". */
+  nowMs?: number;
   leaves: any[];      // APPROVED leave rows: { employee_id, start_date, end_date }
   approvedWfhToday: any[]; // APPROVED WFH rows for today: { employee_id }
   today: string;
@@ -23,7 +27,10 @@ export function computeDashboardStats(input: DashboardInput) {
   const ids = new Set(workforce.map(e => e.id));
   const att = (input.attendance || []).filter(a => ids.has(a.employee_id));
   const presentIds = new Set(att.filter(a => a.clock_in_at).map(a => a.employee_id));
-  const workingIds = new Set(att.filter(a => a.clock_in_at && !a.clock_out_at).map(a => a.employee_id));
+  const nowMs = input.nowMs;
+  const workingIds = new Set(att.filter(a => a.clock_in_at && !a.clock_out_at
+    && !(typeof nowMs === 'number' && openSessionPastShiftEnd({ attendance_date: a.attendance_date ?? input.today, ...a }, a.shift_templates ?? a.shift_template ?? null, nowMs, input.today)))
+    .map(a => a.employee_id));
   const onLeaveIds = new Set((input.leaves || [])
     .filter(l => ids.has(l.employee_id) && l.start_date <= input.today && l.end_date >= input.today)
     .map(l => l.employee_id));
@@ -66,7 +73,9 @@ export function dashboardCardDetails(input: DashboardInput, pending: DashboardPe
   const employees = workforce.map(e => ({ __key: e.id, ...employeeFields(e), type: e.employment_type || '—', status: e.status || '—' }));
 
   const seenWorking = new Set<string>();
-  const working = att.filter(a => a.clock_in_at && !a.clock_out_at && !seenWorking.has(a.employee_id) && seenWorking.add(a.employee_id))
+  const isWorkingNow = (a: any) => a.clock_in_at && !a.clock_out_at
+    && !(typeof input.nowMs === 'number' && openSessionPastShiftEnd({ attendance_date: a.attendance_date ?? input.today, ...a }, a.shift_templates ?? a.shift_template ?? null, input.nowMs, input.today));
+  const working = att.filter(a => isWorkingNow(a) && !seenWorking.has(a.employee_id) && seenWorking.add(a.employee_id))
     .map(a => ({ __key: a.employee_id, ...employeeFields(byId.get(a.employee_id)), clockIn: istTime(a.clock_in_at), status: a.status || 'WORKING', clockOut: 'Not clocked out yet' }));
 
   const seenLeave = new Set<string>();

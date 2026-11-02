@@ -1,11 +1,13 @@
 /**
  * Payroll month-view summary cards and the daily "Employees Clocked In" card (pure, unit-tested).
  * Same filters as the page's KPI numbers, so each card and its detail rows reconcile.
- * Amount cards sum one stored column each (gross_salary / total_deductions / net_salary);
+ * Amount cards sum gross_salary / net_salary and the deductions actually applied (a deduction above the
+ * earnings cannot be taken because net never goes below 0; the remainder is shown as "not recovered");
  * LOP is shown as the part of Total deductions it already is, never added a second time.
  * Read-only: nothing here generates, approves or pays payroll.
  */
 import { employeeFields, elapsedMinutes, formatDuration, istTime } from '../common/cardDetails';
+import { appliedDeductions } from './payrollRules';
 
 export type PayrollMonthCard = 'total' | 'generated' | 'underReview' | 'approved' | 'paymentPending' | 'paid' | 'gross' | 'deductions' | 'net';
 export interface PayrollCardData { count: number; amount: number; rows: Record<string, any>[] }
@@ -17,11 +19,12 @@ export function payrollMonthCards(employees: any[], monthPayrolls: any[]): Recor
   const byId = new Map(emps.map(e => [e.id, e]));
   const pays = monthPayrolls || [];
   const payrollRow = (p: any) => {
-    const lop = money(p.lop_deduction), total = money(p.total_deductions);
+    // Deductions actually taken (net never goes below 0), so Gross + Overtime − Deductions = Net always holds
+    const lop = money(p.lop_deduction), stored = money(p.total_deductions), total = money(appliedDeductions(p));
     return {
       __key: p.id, ...employeeFields(p.employees || byId.get(p.employee_id)), status: p.status,
-      gross: money(p.gross_salary), overtime: money(p.overtime_amount), lop, otherDeductions: money(total - lop),
-      deductions: total, net: money(p.net_salary),
+      gross: money(p.gross_salary), overtime: money(p.overtime_amount), lop: Math.min(lop, total), otherDeductions: money(Math.max(0, total - lop)),
+      deductions: total, notRecovered: money(stored - total), net: money(p.net_salary),
     };
   };
   const pack = (rows: Record<string, any>[], amountKey?: string): PayrollCardData => ({

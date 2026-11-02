@@ -22,6 +22,14 @@
  *    deduction); resolved flags no longer block approval (see payrollRules.unresolvedReviewItems).
  *  - Weekly offs and holidays without a clock-in are neither worked nor absent.
  *  - Today without a clock-in yet, and future days, are not counted (the day is not over).
+ *  - (2026-11-02) An absence covered by a PENDING leave request is still counted as absence (the
+ *    deduction shown is what applies if the leave is rejected), but the day is flagged PENDING_LEAVE:
+ *    approval stays blocked until the leave is approved or rejected in Leave Management and the
+ *    payroll is recalculated. This flag cannot be waived from payroll.
+ *  - (2026-11-02) A past day with a clock-in and NO clock-out is still a worked day, but when the
+ *    caller asks for it (`missingClockOutReview`: deduction enabled and the database correction
+ *    workflow not set up) it is flagged MISSING_CLOCK_OUT: APPLY = the fixed missing clock-out
+ *    deduction (Settings → Payroll) for that day, WAIVE = no deduction.
  */
 
 export type DayKind =
@@ -54,9 +62,13 @@ export interface ClassifiedDay {
   /** Flag type (also set once resolved, with `resolution`). */
   reviewType?: ReviewType | null;
   resolution?: ReviewDecision | null;
+  /** True when the missing clock-out deduction applies to this day (MISSING_CLOCK_OUT resolved APPLY). */
+  missingClockOutDeduction?: boolean;
 }
 
-export type ReviewType = 'HALF_DAY_LEAVE_UNCOVERED' | 'SHORT_DAY';
+export type ReviewType = 'HALF_DAY_LEAVE_UNCOVERED' | 'SHORT_DAY' | 'PENDING_LEAVE' | 'MISSING_CLOCK_OUT';
+/** Flags that only an action outside payroll can clear (no Apply / Waive in payroll). */
+export const NON_RESOLVABLE_REVIEW_TYPES: readonly string[] = ['PENDING_LEAVE'];
 export type ReviewDecision = 'APPLY' | 'WAIVE';
 /** Key for a resolution: `${date}|${type}` */
 export const reviewKey = (date: string, type: ReviewType | string) => `${date}|${type}`;
@@ -84,7 +96,16 @@ export interface ClassificationInput {
   resolutions?: Record<string, ReviewDecision>;
   attendance: any[];     // rows: attendance_date, status, clock_in_at, is_half_day, early_logout_minutes
   leaves: LeaveLike[];   // APPROVED leave only
+  /** PENDING leave requests overlapping the period (never treated as leave; they flag the day). */
+  pendingLeaves?: LeaveLike[];
+  /** Flag past worked days without a clock-out for an Apply/Waive decision (see header). */
+  missingClockOutReview?: boolean;
 }
+
+export const REVIEW_PENDING_LEAVE =
+  'A leave request covering this absence is still PENDING. Approve or reject it in Leave Management, then recalculate. Counted as absence until then.';
+export const REVIEW_MISSING_CLOCK_OUT =
+  'Clock-in without clock-out (working hours not verified). Apply = missing clock-out deduction for this day, Waive = no deduction.';
 
 export const REVIEW_HALF_DAY_UNCOVERED =
   'Approved half-day leave, but no attendance or other approved leave covers the other half. Not deducted — Admin review needed.';
@@ -152,6 +173,15 @@ export function classifyPayrollDays(input: ClassificationInput): ClassifiedDay[]
     if (worked) {
       const early = Math.max(0, Number(row?.early_logout_minutes) || 0);
       const half = status === 'HALF_DAY' || row?.is_half_day === true;
+      // Past day still open (no clock-out): worked, but the hours are not verified
+      const openPast = !row?.clock_out_at && date < input.today && status !== 'COMPLETED'
+        && !(row?.shift_template?.crosses_midnight && date === addDays(input.today, -1));
+      if (!half && openPast && input.missingClockOutReview) {
+        const decision = decisionFor(date, 'MISSING_CLOCK_OUT');
+        push({ ...base, kind: 'PRESENT', earlyLogoutMinutes: early, missingClockOutDeduction: decision === 'APPLY',
+          reviewType: 'MISSING_CLOCK_OUT', resolution: decision, review: decision ? null : REVIEW_MISSING_CLOCK_OUT });
+        continue;
+      }
       if (!half) { push({ ...base, kind: 'PRESENT', earlyLogoutMinutes: early }); continue; }
       // Worked half a day: the other half is paid leave, LOP leave, or the half-day deduction — never two of them
       if (halves.length > 0) {
@@ -187,6 +217,11 @@ export function classifyPayrollDays(input: ClassificationInput): ClassifiedDay[]
       }
       continue;
     }
+    const pending = leaveCoverage(date, input.pendingLeaves || []);
+    if (pending.first || pending.second) {
+      push({ ...base, kind: 'ABSENT', scheduleSource, absentLop: 1, reviewType: 'PENDING_LEAVE', review: REVIEW_PENDING_LEAVE });
+      continue;
+    }
     push({ ...base, kind: 'ABSENT', scheduleSource, absentLop: 1 });
   }
   return days;
@@ -206,6 +241,8 @@ export interface DaySummary {
   rosterDays: number;      // days whose working/off status came from the employee's roster
   earlyLogoutDays: number; // information only
   earlyLogoutMinutes: number;
+  /** Days whose missing clock-out deduction an Admin applied. */
+  missingClockOutDeductionDays: number;
   /** Unresolved flags only (these block approval). */
   reviewItems: { date: string; type: ReviewType; reason: string }[];
   /** Flags an Admin has resolved, and how. */
@@ -232,6 +269,7 @@ export function summarizeDays(days: ClassifiedDay[]): DaySummary {
     rosterDays: days.filter(d => d.scheduleSource === 'ROSTER').length,
     earlyLogoutDays: days.filter(d => d.earlyLogoutMinutes > 0).length,
     earlyLogoutMinutes: sum(d => d.earlyLogoutMinutes),
+    missingClockOutDeductionDays: days.filter(d => d.missingClockOutDeduction).length,
     reviewItems: days.filter(d => d.review).map(d => ({ date: d.date, type: d.reviewType as ReviewType, reason: d.review as string })),
     resolvedReviews: days.filter(d => d.reviewType && d.resolution).map(d => ({ date: d.date, type: d.reviewType as ReviewType, decision: d.resolution as ReviewDecision })),
   };

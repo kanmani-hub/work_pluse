@@ -10,7 +10,7 @@ import { globalSettingsService } from '../settings/globalSettingsService';
 import { payrollAuditService } from './payrollAuditService';
 import { payrollDataService } from './payrollDataService';
 import type { PayrollEmployeeData } from './payrollDataService';
-import { overtimePayAmount, statusChangeError, paymentBlockReason, canRecordPayment, validatePaymentAmount, validatePaymentDate, paymentDateToTimestamp, paymentRpcErrorMessage, WFH_DEDUCTION_POLICY_APPROVED, approvalBlockReason, resolutionMap, resolutionError, parsePayrollSnapshot } from './payrollRules';
+import { overtimePayAmount, statusChangeError, paymentBlockReason, canRecordPayment, validatePaymentAmount, validatePaymentDate, paymentDateToTimestamp, paymentRpcErrorMessage, WFH_DEDUCTION_POLICY_APPROVED, approvalBlockReason, resolutionMap, resolutionError, parsePayrollSnapshot, pendingLeaveBlockReason } from './payrollRules';
 import type { ReviewResolution, ReviewDecisionValue } from './payrollRules';
 import { companyDateStr } from '../../utils/companyDate';
 import { missingClockOutPayrollLines, isMissingClockOutSchemaError, staleMissingClockOutReason } from '../attendance/missingClockOutRules';
@@ -386,7 +386,8 @@ export const payrollService = {
     // The database function keeps UNDER_REVIEW itself; only the fallback path (migration not applied)
     // re-created the row as CALCULATED and has to submit it again.
     if (res.data?.id && existing?.status === 'UNDER_REVIEW' && res.atomic === false) {
-      await this.submitPayrollForReview(res.data.id);
+      // Same payroll back to the status it had: the employee was already told it is under review
+      await this.submitPayrollForReview(res.data.id, { notify: false });
       res.data.status = 'UNDER_REVIEW';
     }
     
@@ -422,12 +423,16 @@ export const payrollService = {
     const startDate = periodStart;
     const endDate = periodEnd;
 
-    const [daysResult, wfhResult, permissionResult, approvedOt, adjustmentsResult] = await Promise.all([
-      payrollDataService._fetchPayrollDays(employeeId, startDate, endDate, appSettings, companyDateStr(), resolutionMap(opts?.resolutions)),
+    // Missing clock-out adjustments first: when the database correction workflow is not set up, open
+    // past days are flagged in payroll for an Admin Apply/Waive decision instead (fixed deduction).
+    const adjustmentsResult = await payrollDataService._fetchPayrollAdjustments(employeeId, endDate);
+    const mcoAmount = Number(settings.missingClockOutDeductionAmount) || 0;
+    const missingClockOutReview = !!adjustmentsResult?.notSetUp && !!settings.enableMissingClockOutDeduction && mcoAmount > 0;
+    const [daysResult, wfhResult, permissionResult, approvedOt] = await Promise.all([
+      payrollDataService._fetchPayrollDays(employeeId, startDate, endDate, appSettings, companyDateStr(), resolutionMap(opts?.resolutions), { missingClockOutReview }),
       payrollDataService._fetchWfh(employeeId, startDate, endDate),
       payrollDataService._fetchPermissions(employeeId, startDate, endDate),
       payrollDataService._fetchApprovedOvertime(employeeId, startDate, endDate),
-      payrollDataService._fetchPayrollAdjustments(employeeId, endDate),
     ]);
 
     // A failed lookup is never treated as "no absences / no leave / no permissions / no adjustments": stop instead.
@@ -668,6 +673,17 @@ export const payrollService = {
       }
     }
 
+    // 6a. Missing clock-out days an Admin decided to APPLY in payroll (only while the database correction
+    //     workflow is not set up — otherwise 6b below handles missing clock-outs, never both)
+    const mcoDays = Number(empData.attendance.missingClockOutDeductionDays) || 0;
+    if (missingClockOutReview && mcoDays > 0) {
+      const amount = payrollSettingsService.applyRounding(mcoDays * mcoAmount, settings);
+      if (amount > 0) {
+        totalDeductions += amount;
+        deductionItems.push({ name: `Missing Clock-Out Deduction (${mcoDays} day${mcoDays === 1 ? '' : 's'} × ₹${mcoAmount.toLocaleString('en-IN')})`, amount });
+      }
+    }
+
     // 6b. Missing clock-out adjustments (unique reference per case; settled atomically on approval, so a
     //     recalculation reads the same PENDING rows again and never adds anything twice)
     const mco = missingClockOutPayrollLines(adjustmentsResult.data, periodEnd, { overtimePayEnabled: !!settings.enableOvertimePay });
@@ -861,7 +877,8 @@ export const payrollService = {
   /**
    * Status transitions
    */
-  async updateStatus(id: string, newStatus: string, expectedCurrentStatus?: string[]) {
+  async updateStatus(id: string, newStatus: string, expectedCurrentStatus?: string[], opts?: { notify?: boolean }) {
+    const notify = opts?.notify !== false;
     const adminId = await salaryService.getCurrentEmployeeId();
     if (!adminId) return { error: new Error('Unauthorized') };
 
@@ -884,6 +901,9 @@ export const payrollService = {
     // A correction approved after this payroll was calculated changed its attendance and overtime:
     // approving the stale figures would lock the month and that overtime would never be paid.
     if (newStatus === 'APPROVED') {
+      // A leave request of this period that is still PENDING would change the LOP once decided
+      const pendingLeave = await this._pendingLeaveCheck(existing);
+      if (pendingLeave) return { error: new Error(pendingLeave) };
       const stale = await this._staleMissingClockOutCheck(existing);
       if (stale) return { error: new Error(stale) };
       // Any other change after calculation (attendance correction, leave approved, overtime approved,
@@ -904,7 +924,7 @@ export const payrollService = {
       }
       // the function wrote the audit log entry
       const { data: info } = await supabase.from('payroll').select('employee_id, payroll_month, payroll_year').eq('id', id).single<any>();
-      if (info) {
+      if (info && notify) {
         await notificationService.notifyEmployee(info.employee_id, payrollStatusChanged({ id, status: newStatus, month: info.payroll_month, year: info.payroll_year }));
       }
       return { error: null };
@@ -942,7 +962,7 @@ export const payrollService = {
         new_values: { status: newStatus }
       });
 
-      if (payrollInfo) {
+      if (payrollInfo && notify) {
         await notificationService.notifyEmployee(payrollInfo.employee_id, payrollStatusChanged({
           id, status: newStatus, month: payrollInfo.payroll_month, year: payrollInfo.payroll_year,
         }));
@@ -963,6 +983,19 @@ export const payrollService = {
     } catch (e: any) {
       return stalePayrollReason(p, null, e?.message || null);
     }
+  },
+
+  /** Refusal message when a leave request overlapping the payroll period is still PENDING; null otherwise. */
+  async _pendingLeaveCheck(p: any): Promise<string | null> {
+    if (!p?.employee_id || !p.period_start || !p.period_end) return null;
+    const { data, error } = await supabase.from('leave_requests')
+      .select('start_date, end_date')
+      .eq('employee_id', p.employee_id)
+      .eq('status', 'PENDING');
+    if (error || !Array.isArray(data)) return 'Pending leave requests could not be checked, so the payroll was not approved. Please try again.';
+    // Only requests overlapping this payroll period matter
+    const from = String(p.period_start).slice(0, 10), to = String(p.period_end).slice(0, 10);
+    return pendingLeaveBlockReason((data as any[]).filter(r => String(r.start_date).slice(0, 10) <= to && String(r.end_date).slice(0, 10) >= from));
   },
 
   /** Refusal message when a missing clock-out correction of the period was approved after calculation; null otherwise. */
@@ -1016,8 +1049,8 @@ export const payrollService = {
     return { data: res.data, error: null };
   },
 
-  async submitPayrollForReview(id: string) {
-    return this.updateStatus(id, 'UNDER_REVIEW', ['CALCULATED', 'DRAFT']);
+  async submitPayrollForReview(id: string, opts?: { notify?: boolean }) {
+    return this.updateStatus(id, 'UNDER_REVIEW', ['CALCULATED', 'DRAFT'], opts);
   },
 
   async approvePayroll(id: string) {

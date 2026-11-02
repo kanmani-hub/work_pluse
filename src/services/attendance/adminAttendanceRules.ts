@@ -48,6 +48,26 @@ export function companyDateTime(date: string, time: string, addDays = 0): number
   return base + addDays * 86400000;
 }
 
+/**
+ * True when an attendance session is still open (clock-in, no clock-out) but its scheduled shift end
+ * has passed — the employee is then "Missing clock-out", NOT "currently working". Without a shift, a
+ * session from an earlier date counts as past its end. Shared by Admin → Attendance, the Dashboard
+ * "Working now" card and Live Tracking so the three pages always agree.
+ */
+export function openSessionPastShiftEnd(
+  att: { attendance_date?: string | null; clock_in_at?: string | null; clock_out_at?: string | null } | null | undefined,
+  shift: { start_time?: string | null; end_time?: string | null; crosses_midnight?: boolean | null } | null | undefined,
+  nowMs: number,
+  today: string,
+): boolean {
+  if (!att?.clock_in_at || att.clock_out_at) return false;
+  const date = String(att.attendance_date || '').slice(0, 10);
+  if (shift?.end_time && date) {
+    return nowMs > companyDateTime(date, String(shift.end_time), shift.crosses_midnight ? 1 : 0);
+  }
+  return !!date && date < today;
+}
+
 export function formatMinutes(totalMinutes: number | null | undefined): string {
   if (totalMinutes === null || totalMinutes === undefined || !isFinite(totalMinutes) || totalMinutes < 0) return '-';
   const m = Math.round(totalMinutes);

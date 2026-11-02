@@ -209,3 +209,21 @@ export function formatShiftDatabaseError(
 
   return error instanceof Error ? error : new Error(message || 'Failed to save shift.');
 }
+
+/**
+ * Required working hours must fit inside the shift (start → end, overnight +24h). Required hours are
+ * compared with the whole shift span, breaks included, which is how every existing shift is defined
+ * (e.g. 10:00–19:30 = 9.5h with 9.5h required). A shift shorter than its required hours makes every
+ * employee on it "short" and causes wrong deductions.
+ * Returns an error message, or null when valid / when the times are not valid yet (checked elsewhere).
+ */
+export function requiredHoursError(shiftMinutes: number | null, requiredHours: unknown): string | null {
+  const req = Number(requiredHours);
+  if (!Number.isFinite(req) || req <= 0) return 'Required hours must be greater than 0.';
+  if (shiftMinutes === null || !(shiftMinutes > 0)) return null;
+  if (req * 60 > shiftMinutes + 0.5) {
+    const h = Math.floor(shiftMinutes / 60), m = shiftMinutes % 60;
+    return `Required hours (${req}h) are longer than the shift itself (${m ? `${h}h ${m}m` : `${h}h`}). Shorten the required hours or extend the shift times.`;
+  }
+  return null;
+}

@@ -18,7 +18,7 @@
 import { deriveLiveWorkStatus, type LiveWorkStatus } from './liveStatusRules';
 import { selectCurrentAttendance } from '../attendance/currentAttendance';
 import { computeWorkTimer, findActiveBreak } from '../attendance/breakRules';
-import { shiftForDate } from '../attendance/adminAttendanceRules';
+import { shiftForDate, openSessionPastShiftEnd } from '../attendance/adminAttendanceRules';
 import { normalizeRole } from '../../lib/roles';
 import { deriveTracking, freshnessTimes, isFresh, latestProblemByEmployee, trackingApplicability, TRACKING_STALE_MINUTES } from './trackingStatus';
 
@@ -119,6 +119,8 @@ export function buildLiveTrackingRows(input: LiveTrackingInput, nowMs: number) {
     });
     if (lastSeenAt) candidates.push({ label: 'Location update', at: lastSeenAt });
     const lastActivity = candidates.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0] ?? null;
+    // Open session after the shift end = missing clock-out, not currently working (same rule as Attendance)
+    const pastShiftEnd = openSessionPastShiftEnd(att, shift, nowMs, input.today);
 
     rows.push({
       // fields used by the existing list, drawer and map
@@ -155,13 +157,14 @@ export function buildLiveTrackingRows(input: LiveTrackingInput, nowMs: number) {
       geofence,
       leftGeofenceAt: leftAt.get(employeeId) ?? null,
       lastActivity,
+      pastShiftEnd,
     });
   }
   return rows.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 const WORKING: LiveWorkStatus[] = ['Working', 'On Break', 'WFH', 'Outside Geofence'];
-export const isCurrentlyWorking = (r: any) => WORKING.includes(r.status);
+export const isCurrentlyWorking = (r: any) => WORKING.includes(r.status) && !r.pastShiftEnd;
 
 /** Same freshness rule as the tracking status (earlier of device/server time, configured threshold). */
 export const rowIsFresh = (r: any, nowMs: number) => isFresh(r.freshAt !== undefined ? r.freshAt : r.lastSeenAt, nowMs, r.staleMinutes ?? TRACKING_STALE_MINUTES);

@@ -159,7 +159,7 @@ describe('month summary: no double counting', () => {
     expect(summarizeDays(days)).toEqual({
       scheduledDays: 9, presentDays: 6, halfDays: 0, absentDays: 1, paidLeaveDays: 1,
       lopLeaveDays: 0, sandwichLopDays: 1, lopDays: 2, holidayDays: 1, weeklyOffDays: 0,
-      rosterDays: 0, earlyLogoutDays: 1, earlyLogoutMinutes: 20,
+      rosterDays: 0, earlyLogoutDays: 1, earlyLogoutMinutes: 20, missingClockOutDeductionDays: 0,
       reviewItems: [{ date: '2026-10-06', type: 'SHORT_DAY', reason: REVIEW_SHORT_DAY }], resolvedReviews: [],
     });
   });

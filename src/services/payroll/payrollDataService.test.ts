@@ -284,6 +284,6 @@ describe('Payroll break excess uses the same allowance as Break Management (shif
   it('attendance is read with the shift break allowance', async () => {
     await payrollDataService._fetchPayrollDays('e1', '2026-10-01', '2026-10-09', APP, '2026-10-09');
     const sel = (db.calls.attendance || []).find((c: any[]) => c[0] === 'select');
-    expect(String(sel?.[1])).toContain('shift_template:shift_template_id(break_duration_minutes)');
+    expect(String(sel?.[1])).toContain('shift_template:shift_template_id(break_duration_minutes');
   });
 });

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 
 import { reportService } from '../../services/reports/reportService';
+import { supabase } from '../../lib/supabase';
 import { exportService } from '../../services/export/exportService';
 import { reportDateRange } from '../../services/reports/reportRules';
 import { companyDateStr } from '../../utils/companyDate';
@@ -47,6 +48,26 @@ const AdminReports: React.FC = () => {
 
   const tabs = ['Overview', 'Attendance', 'Working Hours', 'WFH', 'Leave', 'Permission', 'Shifts', 'Payroll', 'Payments'];
 
+  // Filter choices from the company's real departments, offices and shifts (were empty / hard-coded)
+  const [filterOptions, setFilterOptions] = useState<{ depts: { id: string; name: string }[]; offices: { id: string; name: string }[]; shifts: string[] }>({ depts: [], offices: [], shifts: [] });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [d, o, sh] = await Promise.all([
+        supabase.from('departments').select('id, name').order('name'),
+        supabase.from('offices').select('id, name').order('name'),
+        supabase.from('shift_templates').select('name').eq('is_active', true).order('name'),
+      ]);
+      if (cancelled) return;
+      setFilterOptions({
+        depts: Array.isArray(d.data) ? (d.data as any[]).map(r => ({ id: r.id, name: r.name })) : [],
+        offices: Array.isArray(o.data) ? (o.data as any[]).map(r => ({ id: r.id, name: r.name })) : [],
+        shifts: Array.isArray(sh.data) ? [...new Set((sh.data as any[]).map(r => String(r.name)))] : [],
+      });
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const fetchData = async () => {
     setLoading(true);
     setLoadError('');
@@ -59,7 +80,8 @@ const AdminReports: React.FC = () => {
       if (activeTab === 'Attendance' || activeTab === 'Working Hours') {
          const { data, error } = await reportService.getAttendanceReport(startDateStr, endDateStr, filters.dept);
          if (error) throw new Error(`Could not load the ${activeTab.toLowerCase()} report: ${error.message}`);
-         setAttendanceReport(data || []);
+         // Shift filter: rows whose recorded shift has the selected name
+         setAttendanceReport((data || []).filter((r: any) => filters.shift === 'All' || (r.shift_templates?.name ?? null) === filters.shift));
       }
       if (activeTab === 'Leave' || activeTab === 'WFH' || activeTab === 'Permission') {
          const res = activeTab === 'Leave' ? await reportService.getLeaveReport(startDateStr, endDateStr)
@@ -384,16 +406,17 @@ const AdminReports: React.FC = () => {
         
         <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.dept} onChange={e => setFilters({...filters, dept: e.target.value})} aria-label="Department">
           <option value="All">All Departments</option>
-              
+          {filterOptions.depts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
         
         <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.office} onChange={e => setFilters({...filters, office: e.target.value})} aria-label="Office">
           <option value="All">All Offices</option>
-              
+          {filterOptions.offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
         </select>
 
         <select className="form-control" style={{ width: 'auto', fontSize: '0.875rem' }} value={filters.shift} onChange={e => setFilters({...filters, shift: e.target.value})} aria-label="Shift">
-          <option value="All">All Shifts</option><option>Morning</option><option>General</option><option>Night</option>
+          <option value="All">All Shifts</option>
+          {filterOptions.shifts.map(n => <option key={n} value={n}>{n}</option>)}
         </select>
 
         <div style={{ position: 'relative', flex: 1, minWidth: '150px' }}>
@@ -553,8 +576,8 @@ const AdminReports: React.FC = () => {
                 <h4 style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Applied Filters</h4>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <span className="badge badge-gray">Date: {filters.dateRange}</span>
-                  <span className="badge badge-gray">Dept: {filters.dept}</span>
-                  <span className="badge badge-gray">Office: {filters.office}</span>
+                  <span className="badge badge-gray">Dept: {filters.dept === 'All' ? 'All' : (filterOptions.depts.find(d => d.id === filters.dept)?.name ?? filters.dept)}</span>
+                  <span className="badge badge-gray">Office: {filters.office === 'All' ? 'All' : (filterOptions.offices.find(o => o.id === filters.office)?.name ?? filters.office)}</span>
                 </div>
               </div>
 

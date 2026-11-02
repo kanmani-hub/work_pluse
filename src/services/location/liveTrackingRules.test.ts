@@ -8,7 +8,8 @@ const NOW = new Date(at(TODAY, '13:00')).getTime();
 const office = { id: 'o1', name: 'Whitee Lotus', latitude: 13.052815, longitude: 80.200211, geofence_radius: 100 };
 const emp = (id: string, code: string, role = 'EMPLOYEE') => ({ id, employee_code: code, first_name: code, last_name: '', status: 'ACTIVE', department_id: 'd1', departments: { name: 'CG' }, office_id: 'o1', offices: office, role: { name: role } });
 const general = { name: 'General Shift', start_time: '10:00:00', end_time: '19:30:00', crosses_midnight: false };
-const night = { name: 'Night', start_time: '21:00:00', end_time: '05:00:00', crosses_midnight: true };
+// Still running at NOW (13:00): an open session whose shift already ended is a missing clock-out (2026-11-02)
+const night = { name: 'Night', start_time: '21:00:00', end_time: '15:00:00', crosses_midnight: true };
 const live = (employee_id: string, status: string, seenHHMM: string, extra: any = {}) => ({ id: `live-${employee_id}`, employee_id, location_status: status, location_context: 'OFFICE', last_seen_at: at(TODAY, seenHHMM), latitude: 13.0528, longitude: 80.2002, accuracy_meters: 10, distance_from_office_meters: status === 'INSIDE_GEOFENCE' ? 15 : 400, ...extra });
 const att = (id: string, employee_id: string, inHHMM: string, extra: any = {}) => ({ id, employee_id, attendance_date: TODAY, status: 'WORKING', clock_in_at: at(TODAY, inHHMM), clock_out_at: null, shift_template: general, ...extra });
 
@@ -42,6 +43,19 @@ const byCode = (c: string) => rows.find(r => r.empId === c)!;
 const codes = (k: LiveTrackingKpi) => rows.filter(liveKpiPredicate(k, NOW)).map(r => r.empId).sort();
 
 describe('live tracking KPI rules', () => {
+  it('an open session whose shift has ended is a missing clock-out, not Currently Working (same as Attendance)', () => {
+    const later = new Date(at(TODAY, '19:45')).getTime();   // General Shift ended at 19:30
+    const ended = buildLiveTrackingRows(input(), later);
+    const openGeneral = ended.filter(r => r.attendance?.shift_template?.name === 'General Shift' && !r.attendance?.clock_out_at);
+    expect(openGeneral.length).toBeGreaterThan(0);
+    openGeneral.forEach(r => {
+      expect(r.pastShiftEnd).toBe(true);
+      expect(liveKpiPredicate('CURRENTLY_WORKING', later)(r)).toBe(false);
+    });
+    // at NOW (13:00) the overnight shift (until 15:00) is still in progress
+    expect(rows.find(r => r.empId === 'EMP007')?.pastShiftEnd).toBe(false);
+  });
+
   it('Currently Working = everyone clocked in and not out (incl. on break, stale GPS, no GPS row, overnight)', () => {
     expect(codes('CURRENTLY_WORKING')).toEqual(['EMP001', 'EMP002', 'EMP003', 'EMP004', 'EMP007']);
   });
@@ -85,7 +99,7 @@ describe('GPS failure, WFH, shifts, details', () => {
   it('shift comes from attendance, else today\'s roster assignment; overnight shift marked +1d', () => {
     expect(byCode('EMP001').shift).toBe('General Shift');
     expect(byCode('EMP005').shift).toBe('Morinig_shift_01');
-    expect(byCode('EMP007').shiftTime).toBe('21:00 - 05:00 (+1d)');
+    expect(byCode('EMP007').shiftTime).toBe('21:00 - 15:00 (+1d)');
   });
   it('overnight session from yesterday stays the current attendance after midnight', () => {
     expect(byCode('EMP007').attendance.attendance_date).toBe(YDAY);

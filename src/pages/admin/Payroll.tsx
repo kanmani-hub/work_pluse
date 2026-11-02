@@ -8,7 +8,8 @@ import {
 } from 'lucide-react';
 import { exportService } from '../../services/export/exportService';
 import { payrollService } from '../../services/payroll/payrollService';
-import { unresolvedReviewItems, parsePayrollSnapshot } from '../../services/payroll/payrollRules';
+import { unresolvedReviewItems, parsePayrollSnapshot, appliedDeductions, monthWorkflowStatus } from '../../services/payroll/payrollRules';
+import { NON_RESOLVABLE_REVIEW_TYPES } from '../../services/payroll/attendanceClassification';
 import { buildDailyMetrics } from '../../services/payroll/dailyMetricDetails';
 import type { MetricKey } from '../../services/payroll/dailyMetricDetails';
 import DailyMetricModal from '../../components/payroll/DailyMetricModal';
@@ -122,13 +123,9 @@ const AdminPayroll: React.FC = () => {
           // Compute global status from month data
           const monthData = payrollRes.data.filter((p: any) => Number(p.payroll_year) === selectedYear && Number(p.payroll_month) === selectedMonth);
           if (monthData.length > 0) {
-            if (monthData.every((p: any) => p.status === 'CLOSED')) setGlobalStatus('CLOSED');
-            else if (monthData.every((p: any) => p.status === 'PAID')) setGlobalStatus('PAID');
-            else if (monthData.some((p: any) => p.status === 'PAYMENT_PENDING')) setGlobalStatus('PAYMENT_PENDING');
-            else if (monthData.some((p: any) => p.status === 'APPROVED')) setGlobalStatus('APPROVED');
-            else if (monthData.some((p: any) => p.status === 'UNDER_REVIEW')) setGlobalStatus('UNDER_REVIEW');
-            else if (monthData.some((p: any) => p.status === 'CALCULATED')) setGlobalStatus('CALCULATED');
-            else setGlobalStatus('DRAFT');
+            // The month is only as far along as its least advanced payroll (never "Payment pending"
+            // while some records are still under review)
+            setGlobalStatus(monthWorkflowStatus(monthData).status);
           } else {
             setGlobalStatus('DRAFT');
           }
@@ -196,7 +193,9 @@ const AdminPayroll: React.FC = () => {
       paymentPending: monthPayrolls.filter(p => p.status === 'PAYMENT_PENDING').length,
       paid: monthPayrolls.filter(p => p.status === 'PAID' || p.status === 'CLOSED').length,
       gross: monthPayrolls.reduce((sum, p) => sum + Number(p.gross_salary), 0),
-      deductions: monthPayrolls.reduce((sum, p) => sum + Number(p.total_deductions), 0),
+      // Deductions actually taken: a deduction above the earnings is not recoverable (net never below 0)
+      deductions: monthPayrolls.reduce((sum, p) => sum + appliedDeductions(p), 0),
+      notRecovered: monthPayrolls.reduce((sum, p) => sum + (Number(p.total_deductions) || 0) - appliedDeductions(p), 0),
       net: monthPayrolls.reduce((sum, p) => sum + Number(p.net_salary), 0)
     };
   };
@@ -437,7 +436,9 @@ const AdminPayroll: React.FC = () => {
     const workingDays = summary?.settings?.workingDaysUsed ?? payrollSettingsService.getWorkingDaysForMonth(p.payroll_year, p.payroll_month, settings, globalSettingsService.getSettings().app?.workingDays);
     const present = typeof summary?.attendance?.presentDays === 'number' ? summary.attendance.presentDays : null;
     const approvedLeave = typeof summary?.leave?.approvedLeave === 'number' ? summary.leave.approvedLeave : null;
-    const lopLeave = typeof summary?.leave?.lopLeave === 'number' ? summary.leave.lopLeave : null;
+    // LOP = every loss-of-pay day (unauthorised absence + LOP leave + sandwich), not only LOP leave
+    const lopLeave = typeof summary?.attendance?.lopDays === 'number' ? summary.attendance.lopDays
+      : typeof summary?.leave?.lopLeave === 'number' ? summary.leave.lopLeave : null;
     return { workingDays, present, approvedLeave, lopLeave };
   };
 
@@ -585,6 +586,11 @@ const AdminPayroll: React.FC = () => {
               <div className="tracking-kpi-card" {...clickableCardProps('Total Deductions', () => setMonthCard('deductions'))}>
                 <div className="sc-title">Total Deductions</div>
                 <div style={{ fontSize: 'clamp(22px, 3vw, 40px)', lineHeight: 1.05, whiteSpace: 'normal', overflowWrap: 'anywhere', fontWeight: 700, color: 'var(--danger)' }}>₹{kpis.deductions.toLocaleString('en-IN', {maximumFractionDigits:2})}</div>
+                {kpis.notRecovered > 0.004 && (
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                    + ₹{kpis.notRecovered.toLocaleString('en-IN', {maximumFractionDigits:2})} not recovered (deductions above an employee's earnings)
+                  </div>
+                )}
               </div>
               <div className="tracking-kpi-card" {...clickableCardProps('Net Payroll', () => setMonthCard('net'))} style={{ cursor: 'pointer', backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--success)' }}>
                 <div className="sc-title" style={{ color: 'var(--success)' }}>Net Payroll</div>
@@ -599,6 +605,14 @@ const AdminPayroll: React.FC = () => {
               <div>
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>{monthLabel} Payroll</h3>
                 <div style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Status: {getStatusBadge(globalStatus)}</div>
+                {(() => {
+                  const wf = monthWorkflowStatus(monthPayrolls);
+                  if (!wf.mixed) return null;
+                  const label = (k: string) => k.replace(/_/g, ' ').toLowerCase();
+                  return <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                    Mixed: {Object.entries(wf.counts).map(([k, n]) => `${n} ${label(k)}`).join(' · ')}
+                  </div>;
+                })()}
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 {globalStatus === 'UNDER_REVIEW' && <button onClick={() => setBulkApproveModal(true)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}>Approve Payroll</button>}
@@ -683,7 +697,7 @@ const AdminPayroll: React.FC = () => {
                       <th style={{ textAlign: 'right' }}>Gross Salary</th>
                       <th style={{ textAlign: 'right' }}>Work Days</th>
                       <th style={{ textAlign: 'right' }}>Present</th>
-                      <th style={{ textAlign: 'right' }}>Leave / LOP</th>
+                      <th style={{ textAlign: 'right' }} title="Approved paid leave days / total loss-of-pay days (unauthorised absence + LOP leave + sandwich LOP)">Leave / LOP</th>
                       <th style={{ textAlign: 'right' }}>Deductions</th>
                       <th style={{ textAlign: 'right' }}>Overtime</th>
                       <th style={{ textAlign: 'right' }}>Net Salary</th>
@@ -1108,7 +1122,10 @@ const AdminPayroll: React.FC = () => {
                     return (
                       <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
                         <div><strong>{r.date}</strong> — {r.reason}</div>
-                        {canResolve && r.type && (
+                        {canResolve && r.type && NON_RESOLVABLE_REVIEW_TYPES.includes(r.type) && (
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Decide the leave request in Leave Management, then recalculate this payroll.</div>
+                        )}
+                        {canResolve && r.type && !NON_RESOLVABLE_REVIEW_TYPES.includes(r.type) && (
                           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
                             <input type="text" className="form-control" style={{ flex: 1, minWidth: '12rem', fontSize: '0.8125rem' }} placeholder="Note (required)" value={reviewNotes[key] || ''} onChange={e => setReviewNotes(n => ({ ...n, [key]: e.target.value }))}/>
                             <button type="button" className="btn btn-outline" style={{ fontSize: '0.75rem' }} disabled={busy || !(reviewNotes[key] || '').trim()} onClick={() => handleResolveFlag(r.date, r.type as string, 'APPLY')}>Apply deduction</button>

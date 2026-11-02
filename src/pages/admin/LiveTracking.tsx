@@ -25,6 +25,8 @@ type WorkMode = 'Office' | 'WFH' | 'Hybrid';
 
 interface LiveEmployee {
   id: string;
+  /** Open session after the shift end (missing clock-out): not counted as currently working. */
+  pastShiftEnd?: boolean;
   empId: string;
   name: string;
   department: string;
@@ -358,7 +360,7 @@ const AdminLiveTracking: React.FC = () => {
     return employees.filter(emp => {
       const searchMatch = emp.name.toLowerCase().includes(search.toLowerCase()) || emp.empId.toLowerCase().includes(search.toLowerCase());
       if (!searchMatch) return false;
-      if (statusFilter === 'Currently Working' && (emp.status === 'Clocked Out' || emp.status === 'Offline')) return false;
+      if (statusFilter === 'Currently Working' && (emp.status === 'Clocked Out' || emp.status === 'Offline' || emp.pastShiftEnd)) return false;
       if (statusFilter !== 'All' && statusFilter !== 'Currently Working' && emp.status !== statusFilter) return false;
       if (deptFilter !== 'All' && (deptFilter === 'Unassigned' ? emp.departmentId !== null : emp.departmentId !== deptFilter)) return false;
       if (officeFilter !== 'All' && emp.officeId !== officeFilter) return false;

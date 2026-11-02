@@ -1,3 +1,4 @@
+import { uniqueOfficeCodes } from '../../services/offices/officeCodes';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -54,10 +55,12 @@ const AdminOffices: React.FC = () => {
     const { data, error } = await supabase.from('offices').select('*, employees(id, first_name, last_name, employee_code, status, departments(name))').order('name');
     setCardError(error?.message || null);
     if (data) {
+      // Display code derived from the name; offices whose names start alike get -2, -3 … so codes stay unique
+      const codes = uniqueOfficeCodes(data.map((o: any) => ({ id: o.id, name: o.name, code: o.code ?? null })));
       setOffices(data.map((o: any) => ({
         id: o.id,
         name: o.name,
-        code: o.name.replace(/\s+/g, '-').substring(0, 8).toUpperCase(),
+        code: codes[o.id],
         address: o.address || '',
         lat: o.latitude,
         lng: o.longitude,
