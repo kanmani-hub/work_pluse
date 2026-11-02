@@ -3,6 +3,7 @@ import { notificationService } from '../notifications/notificationService';
 import { shiftTimingChanged } from '../notifications/notificationRules';
 import { companyDateStr } from '../../utils/companyDate';
 import { countAssignedEmployeesByShift, assignedEmployeesByShift } from './shiftAssignmentRules';
+import { formatShiftDatabaseError } from './shiftValidation';
 
 export const shiftService = {
   async getShifts() {
@@ -48,7 +49,7 @@ export const shiftService = {
       .insert(shiftData)
       .select()
       .single();
-    if (error) return { data: null, error };
+    if (error) return { data: null, error: formatShiftDatabaseError(error, shiftData) };
     import('../audit/auditService').then(({ auditService }) => {
       auditService.recordAuditLog({
         action: 'SHIFT_CREATED',
@@ -70,7 +71,7 @@ export const shiftService = {
       .eq('id', shiftId)
       .select()
       .single();
-    if (error) return { data: null, error };
+    if (error) return { data: null, error: formatShiftDatabaseError(error, shiftData) };
 
     // Timing changed → notify only employees whose CURRENT shift is this one
     if (before && data && (before.start_time !== data.start_time || before.end_time !== data.end_time)) {

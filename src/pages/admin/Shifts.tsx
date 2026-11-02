@@ -11,6 +11,12 @@ import { employeeService } from '../../services/employees/employeeService';
 import { assignShiftToEmployees, assignmentSummary, validateAssignment } from '../../services/shifts/shiftAssignmentBatch';
 import { companyDateStr } from '../../utils/companyDate';
 import { validateShiftTimes, getShiftDurationMinutes, formatDurationMinutes } from '../../utils/shiftTime';
+import { 
+  validateShiftCode, 
+  findShiftCodeConflict, 
+  suggestNextShiftCode, 
+  generateUniqueShiftCode 
+} from '../../services/shifts/shiftValidation';
 import { useStoredAppSettings } from '../../components/settings/PersistedSettingToggle';
 import RecordsModal from '../../components/common/RecordsModal';
 import { clickableCardProps, EMPLOYEE_COLUMNS } from '../../services/common/cardDetails';
@@ -110,7 +116,16 @@ const AdminShifts: React.FC = () => {
     switch(action) {
       case 'view': setShowDetail(shift); break;
       case 'edit': setIsDuplicating(false); setFormData(shift); setShowForm(shift.id); break;
-      case 'duplicate': setIsDuplicating(true); setFormData({...shift, name: `${shift.name} (Copy)`, code: `${shift.code}_COPY`}); setShowForm(true); break;
+      case 'duplicate':
+        setIsDuplicating(true);
+        setFormData({
+          ...shift,
+          name: `${shift.name} (Copy)`,
+          code: generateUniqueShiftCode(`${shift.code}_COPY`, shifts)
+        });
+        setFormError('');
+        setShowForm(true);
+        break;
       case 'deactivate': setDeactivateModal(shift); break;
       case 'delete': setDeleteModal(shift); setDeleteError(null); break;
       case 'reactivate': handleReactivate(shift); break;
@@ -123,6 +138,10 @@ const AdminShifts: React.FC = () => {
     if (!formData.name || !formData.code || !formData.start || !formData.end) return setFormError('Name, Code, Start Time, and End Time are required.');
     if (!formData.reqHours) return setFormError('Required hours must be configured.');
 
+    const currentShiftId = typeof showForm === 'string' && !isDuplicating ? showForm : undefined;
+    const codeValidation = validateShiftCode(formData.code, shifts, currentShiftId);
+    if (!codeValidation.isValid) return setFormError(codeValidation.error || 'Invalid shift code.');
+
     const timeError = validateShiftTimes(formData.start, formData.end, !!formData.overnight);
     if (timeError) return setFormError(timeError);
     
@@ -134,8 +153,9 @@ const AdminShifts: React.FC = () => {
     else shiftType = 'NIGHT';
 
     const dbPayload = {
-      name: formData.name,
-      code: formData.code.toUpperCase(),
+      name: formData.name.trim(),
+      code: formData.code.trim().toUpperCase(),
+      description: formData.desc?.trim() || null,
       shift_type: shiftType,
       start_time: formData.start,
       end_time: formData.end,
@@ -259,7 +279,22 @@ const AdminShifts: React.FC = () => {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button className="btn btn-outline" style={{ fontSize: '0.875rem' }}><Settings size={16}/> Shift Settings</button>
-          <button onClick={() => { setIsDuplicating(false); setFormData({ overnight: false, start: '09:00', end: '18:00', reqHours: 8, breakMins: 60, grace: 15 }); setFormError(''); setShowForm(true); }} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Plus size={16}/> Create Shift</button>
+          <button onClick={() => {
+            setIsDuplicating(false);
+            const suggested = suggestNextShiftCode('', shifts);
+            setFormData({
+              name: '',
+              code: suggested,
+              overnight: false,
+              start: '09:00',
+              end: '18:00',
+              reqHours: 8,
+              breakMins: 60,
+              grace: 15,
+            });
+            setFormError('');
+            setShowForm(true);
+          }} className="btn btn-primary" style={{ fontSize: '0.875rem' }}><Plus size={16}/> Create Shift</button>
         </div>
       </div>
 
@@ -459,11 +494,82 @@ const AdminShifts: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div>
                     <label className="form-label">Shift Name *</label>
-                    <input required className="form-control" value={formData.name || ''} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="e.g. Morning Shift" aria-label="Shift Name" />
+                    <input
+                      required
+                      className="form-control"
+                      value={formData.name || ''}
+                      onChange={e => {
+                        const newName = e.target.value;
+                        setFormData((prev: any) => {
+                          const updated = { ...prev, name: newName };
+                          if ((showForm === true || isDuplicating) && (!prev.code || prev.code === suggestNextShiftCode(prev.name, shifts))) {
+                            updated.code = suggestNextShiftCode(newName, shifts);
+                          }
+                          return updated;
+                        });
+                      }}
+                      placeholder="e.g. Afternoon"
+                      aria-label="Shift Name"
+                    />
                   </div>
                   <div>
-                    <label className="form-label">Shift Code *</label>
-                    <input required className="form-control" style={{ textTransform: 'uppercase' }} value={formData.code || ''} onChange={e => setFormData({...formData, code: e.target.value})} placeholder="e.g. MORNING" aria-label="Shift Code" />
+                    {(() => {
+                      const currentShiftId = typeof showForm === 'string' && !isDuplicating ? showForm : undefined;
+                      const codeConflict = findShiftCodeConflict(formData.code, shifts, currentShiftId);
+                      const suggestedCode = suggestNextShiftCode(formData.name, shifts);
+                      const canSuggest = suggestedCode && suggestedCode !== (formData.code || '').trim().toUpperCase();
+
+                      return (
+                        <>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                            <label className="form-label" style={{ marginBottom: 0 }}>Shift Code *</label>
+                            {canSuggest && (
+                              <button
+                                type="button"
+                                onClick={() => setFormData({ ...formData, code: suggestedCode })}
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  color: 'var(--primary-600)',
+                                  fontSize: '0.75rem',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                  fontWeight: 500,
+                                  textDecoration: 'underline'
+                                }}
+                                title="Use suggested unique code"
+                              >
+                                Suggest: {suggestedCode}
+                              </button>
+                            )}
+                          </div>
+                          <input
+                            required
+                            className="form-control"
+                            style={{
+                              textTransform: 'uppercase',
+                              borderColor: codeConflict ? 'var(--danger)' : undefined,
+                            }}
+                            value={formData.code || ''}
+                            onChange={e => setFormData({ ...formData, code: e.target.value })}
+                            placeholder="e.g. AFTERNOON or 04"
+                            aria-label="Shift Code"
+                          />
+                          {codeConflict ? (
+                            <div style={{ color: 'var(--danger)', fontSize: '0.75rem', marginTop: '0.35rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                              <AlertTriangle size={13} />
+                              <span>Code "{formData.code.toUpperCase()}" is already used by <strong>{codeConflict.name}</strong>.</span>
+                            </div>
+                          ) : (
+                            formData.code && (
+                              <div style={{ color: 'var(--text-secondary)', fontSize: '0.7rem', marginTop: '0.25rem' }}>
+                                Must be unique (letters, numbers, hyphens, underscores).
+                              </div>
+                            )
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                   <div style={{ gridColumn: '1 / -1' }}>
                     <label className="form-label">Description</label>
